@@ -23,7 +23,7 @@ from app.core.redis import get_redis
 from app.core.tenancy import tenant_session
 from app.models.ops import FailedJob
 from app.waha.client import WahaClient
-from app.waha.send_gateway import DailyCapExceeded, SendGateway, SessionPacing
+from app.waha.send_gateway import SendGateway
 from app.workers.lock import acquire_conversation_lock
 from app.workers.pipeline import InboundFragment, run_pipeline
 
@@ -98,15 +98,18 @@ async def process_conversation(
         catch_up = _is_stale(parsed, now=time.time())
         if catch_up:
             bound.warning("stale backlog detected — sending catch-up reply only")
-        result = await run_pipeline(parsed, catch_up=catch_up)
-
         gateway: SendGateway = ctx["send_gateway"]
-        try:
-            await gateway.send_text(
-                session, chat_id, result.reply_text, pacing=SessionPacing()
-            )
-        except DailyCapExceeded:
-            bound.warning("daily cap reached — reply suppressed")
+        if tenant_id is None:
+            bound.error("cannot process without a resolved tenant_id")
+            return
+        await run_pipeline(
+            parsed,
+            session=session,
+            chat_id=chat_id,
+            tenant_id=tenant_id,
+            send_gateway=gateway,
+            catch_up=catch_up,
+        )
     except Exception as exc:  # noqa: BLE001 — retry/DLQ boundary
         job_try = ctx.get("job_try", 1)
         if job_try >= settings.job_max_retries:

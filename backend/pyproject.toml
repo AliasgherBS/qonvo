@@ -20,6 +20,10 @@ dependencies = [
     "pyjwt>=2.10",
     "loguru>=0.7",
     "python-multipart>=0.0.20",
+    "passlib[argon2]>=1.7.4",
+    "pypdf>=6.14.2",
+    "python-docx>=1.2.0",
+    "pydantic[email]>=2.9",
 ]
 
 [dependency-groups]

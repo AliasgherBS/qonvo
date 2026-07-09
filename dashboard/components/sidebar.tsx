@@ -4,6 +4,7 @@ import {
   BarChart3,
   BookOpen,
   Building2,
+  Gauge,
   Inbox,
   Radio,
   Settings,
@@ -25,6 +26,7 @@ const NAV_ITEMS = [
 const ADMIN_NAV_ITEMS = [
   { href: "/admin/tenants", label: "Tenants", icon: Building2 },
   { href: "/admin/fleet", label: "Fleet Health", icon: Radio },
+  { href: "/admin/usage", label: "Usage", icon: Gauge },
 ];
 
 export function Sidebar({ role }: { role: Role }) {

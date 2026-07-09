@@ -72,6 +72,14 @@ class Conversation(Base, TenantScopedMixin):
         DateTime(timezone=True),
         nullable=True,
     )
+    # Auto-resume deadline while paused (DESIGN.md §5.5): on/after this, the bot
+    # resumes. NULL while ``bot_active``.
+    paused_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    # Unread inbound count for the owner inbox; reset when messages are viewed.
+    unread_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
 
 class Message(Base, TenantScopedMixin):

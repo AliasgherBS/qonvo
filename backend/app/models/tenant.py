@@ -61,10 +61,16 @@ class TenantConfig(Base, TenantScopedMixin):
     __table_args__ = (UniqueConstraint("tenant_id", name="uq_tenant_config_tenant"),)
 
     persona: Mapped[str | None] = mapped_column(String, nullable=True)
+    business_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     tone: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    custom_instructions: Mapped[str | None] = mapped_column(String, nullable=True)
     languages: Mapped[list] = mapped_column(JSONBType, nullable=False, default=list)
     primary_language: Mapped[str] = mapped_column(String(16), nullable=False, default="en")
     providers: Mapped[dict] = mapped_column(JSONBType, nullable=False, default=dict)
+    # Flat LLM selection surfaced by the dashboard config API (DESIGN.md §10 Settings);
+    # ``providers`` remains the internal per-capability provider map (§4).
+    llm_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    llm_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     business_hours: Mapped[dict] = mapped_column(JSONBType, nullable=False, default=dict)
     escalation_rules: Mapped[dict] = mapped_column(JSONBType, nullable=False, default=dict)
     owner_alert_number: Mapped[str | None] = mapped_column(String(32), nullable=True)

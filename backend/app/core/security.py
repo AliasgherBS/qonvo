@@ -115,6 +115,33 @@ def decrypt_secret(token: str) -> str:
         raise TokenError("could not decrypt integration credential") from exc
 
 
+# --------------------------------------------------------------------------- #
+# Password hashing (argon2 via passlib) — Phase 1 login (DESIGN.md §8)
+# --------------------------------------------------------------------------- #
+from passlib.context import CryptContext  # noqa: E402
+
+_pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+
+
+def hash_password(password: str) -> str:
+    """Hash a plaintext password with argon2 for storage in ``users.hashed_password``."""
+    return _pwd_context.hash(password)
+
+
+def verify_password(password: str, hashed: str | None) -> bool:
+    """Constant-time verify of a plaintext password against a stored argon2 hash.
+
+    Returns ``False`` for a missing/blank hash rather than raising, so callers can
+    treat "no password set" the same as "wrong password".
+    """
+    if not hashed:
+        return False
+    try:
+        return _pwd_context.verify(password, hashed)
+    except ValueError:
+        return False
+
+
 __all__ = [
     "TokenClaims",
     "TokenError",
@@ -122,5 +149,7 @@ __all__ = [
     "decode_jwt",
     "decrypt_secret",
     "encrypt_secret",
+    "hash_password",
+    "verify_password",
     "verify_waha_hmac",
 ]

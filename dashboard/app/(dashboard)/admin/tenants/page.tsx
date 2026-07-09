@@ -1,13 +1,19 @@
 "use client";
 
-import { Building2 } from "lucide-react";
+import { Building2, Check, Copy } from "lucide-react";
+import Link from "next/link";
+import { useState, type FormEvent } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog } from "@/components/ui/dialog";
 import { EmptyState } from "@/components/ui/empty-state";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { adminTenants, type AdminTenant, type TenantStatus } from "@/lib/api";
-import { useApi } from "@/lib/use-api";
+import { useToast } from "@/components/ui/toast";
+import { adminTenants, type AdminTenant, type CreateTenantResult, type TenantStatus } from "@/lib/api";
+import { useApi, useAuthToken } from "@/lib/use-api";
 
 const STATUS_TONE: Record<TenantStatus, "success" | "warning" | "default"> = {
   active: "success",
@@ -16,7 +22,10 @@ const STATUS_TONE: Record<TenantStatus, "success" | "warning" | "default"> = {
 };
 
 export default function AdminTenantsPage() {
-  const { data, loading, error, refetch } = useApi(() => adminTenants.list());
+  const token = useAuthToken();
+  const { data, loading, error, refetch } = useApi(() => adminTenants.list({ token }), [token]);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [created, setCreated] = useState<CreateTenantResult | null>(null);
 
   return (
     <div className="space-y-6">
@@ -27,7 +36,7 @@ export default function AdminTenantsPage() {
             Every business on Qonvo — create tenants, invite owners, manage lifecycle.
           </p>
         </div>
-        <Button>New tenant</Button>
+        <Button onClick={() => setCreateOpen(true)}>New tenant</Button>
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-border bg-surface">
@@ -62,6 +71,18 @@ export default function AdminTenantsPage() {
           <TenantsTable tenants={data} />
         )}
       </div>
+
+      <NewTenantDialog
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={(tenant) => {
+          setCreateOpen(false);
+          setCreated(tenant);
+          refetch();
+        }}
+      />
+
+      <TempPasswordDialog result={created} onClose={() => setCreated(null)} />
     </div>
   );
 }
@@ -80,7 +101,11 @@ function TenantsTable({ tenants }: { tenants: AdminTenant[] }) {
       <tbody className="divide-y divide-border">
         {tenants.map((tenant) => (
           <tr key={tenant.id}>
-            <td className="px-5 py-3 font-semibold">{tenant.name}</td>
+            <td className="px-5 py-3 font-semibold">
+              <Link href={`/admin/tenants/${tenant.id}`} className="hover:underline">
+                {tenant.name}
+              </Link>
+            </td>
             <td className="px-5 py-3 text-muted-foreground">{tenant.ownerEmail}</td>
             <td className="px-5 py-3">
               <Badge tone={STATUS_TONE[tenant.status]}>{tenant.status}</Badge>
@@ -92,5 +117,130 @@ function TenantsTable({ tenants }: { tenants: AdminTenant[] }) {
         ))}
       </tbody>
     </table>
+  );
+}
+
+function NewTenantDialog({
+  open,
+  onClose,
+  onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCreated: (tenant: CreateTenantResult) => void;
+}) {
+  const token = useAuthToken();
+  const { toast } = useToast();
+  const [name, setName] = useState("");
+  const [slug, setSlug] = useState("");
+  const [ownerName, setOwnerName] = useState("");
+  const [ownerEmail, setOwnerEmail] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!name.trim() || !slug.trim() || !ownerEmail.trim() || !ownerName.trim()) return;
+    setSaving(true);
+    try {
+      const tenant = await adminTenants.create(
+        { name: name.trim(), slug: slug.trim(), ownerEmail: ownerEmail.trim(), ownerName: ownerName.trim() },
+        { token },
+      );
+      setName("");
+      setSlug("");
+      setOwnerName("");
+      setOwnerEmail("");
+      onCreated(tenant);
+    } catch {
+      toast({ title: "Couldn't create tenant", description: "The ops API isn't connected yet.", variant: "error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onClose={onClose} title="New tenant" description="Create a business and invite its owner.">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="tenant-name">Business name</Label>
+          <Input id="tenant-name" value={name} onChange={(e) => setName(e.target.value)} required />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="tenant-slug">Slug</Label>
+          <Input
+            id="tenant-slug"
+            value={slug}
+            onChange={(e) => setSlug(e.target.value)}
+            placeholder="e.g. acme-cafe"
+            required
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="owner-name">Owner name</Label>
+          <Input id="owner-name" value={ownerName} onChange={(e) => setOwnerName(e.target.value)} required />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="owner-email">Owner email</Label>
+          <Input
+            id="owner-email"
+            type="email"
+            value={ownerEmail}
+            onChange={(e) => setOwnerEmail(e.target.value)}
+            required
+          />
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={saving}>
+            {saving ? "Creating…" : "Create tenant"}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+function TempPasswordDialog({ result, onClose }: { result: CreateTenantResult | null; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+
+  async function handleCopy() {
+    if (!result) return;
+    try {
+      await navigator.clipboard.writeText(result.tempPassword);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard access denied — the password is still selectable/visible.
+    }
+  }
+
+  return (
+    <Dialog
+      open={result != null}
+      onClose={onClose}
+      title="Tenant created"
+      description={result ? `${result.name} is ready — share this temporary password with ${result.ownerEmail} now.` : undefined}
+    >
+      {result ? (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-border-strong bg-surface-muted px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Temporary password</p>
+            <p className="mt-1 break-all font-mono text-sm font-bold">{result.tempPassword}</p>
+          </div>
+          <p className="text-xs text-danger">
+            This is shown once and can&apos;t be retrieved again — copy it now.
+          </p>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={handleCopy}>
+              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {copied ? "Copied" : "Copy password"}
+            </Button>
+            <Button onClick={onClose}>Done</Button>
+          </div>
+        </div>
+      ) : null}
+    </Dialog>
   );
 }

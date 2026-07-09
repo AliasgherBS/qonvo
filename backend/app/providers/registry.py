@@ -1,0 +1,93 @@
+"""Per-tenant provider resolution (DESIGN.md §4).
+
+Reads the tenant's provider choice from ``tenant_config`` (the flat
+``llm_provider``/``llm_model`` columns, or the nested ``providers`` JSON map),
+falling back to the system defaults in :mod:`app.core.config`. Named presets
+map a provider key to its base URL so tenants/ops only pick a name.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Protocol
+
+from app.core.config import settings
+from app.providers.openai_compat import OpenAICompatProvider
+
+# Provider name → base URL. "custom" (or any unknown name) uses the caller's
+# base_url verbatim / the system default.
+PROVIDER_PRESETS: dict[str, str] = {
+    "openai": "https://api.openai.com/v1",
+    "openrouter": "https://openrouter.ai/api/v1",
+    "groq": "https://api.groq.com/openai/v1",
+    "gemini": "https://generativelanguage.googleapis.com/v1beta/openai",
+}
+
+
+class TenantConfigLike(Protocol):
+    """Minimal shape of ``app.models.tenant.TenantConfig`` this module reads."""
+
+    llm_provider: str | None
+    llm_model: str | None
+    providers: dict[str, Any]
+
+
+def _capability_config(tenant_config: TenantConfigLike | None, capability: str) -> dict[str, Any]:
+    if tenant_config is None:
+        return {}
+    providers = getattr(tenant_config, "providers", None) or {}
+    value = providers.get(capability)
+    return value if isinstance(value, dict) else {}
+
+
+def _resolve_base_url(provider_name: str, override: str | None) -> str | None:
+    if override:
+        return override
+    return PROVIDER_PRESETS.get(provider_name)
+
+
+def resolve_llm(tenant_config: TenantConfigLike | None = None) -> OpenAICompatProvider:
+    """Build an LLM provider for a tenant, falling back to system defaults.
+
+    Lookup order per field: ``tenant_config.providers["llm"]`` entry, then the
+    flat ``tenant_config.llm_provider``/``llm_model`` columns, then
+    ``settings.llm_*``.
+    """
+    llm_cfg = _capability_config(tenant_config, "llm")
+    provider_name = (
+        llm_cfg.get("provider")
+        or (tenant_config.llm_provider if tenant_config is not None else None)
+        or settings.llm_provider
+    )
+    model = (
+        llm_cfg.get("model")
+        or (tenant_config.llm_model if tenant_config is not None else None)
+        or settings.llm_model
+    )
+    base_url = _resolve_base_url(provider_name, llm_cfg.get("base_url") or settings.llm_base_url)
+    api_key = llm_cfg.get("api_key") or settings.llm_api_key
+
+    return OpenAICompatProvider(
+        base_url=base_url or PROVIDER_PRESETS["openai"],
+        api_key=api_key,
+        model=model,
+    )
+
+
+def resolve_embedding(tenant_config: TenantConfigLike | None = None) -> OpenAICompatProvider:
+    """Build an embedding provider for a tenant, falling back to system defaults."""
+    emb_cfg = _capability_config(tenant_config, "embedding")
+    provider_name = emb_cfg.get("provider") or settings.embedding_provider
+    model = emb_cfg.get("model") or settings.embedding_model
+    base_url = _resolve_base_url(
+        provider_name, emb_cfg.get("base_url") or settings.embedding_base_url
+    )
+    api_key = emb_cfg.get("api_key") or settings.embedding_api_key
+
+    return OpenAICompatProvider(
+        base_url=base_url or PROVIDER_PRESETS["openai"],
+        api_key=api_key,
+        model=model,
+    )
+
+
+__all__ = ["PROVIDER_PRESETS", "resolve_embedding", "resolve_llm"]

@@ -9,7 +9,8 @@ from arq import create_pool
 from arq.connections import RedisSettings
 from fastapi import FastAPI
 
-from app.api import health, sessions, webhooks
+from app.api import admin, auth, conversations, health, knowledge, notifications, sessions, webhooks
+from app.api import config as config_api
 from app.core.config import settings
 from app.core.logging import configure_logging, logger
 from app.core.redis import close_redis
@@ -40,3 +41,11 @@ app = FastAPI(
 app.include_router(health.router)
 app.include_router(webhooks.router)
 app.include_router(sessions.router)
+
+# --- Phase 1: platform API (auth, inbox, knowledge, config, notifications, ops) ---
+app.include_router(auth.router)
+app.include_router(conversations.router)
+app.include_router(knowledge.router)
+app.include_router(config_api.router)
+app.include_router(notifications.router)
+app.include_router(admin.router)

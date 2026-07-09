@@ -1,5 +1,6 @@
 import { LogOut } from "lucide-react";
 
+import { NotificationsBell } from "@/components/notifications-bell";
 import { SignOutButton } from "@/components/sign-out-button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +30,7 @@ export function Topbar({
 
       <div className="flex items-center gap-3">
         <span className="hidden text-sm text-muted-foreground sm:inline">{userName}</span>
+        <NotificationsBell />
         <ThemeToggle />
         <SignOutButton>
           <LogOut className="h-4 w-4" />

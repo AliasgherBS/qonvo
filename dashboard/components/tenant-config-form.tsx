@@ -1,0 +1,249 @@
+"use client";
+
+import { useEffect, useState } from "react";
+
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/components/ui/toast";
+import type { LlmProvider, TenantConfig } from "@/lib/api";
+
+const PERSONA_OPTIONS = ["Friendly & warm", "Professional", "Playful & witty", "Formal", "Direct & concise"];
+const TONE_OPTIONS = ["Warm", "Professional", "Casual", "Formal", "Enthusiastic"];
+const LANGUAGE_OPTIONS = ["English", "Urdu", "Arabic", "Hindi"];
+const LLM_PROVIDER_OPTIONS: { value: LlmProvider; label: string }[] = [
+  { value: "openai", label: "OpenAI" },
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "groq", label: "Groq" },
+  { value: "gemini", label: "Gemini" },
+];
+const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+const DEFAULT_BUSINESS_HOURS = DAY_LABELS.map((_, day) => ({ day, open: "09:00", close: "17:00", closed: false }));
+
+function withCurrent(options: string[], current: string): string[] {
+  if (!current || options.includes(current)) return options;
+  return [current, ...options];
+}
+
+const SELECT_CLASSES =
+  "h-10 w-full rounded-xl border border-border-strong bg-surface px-3.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
+
+export function TenantConfigForm({
+  config,
+  onSave,
+}: {
+  config: TenantConfig;
+  onSave: (next: TenantConfig) => Promise<void>;
+}) {
+  const { toast } = useToast();
+  const [form, setForm] = useState<TenantConfig>(config);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setForm(config);
+  }, [config]);
+
+  async function handleSave() {
+    setSaving(true);
+    try {
+      await onSave(form);
+      toast({ title: "Settings saved", variant: "success" });
+    } catch {
+      toast({ title: "Couldn't save settings", description: "The config API isn't connected yet.", variant: "error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const businessHours = form.businessHours.length ? form.businessHours : DEFAULT_BUSINESS_HOURS;
+
+  function updateDay(day: number, patch: Partial<TenantConfig["businessHours"][number]>) {
+    const next = businessHours.map((row) => (row.day === day ? { ...row, ...patch } : row));
+    setForm({ ...form, businessHours: next });
+  }
+
+  return (
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Business</CardTitle>
+            <CardDescription>What your business is called and how your AI rep shows up.</CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="business-name">Business name</Label>
+            <Input
+              id="business-name"
+              value={form.businessName}
+              onChange={(e) => setForm({ ...form, businessName: e.target.value })}
+              placeholder="Your business name"
+            />
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="persona">Persona</Label>
+              <select
+                id="persona"
+                className={SELECT_CLASSES}
+                value={form.persona}
+                onChange={(e) => setForm({ ...form, persona: e.target.value })}
+              >
+                {withCurrent(PERSONA_OPTIONS, form.persona).map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="tone">Tone</Label>
+              <select
+                id="tone"
+                className={SELECT_CLASSES}
+                value={form.tone}
+                onChange={(e) => setForm({ ...form, tone: e.target.value })}
+              >
+                {withCurrent(TONE_OPTIONS, form.tone).map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="primary-language">Primary language</Label>
+            <select
+              id="primary-language"
+              className={SELECT_CLASSES}
+              value={form.primaryLanguage}
+              onChange={(e) => setForm({ ...form, primaryLanguage: e.target.value })}
+            >
+              {withCurrent(LANGUAGE_OPTIONS, form.primaryLanguage).map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="custom-instructions">Custom instructions</Label>
+            <Textarea
+              id="custom-instructions"
+              rows={4}
+              value={form.customInstructions}
+              onChange={(e) => setForm({ ...form, customInstructions: e.target.value })}
+              placeholder="Anything else your AI rep should always keep in mind."
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Business hours</CardTitle>
+            <CardDescription>Outside open hours, customers get your custom auto-reply.</CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {businessHours.map((row) => (
+            <div key={row.day} className="flex flex-wrap items-center gap-3 rounded-xl border border-border px-3 py-2">
+              <span className="w-12 text-sm font-semibold">{DAY_LABELS[row.day]}</span>
+              <Switch
+                checked={!row.closed}
+                onCheckedChange={(open) => updateDay(row.day, { closed: !open })}
+                label={`${DAY_LABELS[row.day]} open`}
+              />
+              <span className="text-xs text-muted-foreground">{row.closed ? "Closed" : "Open"}</span>
+              <div className="ml-auto flex items-center gap-2">
+                <Input
+                  type="time"
+                  value={row.open}
+                  disabled={row.closed}
+                  onChange={(e) => updateDay(row.day, { open: e.target.value })}
+                  className="w-32"
+                />
+                <span className="text-sm text-muted-foreground">to</span>
+                <Input
+                  type="time"
+                  value={row.close}
+                  disabled={row.closed}
+                  onChange={(e) => updateDay(row.day, { close: e.target.value })}
+                  className="w-32"
+                />
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>Escalation</CardTitle>
+            <CardDescription>Where we alert you when a customer needs a human, now.</CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5">
+            <Label htmlFor="owner-alert-number">Owner alert number (WhatsApp)</Label>
+            <Input
+              id="owner-alert-number"
+              value={form.ownerAlertNumber}
+              onChange={(e) => setForm({ ...form, ownerAlertNumber: e.target.value })}
+              placeholder="+92 3XX XXXXXXX"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
+            <CardTitle>AI provider</CardTitle>
+            <CardDescription>Which LLM powers your AI representative.</CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="llm-provider">Provider</Label>
+            <select
+              id="llm-provider"
+              className={SELECT_CLASSES}
+              value={form.llmProvider}
+              onChange={(e) => setForm({ ...form, llmProvider: e.target.value as LlmProvider })}
+            >
+              {LLM_PROVIDER_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="llm-model">Model</Label>
+            <Input
+              id="llm-model"
+              value={form.llmModel}
+              onChange={(e) => setForm({ ...form, llmModel: e.target.value })}
+              placeholder="e.g. gpt-4o-mini"
+            />
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="flex items-center gap-3">
+        <Button onClick={handleSave} disabled={saving}>
+          {saving ? "Saving…" : "Save changes"}
+        </Button>
+      </div>
+    </div>
+  );
+}

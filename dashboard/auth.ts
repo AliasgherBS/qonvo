@@ -18,15 +18,19 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         if (!email || !password) return null;
 
         try {
-          const { accessToken, user } = await apiAuth.login({ email, password });
+          // Login returns the access token + role/tenant/name; /api/me fills in
+          // email + tenant_name (not present on the login response).
+          const login = await apiAuth.login({ email, password });
+          const me = await apiAuth.me({ token: login.accessToken });
+
           return {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            tenantId: user.tenantId,
-            tenantName: user.tenantName,
-            role: user.role,
-            accessToken,
+            id: login.tenantId,
+            email: me.email,
+            name: login.name,
+            tenantId: login.tenantId,
+            tenantName: me.tenantName,
+            role: login.role,
+            accessToken: login.accessToken,
           };
         } catch (err) {
           // Backend not reachable yet in Phase 0 — surface as invalid credentials

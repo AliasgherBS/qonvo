@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { sessions, type SessionStatus, type WhatsappSession } from "@/lib/api";
-import { usePolling } from "@/lib/use-api";
+import { sessions, type SessionStatus, type WhatsappSessionStatus } from "@/lib/api";
+import { useAuthToken, usePolling } from "@/lib/use-api";
 
 const STATUS_COPY: Record<SessionStatus, { title: string; description: string }> = {
   STOPPED: {
@@ -29,7 +29,7 @@ const STATUS_COPY: Record<SessionStatus, { title: string; description: string }>
   },
   FAILED: {
     title: "Connection failed",
-    description: "Something went wrong linking this number. Restart the session to try again.",
+    description: "Something went wrong linking this number. Try again with a new session.",
   },
 };
 
@@ -37,6 +37,7 @@ const QR_REFRESH_MS = 15_000;
 const STATUS_POLL_MS = 5_000;
 
 export default function ConnectPage() {
+  const token = useAuthToken();
   const [sessionName, setSessionName] = useState("");
   const [activeSession, setActiveSession] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
@@ -47,8 +48,7 @@ export default function ConnectPage() {
     setStarting(true);
     setStartError(null);
     try {
-      await sessions.create({ name: sessionName.trim(), label: sessionName.trim() });
-      await sessions.start(sessionName.trim());
+      await sessions.create({ name: sessionName.trim(), label: sessionName.trim() }, { token });
       setActiveSession(sessionName.trim());
     } catch {
       setStartError("Couldn't reach the backend yet — this will start the moment the sessions API is live.");
@@ -85,17 +85,18 @@ export default function ConnectPage() {
           </CardContent>
         </Card>
       ) : (
-        <QrFlow sessionName={activeSession} />
+        <QrFlow sessionName={activeSession} onRetry={() => setActiveSession(null)} />
       )}
     </div>
   );
 }
 
-function QrFlow({ sessionName }: { sessionName: string }) {
-  const { data: session, error } = usePolling<WhatsappSession>(
-    () => sessions.get(sessionName),
+function QrFlow({ sessionName, onRetry }: { sessionName: string; onRetry: () => void }) {
+  const token = useAuthToken();
+  const { data: session, error } = usePolling<WhatsappSessionStatus>(
+    () => sessions.status(sessionName, { token }),
     STATUS_POLL_MS,
-    [sessionName],
+    [sessionName, token],
   );
 
   const status = session?.status ?? "STARTING";
@@ -148,9 +149,9 @@ function QrFlow({ sessionName }: { sessionName: string }) {
         ) : null}
 
         {status === "FAILED" ? (
-          <Button variant="outline" onClick={() => sessions.restart(sessionName).catch(() => undefined)}>
+          <Button variant="outline" onClick={onRetry}>
             <RefreshCw className="h-4 w-4" />
-            Restart session
+            Try again
           </Button>
         ) : null}
 

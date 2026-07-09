@@ -12,18 +12,24 @@ from typing import Any
 
 
 @dataclass(slots=True)
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(slots=True)
 class ChatMessage:
     role: str  # "system" | "user" | "assistant" | "tool"
     content: str
     # Optional image inputs (URLs or data URIs) for vision-capable models.
     images: list[str] = field(default_factory=list)
-
-
-@dataclass(slots=True)
-class ToolCall:
-    id: str
-    name: str
-    arguments: dict[str, Any]
+    # Tool-loop round-trip fields (Phase 1, DESIGN.md §5.4 step 7): an
+    # "assistant" message that requested tool calls carries them here; the
+    # corresponding "tool" role reply carries ``tool_call_id``/``name``.
+    tool_calls: list[ToolCall] | None = None
+    tool_call_id: str | None = None
+    name: str | None = None
 
 
 @dataclass(slots=True)

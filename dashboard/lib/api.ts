@@ -1,10 +1,11 @@
 /**
  * Typed fetch client for the Qonvo FastAPI backend.
  *
- * Route shapes follow DESIGN.md (§5 pipeline, §8 auth, §9 ops console,
- * §10 owner dashboard, §11 data model). The backend endpoints mostly don't
- * exist yet (Phase 1+) — these stubs exist so the dashboard's data-fetching
- * code, types, and UI states are ready the moment the backend lands.
+ * Route shapes follow the Phase 1C backend contract (DESIGN.md §5 pipeline,
+ * §8 auth, §9 ops console, §10 owner dashboard, §11 data model). The backend
+ * returns snake_case JSON — the `*Dto` interfaces below mirror the wire
+ * shape exactly; every exported function maps that into a camelCase shape
+ * for the rest of the app to consume.
  */
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -51,6 +52,15 @@ async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promise<T> {
   return (await res.json()) as T;
 }
 
+function buildQuery(params: Record<string, string | number | boolean | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== "") search.set(key, String(value));
+  }
+  const qs = search.toString();
+  return qs ? `?${qs}` : "";
+}
+
 /** Shared per-call options — every endpoint accepts an optional bearer token. */
 export interface CallOpts {
   token?: string;
@@ -58,72 +68,101 @@ export interface CallOpts {
 }
 
 // ---------------------------------------------------------------------------
-// Auth (§8)
+// Auth (§8) — POST /api/auth/login, GET /api/me
 // ---------------------------------------------------------------------------
 
 export type Role = "owner" | "staff" | "qonvo_admin";
-
-export interface AuthUser {
-  id: string;
-  email: string;
-  name: string;
-  tenantId: string;
-  tenantName: string;
-  role: Role;
-}
 
 export interface LoginRequest {
   email: string;
   password: string;
 }
 
-export interface LoginResponse {
+interface LoginResponseDto {
+  access_token: string;
+  token_type: string;
+  role: Role;
+  tenant_id: string;
+  name: string;
+}
+
+export interface LoginResult {
   accessToken: string;
-  user: AuthUser;
+  tokenType: string;
+  role: Role;
+  tenantId: string;
+  name: string;
+}
+
+interface MeDto {
+  email: string;
+  name: string;
+  role: Role;
+  tenant_id: string;
+  tenant_name: string;
+}
+
+export interface Me {
+  email: string;
+  name: string;
+  role: Role;
+  tenantId: string;
+  tenantName: string;
 }
 
 export const auth = {
   login: (payload: LoginRequest, opts: CallOpts = {}) =>
-    apiFetch<LoginResponse>("/api/auth/login", {
-      method: "POST",
-      body: payload,
-      signal: opts.signal,
-    }),
+    apiFetch<LoginResponseDto>("/api/auth/login", { method: "POST", body: payload, signal: opts.signal }).then(
+      (dto): LoginResult => ({
+        accessToken: dto.access_token,
+        tokenType: dto.token_type,
+        role: dto.role,
+        tenantId: dto.tenant_id,
+        name: dto.name,
+      }),
+    ),
+
+  me: (opts: CallOpts = {}) =>
+    apiFetch<MeDto>("/api/me", opts).then(
+      (dto): Me => ({
+        email: dto.email,
+        name: dto.name,
+        role: dto.role,
+        tenantId: dto.tenant_id,
+        tenantName: dto.tenant_name,
+      }),
+    ),
 };
 
 // ---------------------------------------------------------------------------
-// WhatsApp sessions (§1, §10 onboarding QR flow, §11 whatsapp_sessions)
+// WhatsApp sessions — already live (§1, §10 onboarding QR flow)
 // ---------------------------------------------------------------------------
 
 export type SessionStatus = "STOPPED" | "STARTING" | "SCAN_QR_CODE" | "WORKING" | "FAILED";
 
-export interface WhatsappSession {
+interface SessionStatusDto {
   name: string;
-  tenantId: string;
-  label: string;
   status: SessionStatus;
-  engine: "WEBJS" | "NOWEB";
-  dailyCap: number;
-  warmupStage: number;
-  updatedAt: string;
+}
+
+export interface WhatsappSessionStatus {
+  name: string;
+  status: SessionStatus;
 }
 
 export const sessions = {
-  list: (opts: CallOpts = {}) => apiFetch<WhatsappSession[]>("/api/sessions", opts),
+  create: (payload: { name: string; label?: string }, opts: CallOpts = {}) =>
+    apiFetch<SessionStatusDto>("/api/sessions", { method: "POST", body: payload, ...opts }).then(
+      (dto): WhatsappSessionStatus => ({ name: dto.name, status: dto.status }),
+    ),
 
-  get: (name: string, opts: CallOpts = {}) => apiFetch<WhatsappSession>(`/api/sessions/${name}`, opts),
+  status: (name: string, opts: CallOpts = {}) =>
+    apiFetch<SessionStatusDto>(`/api/sessions/${name}/status`, opts).then(
+      (dto): WhatsappSessionStatus => ({ name: dto.name, status: dto.status }),
+    ),
 
-  create: (payload: { name: string; label: string }, opts: CallOpts = {}) =>
-    apiFetch<WhatsappSession>("/api/sessions", { method: "POST", body: payload, ...opts }),
-
-  start: (name: string, opts: CallOpts = {}) =>
-    apiFetch<WhatsappSession>(`/api/sessions/${name}/start`, { method: "POST", ...opts }),
-
-  restart: (name: string, opts: CallOpts = {}) =>
-    apiFetch<WhatsappSession>(`/api/sessions/${name}/restart`, { method: "POST", ...opts }),
-
-  /** GET /api/{session}/auth/qr — returns a PNG; render directly as an <img> src. */
-  qrImageUrl: (name: string) => `${API_BASE_URL}/api/${name}/auth/qr`,
+  /** GET /api/sessions/{name}/qr — returns a PNG; render directly as an <img> src. */
+  qrImageUrl: (name: string) => `${API_BASE_URL}/api/sessions/${name}/qr`,
 };
 
 // ---------------------------------------------------------------------------
@@ -132,50 +171,116 @@ export const sessions = {
 
 export type ConversationState = "bot_active" | "paused_by_agent" | "paused_by_owner" | "needs_human";
 
+interface ConversationDto {
+  id: string;
+  chat_id: string;
+  state: ConversationState;
+  last_message_preview: string | null;
+  last_activity_at: string;
+  unread: boolean;
+}
+
 export interface Conversation {
   id: string;
-  tenantId: string;
-  customerName: string | null;
-  customerNumber: string;
+  chatId: string;
   state: ConversationState;
   lastMessagePreview: string | null;
   lastActivityAt: string;
-  unreadCount: number;
+  unread: boolean;
+}
+
+interface ConversationsListDto {
+  items: ConversationDto[];
+  total: number;
+}
+
+export interface ConversationsListResult {
+  items: Conversation[];
+  total: number;
+}
+
+function mapConversation(dto: ConversationDto): Conversation {
+  return {
+    id: dto.id,
+    chatId: dto.chat_id,
+    state: dto.state,
+    lastMessagePreview: dto.last_message_preview,
+    lastActivityAt: dto.last_activity_at,
+    unread: dto.unread,
+  };
 }
 
 export type MessageDirection = "inbound" | "outbound";
 export type MessageAuthor = "bot" | "human" | "customer";
 export type MessageType = "text" | "voice" | "image" | "file";
 
-export interface Message {
+interface MessageDto {
   id: string;
-  conversationId: string;
   direction: MessageDirection;
   author: MessageAuthor;
   type: MessageType;
-  text: string | null;
-  mediaUrl: string | null;
+  body: string;
+  created_at: string;
+}
+
+export interface Message {
+  id: string;
+  direction: MessageDirection;
+  author: MessageAuthor;
+  type: MessageType;
+  body: string;
   createdAt: string;
 }
 
+interface MessagesListDto {
+  items: MessageDto[];
+}
+
+function mapMessage(dto: MessageDto): Message {
+  return {
+    id: dto.id,
+    direction: dto.direction,
+    author: dto.author,
+    type: dto.type,
+    body: dto.body,
+    createdAt: dto.created_at,
+  };
+}
+
+interface StateResponseDto {
+  state: ConversationState;
+}
+
+interface ReplyResponseDto {
+  message_id: string;
+}
+
 export const conversations = {
-  list: (opts: CallOpts = {}) => apiFetch<Conversation[]>("/api/conversations", opts),
+  list: (params: { state?: ConversationState; limit?: number; offset?: number } = {}, opts: CallOpts = {}) =>
+    apiFetch<ConversationsListDto>(`/api/conversations${buildQuery(params)}`, opts).then(
+      (dto): ConversationsListResult => ({
+        items: dto.items.map(mapConversation),
+        total: dto.total,
+      }),
+    ),
 
-  get: (id: string, opts: CallOpts = {}) => apiFetch<Conversation>(`/api/conversations/${id}`, opts),
-
-  messages: (id: string, opts: CallOpts = {}) =>
-    apiFetch<Message[]>(`/api/conversations/${id}/messages`, opts),
-
-  sendMessage: (id: string, text: string, opts: CallOpts = {}) =>
-    apiFetch<Message>(`/api/conversations/${id}/messages`, { method: "POST", body: { text }, ...opts }),
+  messages: (id: string, params: { limit?: number; before?: string } = {}, opts: CallOpts = {}) =>
+    apiFetch<MessagesListDto>(`/api/conversations/${id}/messages${buildQuery(params)}`, opts).then((dto) => ({
+      items: dto.items.map(mapMessage),
+    })),
 
   /** Owner/staff clicks "take over" in the inbox → paused_by_owner (§5.5). */
   takeover: (id: string, opts: CallOpts = {}) =>
-    apiFetch<Conversation>(`/api/conversations/${id}/takeover`, { method: "POST", ...opts }),
+    apiFetch<StateResponseDto>(`/api/conversations/${id}/takeover`, { method: "POST", ...opts }),
 
   /** Resume bot replies for this conversation. */
   release: (id: string, opts: CallOpts = {}) =>
-    apiFetch<Conversation>(`/api/conversations/${id}/release`, { method: "POST", ...opts }),
+    apiFetch<StateResponseDto>(`/api/conversations/${id}/release`, { method: "POST", ...opts }),
+
+  reply: (id: string, text: string, opts: CallOpts = {}) =>
+    apiFetch<ReplyResponseDto>(`/api/conversations/${id}/reply`, { method: "POST", body: { text }, ...opts }).then(
+      (dto) => ({ messageId: dto.message_id }),
+    ),
 };
 
 // ---------------------------------------------------------------------------
@@ -185,40 +290,78 @@ export const conversations = {
 export type KnowledgeSourceType = "file" | "website" | "manual";
 export type KnowledgeSourceStatus = "pending" | "processing" | "ready" | "error";
 
+interface KnowledgeSourceDto {
+  id: string;
+  type: KnowledgeSourceType;
+  title: string;
+  status: KnowledgeSourceStatus;
+  updated_at?: string;
+}
+
 export interface KnowledgeSource {
   id: string;
   type: KnowledgeSourceType;
   title: string;
-  url: string | null;
-  autoRefresh: boolean;
-  cron: string | null;
   status: KnowledgeSourceStatus;
-  chunkCount: number;
-  updatedAt: string;
+  updatedAt: string | null;
+}
+
+function mapKnowledgeSource(dto: KnowledgeSourceDto): KnowledgeSource {
+  return {
+    id: dto.id,
+    type: dto.type,
+    title: dto.title,
+    status: dto.status,
+    updatedAt: dto.updated_at ?? null,
+  };
+}
+
+interface KnowledgeGapDto {
+  id: string;
+  question: string;
+  count: number;
+}
+
+export interface KnowledgeGap {
+  id: string;
+  question: string;
+  count: number;
 }
 
 export const knowledge = {
-  listSources: (opts: CallOpts = {}) => apiFetch<KnowledgeSource[]>("/api/knowledge/sources", opts),
+  listSources: (opts: CallOpts = {}) =>
+    apiFetch<KnowledgeSourceDto[]>("/api/knowledge/sources", opts).then((items) => items.map(mapKnowledgeSource)),
 
-  addWebsite: (payload: { url: string; autoRefresh: boolean }, opts: CallOpts = {}) =>
-    apiFetch<KnowledgeSource>("/api/knowledge/sources", {
+  /** Manual entry: POST /api/knowledge/sources {type: "manual", title, content}. */
+  addManualEntry: (payload: { title: string; content: string }, opts: CallOpts = {}) =>
+    apiFetch<KnowledgeSourceDto>("/api/knowledge/sources", {
       method: "POST",
-      body: { type: "website", ...payload },
+      body: { type: "manual", ...payload },
       ...opts,
-    }),
+    }).then(mapKnowledgeSource),
 
-  uploadFile: (file: File, opts: CallOpts = {}) => {
+  /** File upload: create the source record, then upload the file to it. */
+  createFileSource: (title: string, opts: CallOpts = {}) =>
+    apiFetch<KnowledgeSourceDto>("/api/knowledge/sources", {
+      method: "POST",
+      body: { type: "file", title },
+      ...opts,
+    }).then(mapKnowledgeSource),
+
+  uploadFile: (id: string, file: File, opts: CallOpts = {}) => {
     const form = new FormData();
     form.append("file", file);
-    return apiFetch<KnowledgeSource>("/api/knowledge/sources/upload", {
+    return apiFetch<KnowledgeSourceDto>(`/api/knowledge/sources/${id}/upload`, {
       method: "POST",
       body: form,
       ...opts,
-    });
+    }).then(mapKnowledgeSource);
   },
 
   deleteSource: (id: string, opts: CallOpts = {}) =>
     apiFetch<void>(`/api/knowledge/sources/${id}`, { method: "DELETE", ...opts }),
+
+  gaps: (opts: CallOpts = {}) => apiFetch<KnowledgeGapDto[]>("/api/knowledge/gaps", opts),
 };
 
 // ---------------------------------------------------------------------------
@@ -226,6 +369,14 @@ export const knowledge = {
 // ---------------------------------------------------------------------------
 
 export type NotificationType = "escalation" | "disconnect" | "quota_warning" | "quota_exceeded" | "other";
+
+interface NotificationDto {
+  id: string;
+  type: NotificationType;
+  message: string;
+  read: boolean;
+  created_at: string;
+}
 
 export interface Notification {
   id: string;
@@ -235,55 +386,105 @@ export interface Notification {
   createdAt: string;
 }
 
+function mapNotification(dto: NotificationDto): Notification {
+  return {
+    id: dto.id,
+    type: dto.type,
+    message: dto.message,
+    read: dto.read,
+    createdAt: dto.created_at,
+  };
+}
+
 export const notifications = {
-  list: (opts: CallOpts = {}) => apiFetch<Notification[]>("/api/notifications", opts),
+  list: (params: { unread?: boolean } = {}, opts: CallOpts = {}) =>
+    apiFetch<NotificationDto[]>(`/api/notifications${buildQuery(params)}`, opts).then((items) =>
+      items.map(mapNotification),
+    ),
 
   markRead: (id: string, opts: CallOpts = {}) =>
     apiFetch<void>(`/api/notifications/${id}/read`, { method: "POST", ...opts }),
 };
 
 // ---------------------------------------------------------------------------
-// Settings / tenant config (§10 settings, §11 tenant_config)
+// Config / settings (§10 settings, §11 tenant_config)
 // ---------------------------------------------------------------------------
 
-export interface BusinessHours {
-  timezone: string;
-  windows: { day: number; start: string; end: string }[];
+export type LlmProvider = "openai" | "openrouter" | "groq" | "gemini";
+
+interface BusinessHoursDayDto {
+  day: number;
+  open: string;
+  close: string;
+  closed: boolean;
+}
+
+export interface BusinessHoursDay {
+  day: number;
+  open: string;
+  close: string;
+  closed: boolean;
+}
+
+interface TenantConfigDto {
+  persona: string;
+  business_name: string;
+  primary_language: string;
+  tone: string;
+  custom_instructions: string;
+  business_hours: BusinessHoursDayDto[];
+  owner_alert_number: string;
+  llm_provider: LlmProvider;
+  llm_model: string;
 }
 
 export interface TenantConfig {
   persona: string;
+  businessName: string;
+  primaryLanguage: string;
   tone: string;
-  languages: string[];
-  businessHours: BusinessHours;
-  escalationNumber: string;
-  autoResumeHours: number;
+  customInstructions: string;
+  businessHours: BusinessHoursDay[];
+  ownerAlertNumber: string;
+  llmProvider: LlmProvider;
+  llmModel: string;
 }
 
-export const settings = {
-  get: (opts: CallOpts = {}) => apiFetch<TenantConfig>("/api/settings", opts),
-
-  update: (payload: Partial<TenantConfig>, opts: CallOpts = {}) =>
-    apiFetch<TenantConfig>("/api/settings", { method: "PATCH", body: payload, ...opts }),
-};
-
-// ---------------------------------------------------------------------------
-// Analytics (§10 analytics)
-// ---------------------------------------------------------------------------
-
-export interface AnalyticsSummary {
-  messagesIn: number;
-  messagesOut: number;
-  avgResponseTimeSeconds: number;
-  resolutionRate: number;
-  handoffRate: number;
-  leadsCount: number;
-  bookingsCount: number;
-  topUnansweredQuestions: string[];
+function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
+  return {
+    persona: dto.persona,
+    businessName: dto.business_name,
+    primaryLanguage: dto.primary_language,
+    tone: dto.tone,
+    customInstructions: dto.custom_instructions,
+    businessHours: dto.business_hours,
+    ownerAlertNumber: dto.owner_alert_number,
+    llmProvider: dto.llm_provider,
+    llmModel: dto.llm_model,
+  };
 }
 
-export const analytics = {
-  summary: (opts: CallOpts = {}) => apiFetch<AnalyticsSummary>("/api/analytics/summary", opts),
+function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
+  return {
+    persona: cfg.persona,
+    business_name: cfg.businessName,
+    primary_language: cfg.primaryLanguage,
+    tone: cfg.tone,
+    custom_instructions: cfg.customInstructions,
+    business_hours: cfg.businessHours,
+    owner_alert_number: cfg.ownerAlertNumber,
+    llm_provider: cfg.llmProvider,
+    llm_model: cfg.llmModel,
+  };
+}
+
+export const config = {
+  get: (opts: CallOpts = {}) => apiFetch<TenantConfigDto>("/api/config", opts).then(mapTenantConfig),
+
+  update: (payload: TenantConfig, opts: CallOpts = {}) =>
+    apiFetch<TenantConfigDto>("/api/config", { method: "PUT", body: toTenantConfigDto(payload), ...opts }).then(
+      mapTenantConfig,
+    ),
 };
 
 // ---------------------------------------------------------------------------
@@ -292,32 +493,147 @@ export const analytics = {
 
 export type TenantStatus = "onboarding" | "active" | "suspended";
 
+interface AdminTenantDto {
+  id: string;
+  name: string;
+  slug: string;
+  status: TenantStatus;
+  owner_email: string;
+  owner_name: string;
+  created_at: string;
+}
+
 export interface AdminTenant {
   id: string;
   name: string;
+  slug: string;
   status: TenantStatus;
   ownerEmail: string;
+  ownerName: string;
   createdAt: string;
 }
 
+function mapAdminTenant(dto: AdminTenantDto): AdminTenant {
+  return {
+    id: dto.id,
+    name: dto.name,
+    slug: dto.slug,
+    status: dto.status,
+    ownerEmail: dto.owner_email,
+    ownerName: dto.owner_name,
+    createdAt: dto.created_at,
+  };
+}
+
+export interface CreateTenantRequest {
+  name: string;
+  slug: string;
+  ownerEmail: string;
+  ownerName: string;
+}
+
+interface CreateTenantResponseDto extends AdminTenantDto {
+  temp_password: string;
+}
+
+export interface CreateTenantResult extends AdminTenant {
+  tempPassword: string;
+}
+
 export const adminTenants = {
-  list: (opts: CallOpts = {}) => apiFetch<AdminTenant[]>("/api/admin/tenants", opts),
+  list: (opts: CallOpts = {}) =>
+    apiFetch<AdminTenantDto[]>("/api/admin/tenants", opts).then((items) => items.map(mapAdminTenant)),
 
-  create: (payload: { name: string; ownerEmail: string }, opts: CallOpts = {}) =>
-    apiFetch<AdminTenant>("/api/admin/tenants", { method: "POST", body: payload, ...opts }),
+  get: (id: string, opts: CallOpts = {}) =>
+    apiFetch<AdminTenantDto>(`/api/admin/tenants/${id}`, opts).then(mapAdminTenant),
 
-  suspend: (id: string, opts: CallOpts = {}) =>
-    apiFetch<AdminTenant>(`/api/admin/tenants/${id}/suspend`, { method: "POST", ...opts }),
+  create: (payload: CreateTenantRequest, opts: CallOpts = {}) =>
+    apiFetch<CreateTenantResponseDto>("/api/admin/tenants", {
+      method: "POST",
+      body: {
+        name: payload.name,
+        slug: payload.slug,
+        owner_email: payload.ownerEmail,
+        owner_name: payload.ownerName,
+      },
+      ...opts,
+    }).then((dto): CreateTenantResult => ({ ...mapAdminTenant(dto), tempPassword: dto.temp_password })),
+
+  getConfig: (id: string, opts: CallOpts = {}) =>
+    apiFetch<TenantConfigDto>(`/api/admin/tenants/${id}/config`, opts).then(mapTenantConfig),
+
+  updateConfig: (id: string, payload: TenantConfig, opts: CallOpts = {}) =>
+    apiFetch<TenantConfigDto>(`/api/admin/tenants/${id}/config`, {
+      method: "PUT",
+      body: toTenantConfigDto(payload),
+      ...opts,
+    }).then(mapTenantConfig),
 };
 
-export interface FleetSession extends WhatsappSession {
+interface FleetSessionDto {
+  name: string;
+  tenant_id: string;
+  tenant_name: string;
+  label: string;
+  status: SessionStatus;
+  updated_at: string;
+}
+
+export interface FleetSession {
+  name: string;
+  tenantId: string;
   tenantName: string;
-  webhookFailureCount: number;
+  label: string;
+  status: SessionStatus;
+  updatedAt: string;
+}
+
+function mapFleetSession(dto: FleetSessionDto): FleetSession {
+  return {
+    name: dto.name,
+    tenantId: dto.tenant_id,
+    tenantName: dto.tenant_name,
+    label: dto.label,
+    status: dto.status,
+    updatedAt: dto.updated_at,
+  };
 }
 
 export const adminFleet = {
-  sessions: (opts: CallOpts = {}) => apiFetch<FleetSession[]>("/api/admin/fleet/sessions", opts),
+  list: (opts: CallOpts = {}) =>
+    apiFetch<FleetSessionDto[]>("/api/admin/fleet", opts).then((items) => items.map(mapFleetSession)),
+};
 
-  restart: (name: string, opts: CallOpts = {}) =>
-    apiFetch<FleetSession>(`/api/admin/fleet/sessions/${name}/restart`, { method: "POST", ...opts }),
+interface UsageRowDto {
+  tenant_id: string;
+  tenant_name: string;
+  month: string;
+  messages: number;
+  tokens: number;
+  cost: number;
+}
+
+export interface UsageRow {
+  tenantId: string;
+  tenantName: string;
+  month: string;
+  messages: number;
+  tokens: number;
+  cost: number;
+}
+
+function mapUsageRow(dto: UsageRowDto): UsageRow {
+  return {
+    tenantId: dto.tenant_id,
+    tenantName: dto.tenant_name,
+    month: dto.month,
+    messages: dto.messages,
+    tokens: dto.tokens,
+    cost: dto.cost,
+  };
+}
+
+export const adminUsage = {
+  list: (opts: CallOpts = {}) =>
+    apiFetch<UsageRowDto[]>("/api/admin/usage", opts).then((items) => items.map(mapUsageRow)),
 };

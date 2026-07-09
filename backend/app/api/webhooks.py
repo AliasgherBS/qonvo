@@ -20,6 +20,7 @@ from app.core.redis import get_redis
 from app.core.security import verify_waha_hmac
 from app.core.tenancy import system_session
 from app.models.whatsapp import WhatsAppSession
+from app.services.takeover import implicit_takeover
 
 router = APIRouter(tags=["webhooks"])
 
@@ -103,9 +104,17 @@ async def waha_webhook(
         return {"status": "ok"}
 
     if event == "message.any":
-        # Subscribed only to detect owner fromMe takeover (§5.5); never processed.
+        # Subscribed only to detect owner fromMe takeover (§5.5); never processed
+        # through the agent pipeline.
         if from_me and is_processable_chat_id(chat_id):
-            bound.info("owner fromMe reply detected — takeover signal")
+            async with system_session() as db:
+                await implicit_takeover(
+                    db,
+                    tenant_id=session_row.tenant_id,
+                    session_id=session_row.id,
+                    chat_id=chat_id,
+                )
+            bound.info("owner fromMe reply detected — implicit takeover applied")
         return {"status": "ok"}
 
     if event != "message":

@@ -1,11 +1,21 @@
 "use client";
 
+import { signOut, useSession } from "next-auth/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+
+import { ApiError } from "@/lib/api";
 
 interface UseApiState<T> {
   data: T | null;
   loading: boolean;
   error: string | null;
+}
+
+/** A 401 means the access token expired or was revoked — bounce to /login. */
+function handleUnauthorized(err: unknown) {
+  if (err instanceof ApiError && err.status === 401) {
+    void signOut({ callbackUrl: "/login" });
+  }
 }
 
 /** Minimal fetch-on-mount hook — deliberately no cache/dedupe library. */
@@ -25,6 +35,7 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
         if (active) setState({ data, loading: false, error: null });
       })
       .catch((err: unknown) => {
+        handleUnauthorized(err);
         if (active) {
           setState({
             data: null,
@@ -45,11 +56,12 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
   return { ...state, refetch };
 }
 
-/** Same as useApi, but re-runs on an interval — used for the QR onboarding poll. */
+/** Same as useApi, but re-runs on an interval — used for the QR/inbox/notification polls. */
 export function usePolling<T>(fetcher: () => Promise<T>, intervalMs: number, deps: unknown[] = []) {
   const [state, setState] = useState<UseApiState<T>>({ data: null, loading: true, error: null });
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
+  const runRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     let active = true;
@@ -61,6 +73,7 @@ export function usePolling<T>(fetcher: () => Promise<T>, intervalMs: number, dep
           if (active) setState({ data, loading: false, error: null });
         })
         .catch((err: unknown) => {
+          handleUnauthorized(err);
           if (active) {
             setState((prev) => ({
               data: prev.data,
@@ -71,6 +84,7 @@ export function usePolling<T>(fetcher: () => Promise<T>, intervalMs: number, dep
         });
     };
 
+    runRef.current = run;
     run();
     const id = window.setInterval(run, intervalMs);
 
@@ -81,5 +95,13 @@ export function usePolling<T>(fetcher: () => Promise<T>, intervalMs: number, dep
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
-  return state;
+  const refetch = useCallback(() => runRef.current(), []);
+
+  return { ...state, refetch };
+}
+
+/** Convenience accessor for the bearer token every authed api.ts call needs. */
+export function useAuthToken(): string | undefined {
+  const { data: session } = useSession();
+  return session?.accessToken;
 }

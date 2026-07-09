@@ -90,6 +90,60 @@ class Settings(BaseSettings):
     typing_seconds_per_char: float = 0.03
     typing_max_seconds: float = 12.0
 
+    # --- Phase 1: platform ---
+    # JWT lifetime for dashboard/ops login tokens (DESIGN.md §8).
+    jwt_expiry_hours: int = 24
+    # Auto-resume TTL for a paused conversation (DESIGN.md §5.5, default 6h).
+    takeover_auto_resume_ttl_seconds: int = 21_600
+    # Local fallback directory for raw knowledge uploads when MinIO is absent (§6, §12.3).
+    knowledge_upload_dir: str = "/data/knowledge"
+
+    # --- Phase 1: agent core ---
+    # System-default provider/model, used when a tenant has no override (§4).
+    llm_provider: str = "openai"
+    llm_model: str = "gpt-4o-mini"
+    llm_base_url: str | None = None
+    llm_api_key: str = "change-me"
+    embedding_provider: str = "openai"
+    embedding_model: str = "text-embedding-3-small"
+    embedding_base_url: str | None = None
+    embedding_api_key: str = "change-me"
+    # Provider adapter tuning (retries with exponential backoff, DESIGN.md §4).
+    provider_timeout_seconds: float = 30.0
+    provider_max_retries: int = 2
+    provider_retry_base_seconds: float = 1.0
+
+    # --- RAG (DESIGN.md §6) ---
+    rag_top_k: int = 6
+    rag_min_score: float = 0.5
+    rag_chunk_tokens: int = 500
+    rag_chunk_overlap_tokens: int = 50
+
+    # --- Agent pipeline (DESIGN.md §5.4) ---
+    history_window_messages: int = 20
+    history_window_tokens: int = 4_000
+    summary_refresh_turns: int = 10
+    tool_loop_max_iterations: int = 5
+    # Per-provider-per-model USD price per 1K tokens: {provider: {model: {input, output}}}.
+    llm_pricing: dict[str, dict[str, dict[str, float]]] = Field(
+        default_factory=lambda: {
+            "openai": {
+                "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
+                "gpt-4o": {"input": 0.0025, "output": 0.01},
+                "text-embedding-3-small": {"input": 0.00002, "output": 0.0},
+            },
+            "openrouter": {
+                "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
+            },
+            "groq": {
+                "llama-3.1-8b-instant": {"input": 0.00005, "output": 0.00008},
+            },
+            "gemini": {
+                "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
+            },
+        }
+    )
+
     @property
     def is_production(self) -> bool:
         return self.environment.lower() in {"production", "prod"}

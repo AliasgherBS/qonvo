@@ -27,6 +27,10 @@ class KnowledgeSource(Base, TenantScopedMixin):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     url: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Inline content for manual sources; file/url sources ingest asynchronously.
+    content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Ingestion lifecycle: pending_ingest → ready (chunked/embedded) — see §6.
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending_ingest")
     auto_refresh: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     cron: Mapped[str | None] = mapped_column(String(128), nullable=True)
     meta: Mapped[dict] = mapped_column(JSONBType, nullable=False, default=dict)
