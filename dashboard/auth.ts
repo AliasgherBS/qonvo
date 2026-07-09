@@ -4,6 +4,9 @@ import Credentials from "next-auth/providers/credentials";
 import { ApiError, auth as apiAuth } from "@/lib/api";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  // Behind our own reverse proxy (Caddy) or on localhost — the Host header is
+  // ours to trust; without this Auth.js hard-fails on non-configured hosts.
+  trustHost: true,
   session: { strategy: "jwt" },
   pages: { signIn: "/login" },
   providers: [

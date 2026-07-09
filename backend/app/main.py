@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from arq import create_pool
 from arq.connections import RedisSettings
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import admin, auth, conversations, health, knowledge, notifications, sessions, webhooks
 from app.api import config as config_api
@@ -36,6 +37,15 @@ app = FastAPI(
     title="Qonvo API",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+# Browser dashboard origins (env-driven; prod adds https://app.<domain>).
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 app.include_router(health.router)

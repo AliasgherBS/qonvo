@@ -91,6 +91,10 @@ class Settings(BaseSettings):
     typing_max_seconds: float = 12.0
 
     # --- Phase 1: platform ---
+    # Browser origins allowed to call the API (dashboard). Prod: https://app.<domain>.
+    cors_origins: list[str] = Field(
+        default=["http://localhost:3002", "http://127.0.0.1:3002"]
+    )
     # JWT lifetime for dashboard/ops login tokens (DESIGN.md §8).
     jwt_expiry_hours: int = 24
     # Auto-resume TTL for a paused conversation (DESIGN.md §5.5, default 6h).
