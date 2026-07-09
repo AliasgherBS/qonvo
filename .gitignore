@@ -1,0 +1,31 @@
+# Secrets / env
+.env
+.env.*
+!.env.example
+
+# Brand & media assets (large binaries, not code)
+Branding+Marketing/
+*.mp4
+*.pdf
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Node
+node_modules/
+.next/
+out/
+dist/
+
+# Tooling / state
+.omc/
+.claude/
+*.log
+
+# Data volumes (if ever mounted locally)
+.data/

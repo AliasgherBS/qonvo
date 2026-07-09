@@ -1,0 +1,10 @@
+# Dev-only overrides (auto-merged by `docker compose` when present).
+# Exposes datastores on localhost for running migrations/tests from the host.
+# Do NOT deploy this file to production hosts.
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:5433:5432"
+  redis:
+    ports:
+      - "127.0.0.1:6380:6379"

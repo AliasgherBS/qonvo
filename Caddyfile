@@ -1,0 +1,19 @@
+# Qonvo edge reverse proxy (DESIGN.md §2).
+# Automatic HTTPS via Let's Encrypt. {$DOMAIN} comes from the environment.
+#
+#   app.<DOMAIN>  → dashboard (Next.js)
+#   api.<DOMAIN>  → api (FastAPI)
+
+{
+	# email admin@{$DOMAIN}   # uncomment and set for ACME registration
+}
+
+app.{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy dashboard:3000
+}
+
+api.{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy api:8000
+}

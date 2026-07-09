@@ -1,0 +1,145 @@
+@import "tailwindcss";
+
+/*
+ * Qonvo Brand Kit — design tokens.
+ *
+ * Values below are close approximations of `Branding+Marketing/Qonvo Brand
+ * Kit.pdf` (spring/emerald green primary, lime/chartreuse accent, near-black
+ * dark-green surface, off-white paper). Swap the hex values in this block
+ * once exact brand-kit values are extracted — everything downstream reads
+ * from these variables, nothing is hardcoded elsewhere.
+ */
+@theme {
+  /* Brand palette */
+  --color-brand-primary-50: #e6fbef;
+  --color-brand-primary-100: #c1f5d7;
+  --color-brand-primary-300: #5fe6a3;
+  --color-brand-primary-400: #22dd82;
+  --color-brand-primary-500: #00d26a;
+  --color-brand-primary-600: #00ab57;
+  --color-brand-primary-700: #018548;
+  --color-brand-primary-900: #044a2c;
+
+  --color-brand-accent-200: #edfcae;
+  --color-brand-accent-300: #dcf87f;
+  --color-brand-accent-400: #c6f432;
+  --color-brand-accent-500: #aee01c;
+  --color-brand-accent-600: #8fbb12;
+
+  --color-brand-surface-50: #f1f7f4;
+  --color-brand-surface-100: #dbe8e1;
+  --color-brand-surface-700: #163325;
+  --color-brand-surface-800: #10281c;
+  --color-brand-surface-900: #0b1f17;
+  --color-brand-surface-950: #071410;
+
+  --color-brand-paper: #f7f5f0;
+  --color-brand-paper-dim: #ece8de;
+
+  /* Font */
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+
+  /* Radii — pill buttons, soft-rounded cards */
+  --radius-card: 1.25rem;
+  --radius-pill: 999px;
+}
+
+/*
+ * Runtime theme variables — the semantic layer every component consumes
+ * (bg-background, text-foreground, etc via the @theme inline block below).
+ * Light values are the default; `.dark` overrides them. Tailwind's `dark:`
+ * variant is remapped to a class selector so we can toggle manually while
+ * still honoring prefers-color-scheme on first load (see ThemeScript).
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: var(--color-brand-paper);
+  --foreground: var(--color-brand-surface-900);
+  --surface: #ffffff;
+  --surface-muted: var(--color-brand-surface-50);
+  --border: color-mix(in srgb, var(--color-brand-surface-900) 12%, transparent);
+  --border-strong: color-mix(in srgb, var(--color-brand-surface-900) 22%, transparent);
+  --muted-foreground: color-mix(in srgb, var(--color-brand-surface-900) 55%, transparent);
+  --primary: var(--color-brand-primary-500);
+  --primary-foreground: #ffffff;
+  --primary-strong: var(--color-brand-primary-700);
+  --accent: var(--color-brand-accent-400);
+  --accent-foreground: var(--color-brand-surface-900);
+  --ring: var(--color-brand-primary-400);
+  --danger: #e5484d;
+  --danger-foreground: #ffffff;
+  --warning: #b45309;
+  --warning-foreground: #ffffff;
+}
+
+.dark {
+  --background: var(--color-brand-surface-900);
+  --foreground: var(--color-brand-paper);
+  --surface: var(--color-brand-surface-800);
+  --surface-muted: var(--color-brand-surface-700);
+  --border: color-mix(in srgb, var(--color-brand-paper) 12%, transparent);
+  --border-strong: color-mix(in srgb, var(--color-brand-paper) 24%, transparent);
+  --muted-foreground: color-mix(in srgb, var(--color-brand-paper) 60%, transparent);
+  --primary: var(--color-brand-primary-400);
+  --primary-foreground: var(--color-brand-surface-950);
+  --primary-strong: var(--color-brand-primary-300);
+  --accent: var(--color-brand-accent-400);
+  --accent-foreground: var(--color-brand-surface-900);
+  --ring: var(--color-brand-primary-400);
+  --danger: #ff6b6f;
+  --danger-foreground: var(--color-brand-surface-950);
+  --warning: #f5b556;
+  --warning-foreground: var(--color-brand-surface-950);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-strong: var(--primary-strong);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-ring: var(--ring);
+  --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    color-scheme: light dark;
+  }
+
+  body {
+    background: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+}

@@ -1,0 +1,65 @@
+"""FastAPI dependencies: auth, tenant-scoped DB sessions, Redis/arq handles."""
+
+from __future__ import annotations
+
+from collections.abc import AsyncIterator
+from uuid import UUID
+
+from arq import ArqRedis
+from fastapi import Depends, Header, HTTPException, Request, status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.core.security import TokenClaims, TokenError, decode_jwt
+from app.core.tenancy import tenant_session
+
+
+def get_claims(authorization: str | None = Header(default=None)) -> TokenClaims:
+    """Decode and verify the bearer JWT (DESIGN.md §8)."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="missing bearer token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    token = authorization.split(" ", 1)[1].strip()
+    try:
+        return decode_jwt(token)
+    except TokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"invalid token: {exc}",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from exc
+
+
+def require_tenant(claims: TokenClaims = Depends(get_claims)) -> UUID:
+    """Resolve the tenant the request acts on (must be present in the token)."""
+    if claims.tenant_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="token carries no tenant_id",
+        )
+    return claims.tenant_id
+
+
+async def get_db(tenant_id: UUID = Depends(require_tenant)) -> AsyncIterator[AsyncSession]:
+    """Yield a tenant-scoped session (RLS enforced via ``app.tenant_id``)."""
+    async with tenant_session(tenant_id) as session:
+        yield session
+
+
+def get_arq(request: Request) -> ArqRedis:
+    pool: ArqRedis | None = getattr(request.app.state, "arq", None)
+    if pool is None:  # pragma: no cover - misconfiguration guard
+        raise HTTPException(status_code=503, detail="job queue unavailable")
+    return pool
+
+
+def get_waha(request: Request):
+    """Return the shared WAHA client created in the app lifespan."""
+    from app.waha.client import WahaClient
+
+    waha: WahaClient | None = getattr(request.app.state, "waha", None)
+    if waha is None:  # pragma: no cover - misconfiguration guard
+        raise HTTPException(status_code=503, detail="WAHA client unavailable")
+    return waha

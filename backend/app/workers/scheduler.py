@@ -1,0 +1,46 @@
+"""arq scheduler (cron jobs) — Phase 0 (DESIGN.md §12.1).
+
+Currently runs the session-health poll every 60s. Reminder dispatch (§5.7) and
+knowledge re-crawl (§6) plug in here in later phases.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from arq import cron
+from arq.connections import RedisSettings
+
+from app.core.config import settings
+from app.core.logging import configure_logging, logger
+from app.waha.client import WahaClient
+from app.waha.session_health import poll_session_health
+
+
+async def session_health_job(ctx: dict[str, Any]) -> None:
+    waha: WahaClient = ctx["waha"]
+    failed = await poll_session_health(waha)
+    logger.bind(newly_failed=failed).info("session-health poll complete")
+
+
+async def on_startup(ctx: dict[str, Any]) -> None:
+    configure_logging()
+    ctx["waha"] = WahaClient()
+    logger.info("scheduler started")
+
+
+async def on_shutdown(ctx: dict[str, Any]) -> None:
+    waha: WahaClient | None = ctx.get("waha")
+    if waha is not None:
+        await waha.aclose()
+    logger.info("scheduler stopped")
+
+
+class SchedulerSettings:
+    # Poll at second 0 of every minute (= every 60s); also once at startup.
+    cron_jobs = [
+        cron(session_health_job, second=0, run_at_startup=True),
+    ]
+    on_startup = on_startup
+    on_shutdown = on_shutdown
+    redis_settings = RedisSettings.from_dsn(settings.redis_url)
