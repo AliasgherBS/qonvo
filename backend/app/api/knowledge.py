@@ -13,12 +13,13 @@ from enum import StrEnum
 from pathlib import Path
 from uuid import UUID
 
+from arq import ArqRedis
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, require_tenant
+from app.api.deps import get_arq, get_db, require_tenant
 from app.core.config import settings
 from app.models.enums import KnowledgeSourceType
 from app.models.knowledge import KnowledgeSource
@@ -108,6 +109,7 @@ async def create_source(
     body: CreateSourceRequest,
     tenant_id: UUID = Depends(require_tenant),
     db: AsyncSession = Depends(get_db),
+    arq: ArqRedis = Depends(get_arq),
 ) -> SourceResponse:
     db_type = _TYPE_IN_TO_DB[body.type]
     row = KnowledgeSource(
@@ -115,12 +117,14 @@ async def create_source(
         type=db_type,
         name=body.title,
         content=body.content,
-        # A manual source with inline content is immediately usable; file/url
-        # sources need an ingestion step (upload / crawl) before they're ready.
-        status="ready" if db_type == KnowledgeSourceType.manual else "pending_ingest",
+        # Everything goes through the ingestion worker (chunk + embed, §6);
+        # a source without chunks is invisible to RAG even if "stored".
+        status="pending_ingest",
     )
     db.add(row)
     await db.flush()
+    if body.content:
+        await arq.enqueue_job("ingest_knowledge_source", str(row.id), str(tenant_id))
     return _to_response(row)
 
 
@@ -140,6 +144,7 @@ async def upload_source_file(
     file: UploadFile = File(...),
     tenant_id: UUID = Depends(require_tenant),
     db: AsyncSession = Depends(get_db),
+    arq: ArqRedis = Depends(get_arq),
 ) -> SourceResponse:
     """Store the raw upload for later ingestion.
 
@@ -159,6 +164,7 @@ async def upload_source_file(
     row.status = "pending_ingest"
     row.meta = {**row.meta, "upload_path": str(dest_path), "content_type": file.content_type}
     await db.flush()
+    await arq.enqueue_job("ingest_knowledge_source", str(row.id), str(tenant_id))
     return _to_response(row)
 
 

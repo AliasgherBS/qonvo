@@ -44,3 +44,7 @@ class SchedulerSettings:
     on_startup = on_startup
     on_shutdown = on_shutdown
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
+    # CRITICAL: own queue. arq consumers compete for jobs on a shared queue —
+    # without this, the scheduler steals worker jobs (e.g. ingest_knowledge_source)
+    # and drops them as "function not found". Caught live.
+    queue_name = "arq:scheduler"

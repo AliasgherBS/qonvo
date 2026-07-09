@@ -12,10 +12,14 @@ Guarantees:
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from typing import Any
+from uuid import UUID
 
+import anyio
 from arq import Retry
 from arq.connections import RedisSettings
+from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.logging import configure_logging, logger
@@ -149,6 +153,52 @@ async def _write_failed_job(
 # --------------------------------------------------------------------------- #
 # arq wiring
 # --------------------------------------------------------------------------- #
+
+async def ingest_knowledge_source(ctx: dict[str, Any], source_id: str, tenant_id: str) -> None:
+    """Chunk + embed a knowledge source (§6). Enqueued by the knowledge API.
+
+    Bridges the API (stores source/upload) and the agent-core ingestion module
+    (parses, chunks, embeds). Sets source.status ready/error accordingly.
+    """
+    from app.agent.ingestion import extract_text, ingest_source
+    from app.models.knowledge import KnowledgeSource
+    from app.models.tenant import TenantConfig
+    from app.providers.registry import resolve_embedding
+
+    bound = logger.bind(source_id=source_id, tenant_id=tenant_id)
+    async with tenant_session(UUID(tenant_id)) as db:
+        source = (
+            await db.execute(select(KnowledgeSource).where(KnowledgeSource.id == UUID(source_id)))
+        ).scalar_one_or_none()
+        if source is None:
+            bound.warning("ingest: source not found")
+            return
+        try:
+            if source.content:
+                text = extract_text(source_type="text", raw_text=source.content)
+            else:
+                upload_path = (source.meta or {}).get("upload_path")
+                if not upload_path:
+                    raise ValueError("source has neither inline content nor an upload")
+                raw = await anyio.Path(upload_path).read_bytes()
+                text = extract_text(
+                    source_type=Path(upload_path).suffix or "text", raw_bytes=raw
+                )
+            tenant_config = (
+                await db.execute(
+                    select(TenantConfig).where(TenantConfig.tenant_id == UUID(tenant_id))
+                )
+            ).scalar_one_or_none()
+            embedder = resolve_embedding(tenant_config)
+            chunks = await ingest_source(db, source, text=text, embedder=embedder)
+            source.status = "ready"
+            bound.info(f"ingested source: {len(chunks)} chunks")
+        except Exception as exc:  # noqa: BLE001 — status must reflect the failure
+            source.status = "error"
+            source.meta = {**(source.meta or {}), "error": str(exc)}
+            bound.error(f"ingest failed: {exc}")
+
+
 async def on_startup(ctx: dict[str, Any]) -> None:
     configure_logging()
     waha = WahaClient()
@@ -165,7 +215,7 @@ async def on_shutdown(ctx: dict[str, Any]) -> None:
 
 
 class WorkerSettings:
-    functions = [process_conversation, close_debounce_window]
+    functions = [process_conversation, close_debounce_window, ingest_knowledge_source]
     on_startup = on_startup
     on_shutdown = on_shutdown
     max_tries = settings.job_max_retries

@@ -206,7 +206,11 @@ class OpenAICompatProvider(LLMProvider, EmbeddingProvider):
         )
 
     async def embed(self, texts: list[str], *, model: str | None = None) -> list[list[float]]:
-        payload = {"model": model or self._model, "input": texts}
+        # Pin the output dimension to the pgvector column width — models default
+        # to different sizes (e.g. gemini-embedding-001 → 3072, ours is 1536).
+        from app.models.knowledge import EMBEDDING_DIM
+
+        payload = {"model": model or self._model, "input": texts, "dimensions": EMBEDDING_DIM}
         data = await self._post("/embeddings", payload)
         items = sorted(data.get("data", []), key=lambda item: item.get("index", 0))
         return [item["embedding"] for item in items]
