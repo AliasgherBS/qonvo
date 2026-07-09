@@ -393,9 +393,11 @@ async def _bump_usage(
     if row is None:
         row = UsageCounter(tenant_id=tenant_id, day=today)
         db.add(row)
-    row.messages_in += messages_in
-    row.messages_out += messages_out
-    row.tokens += tokens
+    # A fresh ORM row has None counters until server defaults apply on flush —
+    # guard every field the way ``cost`` already does (caught live).
+    row.messages_in = (row.messages_in or 0) + messages_in
+    row.messages_out = (row.messages_out or 0) + messages_out
+    row.tokens = (row.tokens or 0) + tokens
     row.cost = float(row.cost or 0) + cost
 
 

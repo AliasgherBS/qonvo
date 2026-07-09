@@ -197,12 +197,15 @@ class OpenAICompatProvider(LLMProvider, EmbeddingProvider):
         data = await self._post("/chat/completions", payload)
         choice = (data.get("choices") or [{}])[0]
         msg = choice.get("message", {})
-        usage = data.get("usage", {})
+        # ``usage`` can be absent, JSON null, or have null fields depending on
+        # the provider — ``or 0`` covers all three (a .get default only covers
+        # a missing key).
+        usage = data.get("usage") or {}
         return LLMResult(
             text=msg.get("content") or "",
             tool_calls=_parse_tool_calls(msg.get("tool_calls")),
-            prompt_tokens=usage.get("prompt_tokens", 0),
-            completion_tokens=usage.get("completion_tokens", 0),
+            prompt_tokens=usage.get("prompt_tokens") or 0,
+            completion_tokens=usage.get("completion_tokens") or 0,
         )
 
     async def embed(self, texts: list[str], *, model: str | None = None) -> list[list[float]]:

@@ -32,6 +32,35 @@ from app.waha.client import WahaClient
 WARMUP_STAGE_CAPS: dict[int, int] = {1: 50, 2: 150}
 
 
+def own_send_key(message_id: str) -> str:
+    return f"waha:ownsend:{message_id}"
+
+
+def extract_message_id(result: dict | None) -> str | None:
+    """Pull the message id out of a WAHA send response.
+
+    WEBJS returns ``{"id": {"_serialized": "true_...@c.us_HASH", ...}, ...}``;
+    other engines may return a flat string id.
+    """
+    if not isinstance(result, dict):
+        return None
+    raw = result.get("id")
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, dict):
+        serialized = raw.get("_serialized")
+        if isinstance(serialized, str):
+            return serialized
+    return None
+
+
+async def is_own_send(client: redis.Redis, message_id: str | None) -> bool:
+    """True when this message id was sent by our own gateway (§5.5)."""
+    if not message_id:
+        return False
+    return bool(await client.exists(own_send_key(message_id)))
+
+
 class DailyCapExceeded(Exception):
     """Raised when the session's daily send cap has been reached."""
 
@@ -169,8 +198,21 @@ class SendGateway:
             result = await self._waha.send_text(session, chat_id, text, reply_to=reply_to)
         finally:
             await self._waha.stop_typing(session, chat_id)
+        await self._record_own_send(result)
         logger.bind(session=session, chat_id=chat_id).info("sent text via gateway")
         return result
+
+    async def _record_own_send(self, result: dict) -> None:
+        """Mark a message id as sent-by-us (24h TTL).
+
+        WAHA echoes our own sends back as ``message.any`` with ``fromMe=true``
+        — indistinguishable from the owner replying manually from the linked
+        phone. Without this marker the bot's own reply triggers implicit
+        takeover and the bot silences itself (caught live, §5.5).
+        """
+        message_id = extract_message_id(result)
+        if message_id:
+            await self._redis.set(own_send_key(message_id), "1", ex=86_400)
 
     async def send_voice(
         self,
@@ -191,6 +233,7 @@ class SendGateway:
             result = await self._waha.send_voice(session, chat_id, url=url, data=data)
         finally:
             await self._waha.stop_typing(session, chat_id)
+        await self._record_own_send(result)
         logger.bind(session=session, chat_id=chat_id).info("sent voice via gateway")
         return result
 
