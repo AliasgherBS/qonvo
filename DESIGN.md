@@ -166,7 +166,9 @@ back to system default. Keys in central secrets + optional per-tenant override.
 
 ### 5.1 Ingress & filtering
 - Verify HMAC → resolve tenant via `whatsapp_sessions` → **filter**:
-  - Process **only `@c.us`** (1:1). Ignore `@g.us` (groups), `status@broadcast`, newsletters.
+  - Process only 1:1 user chats: **`@c.us` AND `@lid`** (WhatsApp's newer privacy-preserving
+    Linked IDs — modern accounts send from `@lid`; caught in live testing). Ignore `@g.us`
+    (groups), `status@broadcast`, newsletters.
   - Subscribe to **`message`** (not `message.any`) so our own sends don't loop back. Additionally
     subscribe `message.any` *only* to detect **owner `fromMe` replies** as a takeover signal (§5.5)
     — never process `fromMe` through the agent pipeline.

@@ -26,17 +26,20 @@ router = APIRouter(tags=["webhooks"])
 # Non-user chat suffixes we never process (DESIGN.md §5.1).
 _IGNORED_SUFFIXES = ("@g.us", "@newsletter", "@broadcast")
 _IGNORED_EXACT = ("status@broadcast",)
+# 1:1 user chats: classic phone-number JIDs (@c.us) AND WhatsApp's newer
+# privacy-preserving Linked IDs (@lid) — modern accounts send from @lid.
+_USER_CHAT_SUFFIXES = ("@c.us", "@lid")
 
 
 def is_processable_chat_id(chat_id: str | None) -> bool:
-    """Only 1:1 user chats (``@c.us``) are processed by the agent pipeline."""
+    """Only 1:1 user chats (``@c.us`` / ``@lid``) reach the agent pipeline."""
     if not chat_id:
         return False
     if chat_id in _IGNORED_EXACT:
         return False
     if any(chat_id.endswith(suffix) for suffix in _IGNORED_SUFFIXES):
         return False
-    return chat_id.endswith("@c.us")
+    return any(chat_id.endswith(suffix) for suffix in _USER_CHAT_SUFFIXES)
 
 
 def _extract(payload: dict) -> dict:
@@ -110,11 +113,16 @@ async def waha_webhook(
         return {"status": "ignored", "reason": "event_not_handled"}
 
     # --- message event → pipeline ---
+    # Every drop is logged: a silently ignored message reads as "bot is down"
+    # to the business owner, so the reason must be greppable in ops.
     if from_me:
-        return {"status": "ignored", "reason": "from_me"}  # never process our own sends
+        bound.info("ignored message: from_me (our own send)")
+        return {"status": "ignored", "reason": "from_me"}
     if not is_processable_chat_id(chat_id):
+        bound.info(f"ignored message: non_user_chat (from={chat_id!r}, keys={sorted(inner)})")
         return {"status": "ignored", "reason": "non_user_chat"}
     if not message_id:
+        bound.info(f"ignored message: no_message_id (keys={sorted(inner)})")
         return {"status": "ignored", "reason": "no_message_id"}
 
     redis_client = get_redis()
