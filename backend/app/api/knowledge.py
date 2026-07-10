@@ -50,6 +50,11 @@ class CreateSourceRequest(BaseModel):
     content: str | None = None
 
 
+class UpdateSourceRequest(BaseModel):
+    title: str | None = None
+    content: str | None = None
+
+
 class SourceResponse(BaseModel):
     id: UUID
     type: str
@@ -124,6 +129,41 @@ async def create_source(
     db.add(row)
     await db.flush()
     if body.content:
+        await arq.enqueue_job("ingest_knowledge_source", str(row.id), str(tenant_id))
+    return _to_response(row)
+
+
+@router.get("/sources/{source_id}", response_model=SourceResponse)
+async def get_source(
+    source_id: UUID,
+    tenant_id: UUID = Depends(require_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> SourceResponse:
+    """Full source incl. content — powers the dashboard view/edit dialog."""
+    row = await _get_source(db, source_id, tenant_id)
+    return _to_response(row)
+
+
+@router.put("/sources/{source_id}", response_model=SourceResponse)
+async def update_source(
+    source_id: UUID,
+    body: UpdateSourceRequest,
+    tenant_id: UUID = Depends(require_tenant),
+    db: AsyncSession = Depends(get_db),
+    arq: ArqRedis = Depends(get_arq),
+) -> SourceResponse:
+    """Edit a source's title/content. A content change re-runs ingestion so the
+    RAG index reflects the edit (a stale index would answer from old text)."""
+    row = await _get_source(db, source_id, tenant_id)
+    if body.title is not None:
+        row.name = body.title
+    content_changed = body.content is not None and body.content != row.content
+    if body.content is not None:
+        row.content = body.content
+    if content_changed:
+        row.status = "pending_ingest"
+    await db.flush()
+    if content_changed and row.content:
         await arq.enqueue_job("ingest_knowledge_source", str(row.id), str(tenant_id))
     return _to_response(row)
 

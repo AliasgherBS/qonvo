@@ -287,23 +287,30 @@ export const conversations = {
 // Knowledge base (§6 RAG ingestion)
 // ---------------------------------------------------------------------------
 
-export type KnowledgeSourceType = "file" | "website" | "manual";
-export type KnowledgeSourceStatus = "pending" | "processing" | "ready" | "error";
+export type KnowledgeSourceType = "file" | "website" | "manual" | "url";
+// Backend statuses: "pending_ingest" (queued) → "ready" | "error". Kept as a
+// widened string so a new backend status never renders as a broken badge.
+export type KnowledgeSourceStatus = "pending_ingest" | "ready" | "error" | (string & {});
 
 interface KnowledgeSourceDto {
   id: string;
   type: KnowledgeSourceType;
   title: string;
+  url: string | null;
+  content: string | null;
   status: KnowledgeSourceStatus;
-  updated_at?: string;
+  auto_refresh: boolean;
+  created_at: string;
 }
 
 export interface KnowledgeSource {
   id: string;
   type: KnowledgeSourceType;
   title: string;
+  url: string | null;
+  content: string | null;
   status: KnowledgeSourceStatus;
-  updatedAt: string | null;
+  createdAt: string | null;
 }
 
 function mapKnowledgeSource(dto: KnowledgeSourceDto): KnowledgeSource {
@@ -311,8 +318,10 @@ function mapKnowledgeSource(dto: KnowledgeSourceDto): KnowledgeSource {
     id: dto.id,
     type: dto.type,
     title: dto.title,
+    url: dto.url,
+    content: dto.content,
     status: dto.status,
-    updatedAt: dto.updated_at ?? null,
+    createdAt: dto.created_at ?? null,
   };
 }
 
@@ -357,6 +366,16 @@ export const knowledge = {
       ...opts,
     }).then(mapKnowledgeSource);
   },
+
+  getSource: (id: string, opts: CallOpts = {}) =>
+    apiFetch<KnowledgeSourceDto>(`/api/knowledge/sources/${id}`, opts).then(mapKnowledgeSource),
+
+  updateSource: (id: string, payload: { title?: string; content?: string }, opts: CallOpts = {}) =>
+    apiFetch<KnowledgeSourceDto>(`/api/knowledge/sources/${id}`, {
+      method: "PUT",
+      body: payload,
+      ...opts,
+    }).then(mapKnowledgeSource),
 
   deleteSource: (id: string, opts: CallOpts = {}) =>
     apiFetch<void>(`/api/knowledge/sources/${id}`, { method: "DELETE", ...opts }),

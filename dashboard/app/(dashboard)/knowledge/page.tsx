@@ -1,7 +1,7 @@
 "use client";
 
-import { BookOpen, FileUp, HelpCircle, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { useRef, useState, type DragEvent, type FormEvent } from "react";
+import { BookOpen, FileUp, HelpCircle, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { useEffect, useRef, useState, type DragEvent, type FormEvent } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,12 +16,21 @@ import { knowledge, type KnowledgeGap, type KnowledgeSource, type KnowledgeSourc
 import { useApi, useAuthToken } from "@/lib/use-api";
 import { cn } from "@/lib/utils";
 
-const STATUS_TONE: Record<KnowledgeSourceStatus, "success" | "warning" | "danger" | "default"> = {
-  ready: "success",
-  processing: "warning",
-  pending: "default",
-  error: "danger",
-};
+// Backend emits "pending_ingest" | "ready" | "error"; fall back gracefully so a
+// new/unknown status never renders as a blank badge.
+function statusTone(status: KnowledgeSourceStatus): "success" | "warning" | "danger" | "default" {
+  if (status === "ready") return "success";
+  if (status === "error") return "danger";
+  if (status === "pending_ingest") return "warning";
+  return "default";
+}
+
+function statusLabel(status: KnowledgeSourceStatus): string {
+  if (status === "pending_ingest") return "Processing";
+  if (status === "ready") return "Ready";
+  if (status === "error") return "Error";
+  return status;
+}
 
 type Tab = "sources" | "gaps";
 
@@ -30,6 +39,7 @@ export default function KnowledgePage() {
   const { toast } = useToast();
   const [tab, setTab] = useState<Tab>("sources");
   const [manualOpen, setManualOpen] = useState(false);
+  const [editing, setEditing] = useState<KnowledgeSource | null>(null);
 
   const { data, loading, error, refetch } = useApi(() => knowledge.listSources({ token }), [token]);
   const {
@@ -101,7 +111,14 @@ export default function KnowledgePage() {
               </Button>
             </div>
 
-            <SourcesTable sources={data} loading={loading} error={error} onRetry={refetch} onDelete={handleDelete} />
+            <SourcesTable
+              sources={data}
+              loading={loading}
+              error={error}
+              onRetry={refetch}
+              onDelete={handleDelete}
+              onView={setEditing}
+            />
           </div>
         </>
       ) : (
@@ -125,7 +142,103 @@ export default function KnowledgePage() {
           refetch();
         }}
       />
+
+      <ViewEditSourceDialog
+        source={editing}
+        onClose={() => setEditing(null)}
+        onSaved={() => {
+          setEditing(null);
+          refetch();
+        }}
+      />
     </div>
+  );
+}
+
+function ViewEditSourceDialog({
+  source,
+  onClose,
+  onSaved,
+}: {
+  source: KnowledgeSource | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const token = useAuthToken();
+  const { toast } = useToast();
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  // Manual entries are edited inline; files/URLs are ingested from their upload
+  // so their extracted text is shown read-only (editing it wouldn't round-trip).
+  const editable = source?.type === "manual";
+
+  useEffect(() => {
+    if (!source) return;
+    setTitle(source.title);
+    setContent(source.content ?? "");
+    // The list payload already carries content, but re-fetch to be sure it's the
+    // freshest copy (and to fill it if a future list omits it).
+    if (source.content == null) {
+      setLoading(true);
+      knowledge
+        .getSource(source.id, { token })
+        .then((full) => setContent(full.content ?? ""))
+        .catch(() => setContent(""))
+        .finally(() => setLoading(false));
+    }
+  }, [source, token]);
+
+  async function handleSave() {
+    if (!source) return;
+    setSaving(true);
+    try {
+      await knowledge.updateSource(source.id, { title: title.trim(), content: content.trim() }, { token });
+      toast({ title: "Entry updated", variant: "success" });
+      onSaved();
+    } catch {
+      toast({ title: "Couldn't update entry", variant: "error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open={source !== null}
+      onClose={onClose}
+      title={editable ? "Edit entry" : "View source"}
+      description={editable ? "Update the title or content — saving re-indexes it." : "Extracted content (read-only)."}
+    >
+      <div className="space-y-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="edit-title">Title</Label>
+          <Input id="edit-title" value={title} onChange={(e) => setTitle(e.target.value)} disabled={!editable} />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="edit-content">Content</Label>
+          <Textarea
+            id="edit-content"
+            rows={8}
+            value={loading ? "Loading…" : content}
+            onChange={(e) => setContent(e.target.value)}
+            disabled={!editable || loading}
+          />
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onClose}>
+            Close
+          </Button>
+          {editable ? (
+            <Button type="button" onClick={handleSave} disabled={saving || !title.trim()}>
+              {saving ? "Saving…" : "Save changes"}
+            </Button>
+          ) : null}
+        </div>
+      </div>
+    </Dialog>
   );
 }
 
@@ -268,12 +381,14 @@ function SourcesTable({
   error,
   onRetry,
   onDelete,
+  onView,
 }: {
   sources: KnowledgeSource[] | null;
   loading: boolean;
   error: string | null;
   onRetry: () => void;
   onDelete: (source: KnowledgeSource) => void;
+  onView: (source: KnowledgeSource) => void;
 }) {
   if (loading) {
     return (
@@ -321,7 +436,7 @@ function SourcesTable({
           <th className="px-5 py-3">Title</th>
           <th className="px-5 py-3">Type</th>
           <th className="px-5 py-3">Status</th>
-          <th className="px-5 py-3">Updated</th>
+          <th className="px-5 py-3">Added</th>
           <th className="px-5 py-3" />
         </tr>
       </thead>
@@ -331,15 +446,25 @@ function SourcesTable({
             <td className="px-5 py-3 font-semibold">{source.title}</td>
             <td className="px-5 py-3 capitalize text-muted-foreground">{source.type}</td>
             <td className="px-5 py-3">
-              <Badge tone={STATUS_TONE[source.status]}>{source.status}</Badge>
+              <Badge tone={statusTone(source.status)}>{statusLabel(source.status)}</Badge>
             </td>
             <td className="px-5 py-3 text-muted-foreground">
-              {source.updatedAt ? new Date(source.updatedAt).toLocaleDateString() : "—"}
+              {source.createdAt ? new Date(source.createdAt).toLocaleDateString() : "—"}
             </td>
-            <td className="px-5 py-3 text-right">
-              <Button variant="ghost" size="sm" onClick={() => onDelete(source)} aria-label={`Delete ${source.title}`}>
-                <Trash2 className="h-4 w-4" />
-              </Button>
+            <td className="px-5 py-3">
+              <div className="flex items-center justify-end gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => onView(source)}
+                  aria-label={`${source.type === "manual" ? "Edit" : "View"} ${source.title}`}
+                >
+                  <Pencil className="h-4 w-4" />
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => onDelete(source)} aria-label={`Delete ${source.title}`}>
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </div>
             </td>
           </tr>
         ))}

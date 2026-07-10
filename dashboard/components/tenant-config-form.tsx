@@ -10,9 +10,36 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/toast";
 import type { LlmProvider, TenantConfig } from "@/lib/api";
+import { cn } from "@/lib/utils";
 
 const PERSONA_OPTIONS = ["Friendly & warm", "Professional", "Playful & witty", "Formal", "Direct & concise"];
-const TONE_OPTIONS = ["Warm", "Professional", "Casual", "Formal", "Enthusiastic"];
+const TONE_OPTIONS = [
+  "Warm",
+  "Professional",
+  "Concise",
+  "Friendly",
+  "Casual",
+  "Formal",
+  "Enthusiastic",
+  "Direct",
+  "Empathetic",
+];
+
+/** Tone is stored as a comma-joined string ("warm, concise, professional"). */
+function parseTones(value: string): string[] {
+  return value
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+function toggleTone(current: string, option: string): string {
+  const tones = parseTones(current);
+  const idx = tones.findIndex((t) => t.toLowerCase() === option.toLowerCase());
+  if (idx >= 0) tones.splice(idx, 1);
+  else tones.push(option);
+  return tones.join(", ");
+}
 const LANGUAGE_OPTIONS = ["English", "Urdu", "Arabic", "Hindi"];
 const LLM_PROVIDER_OPTIONS: { value: LlmProvider; label: string }[] = [
   { value: "openai", label: "OpenAI" },
@@ -103,18 +130,30 @@ export function TenantConfigForm({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="tone">Tone</Label>
-              <select
-                id="tone"
-                className={SELECT_CLASSES}
-                value={form.tone}
-                onChange={(e) => setForm({ ...form, tone: e.target.value })}
-              >
-                {withCurrent(TONE_OPTIONS, form.tone).map((option) => (
-                  <option key={option} value={option}>
-                    {option}
-                  </option>
-                ))}
-              </select>
+              <div id="tone" className="flex flex-wrap gap-2 pt-1">
+                {TONE_OPTIONS.map((option) => {
+                  const selected = parseTones(form.tone).some(
+                    (t) => t.toLowerCase() === option.toLowerCase(),
+                  );
+                  return (
+                    <button
+                      key={option}
+                      type="button"
+                      aria-pressed={selected}
+                      onClick={() => setForm({ ...form, tone: toggleTone(form.tone, option) })}
+                      className={cn(
+                        "rounded-full border px-3 py-1.5 text-sm font-semibold transition-colors",
+                        selected
+                          ? "border-primary bg-primary/15 text-primary-strong"
+                          : "border-border-strong text-foreground hover:bg-surface-muted",
+                      )}
+                    >
+                      {option}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-muted-foreground">Pick any that fit — they combine.</p>
             </div>
           </div>
           <div className="space-y-1.5">
