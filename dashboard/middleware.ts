@@ -2,7 +2,10 @@ import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
 
-const PUBLIC_PATHS = ["/login"];
+// `/api/auth/*` must be public — Auth.js's own routes serve login callbacks,
+// csrf, and session, and gating them behind auth is a chicken-and-egg lockout
+// (caught live: /login redirected to itself, no cookie was ever issued).
+const PUBLIC_PATHS = ["/login", "/api/auth"];
 
 export default auth((req) => {
   const { nextUrl } = req;

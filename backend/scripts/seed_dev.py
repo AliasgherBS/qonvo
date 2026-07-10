@@ -63,6 +63,21 @@ async def main() -> None:
 
             db.add(TenantUser(tenant_id=tenant_id, user_id=user.id, role=UserRole.owner))
 
+        # Qonvo staff superadmin (cross-tenant). Not tied to this tenant —
+        # the impersonation flow (§9) is how they see any given tenant.
+        admin = (
+            await db.execute(select(User).where(User.email == "admin@qonvo.dev"))
+        ).scalar_one_or_none()
+        if admin is None:
+            db.add(
+                User(
+                    email="admin@qonvo.dev",
+                    hashed_password=hash_password("dev-admin-123"),
+                    full_name="Qonvo Admin",
+                    is_qonvo_admin=True,
+                )
+            )
+
     now = dt.datetime.now(dt.UTC)
     token = jwt.encode(
         {
