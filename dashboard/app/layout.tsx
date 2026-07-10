@@ -3,6 +3,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 
 import { Providers } from "@/components/providers";
 import { ThemeScript } from "@/components/theme-script";
+import { auth } from "@/auth";
 
 import "./globals.css";
 
@@ -21,14 +22,16 @@ export const metadata: Metadata = {
   description: "The AI representative that lives on your WhatsApp number.",
 };
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  const session = await auth();
+
   return (
     <html lang="en" suppressHydrationWarning className={`${geistSans.variable} ${geistMono.variable}`}>
       <head>
         <ThemeScript />
       </head>
       <body className="min-h-screen antialiased">
-        <Providers>{children}</Providers>
+        <Providers session={session}>{children}</Providers>
       </body>
     </html>
   );

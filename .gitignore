@@ -29,3 +29,4 @@ dist/
 
 # Data volumes (if ever mounted locally)
 .data/
+.playwright-mcp/

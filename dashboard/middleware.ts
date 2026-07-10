@@ -9,6 +9,18 @@ const PUBLIC_PATHS = ["/login", "/api/auth"];
 
 export default auth((req) => {
   const { nextUrl } = req;
+
+  // Browsers refuse to persist cookies for the `0.0.0.0` host (it's a bind-all
+  // address, not a real hostname), so a session cookie set here is silently
+  // dropped and every authenticated navigation bounces back to /login. If the
+  // dashboard was launched with HOSTNAME=0.0.0.0, that's the URL Next advertises
+  // and users end up here — steer them to localhost so auth cookies stick.
+  if (nextUrl.hostname === "0.0.0.0") {
+    const fixed = new URL(nextUrl.href);
+    fixed.hostname = "localhost";
+    return NextResponse.redirect(fixed);
+  }
+
   const isLoggedIn = !!req.auth;
   const isPublicPath = PUBLIC_PATHS.some((path) => nextUrl.pathname.startsWith(path));
 

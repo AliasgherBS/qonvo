@@ -11,9 +11,17 @@ interface UseApiState<T> {
   error: string | null;
 }
 
-/** A 401 means the access token expired or was revoked — bounce to /login. */
-function handleUnauthorized(err: unknown) {
-  if (err instanceof ApiError && err.status === 401) {
+/**
+ * A 401 means the access token expired or was revoked — bounce to /login.
+ *
+ * Guard on the *presence of a token*: during the brief window before the
+ * session hydrates, `useAuthToken()` is undefined and requests go out
+ * token-less, which the backend rightly 401s. Signing out on that would nuke a
+ * perfectly good session and loop the user back to /login. Only a 401 on a
+ * request that *did* carry a token is a real expiry.
+ */
+function handleUnauthorized(err: unknown, token: string | undefined) {
+  if (token && err instanceof ApiError && err.status === 401) {
     void signOut({ callbackUrl: "/login" });
   }
 }
@@ -24,6 +32,10 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
   const [reloadKey, setReloadKey] = useState(0);
+  // Snapshotted per effect run so the 401 guard reflects the token the request
+  // actually carried, not whatever the current token happens to be by the time
+  // the request rejects (which would race).
+  const token = useAuthToken();
 
   useEffect(() => {
     let active = true;
@@ -35,7 +47,7 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
         if (active) setState({ data, loading: false, error: null });
       })
       .catch((err: unknown) => {
-        handleUnauthorized(err);
+        handleUnauthorized(err, token);
         if (active) {
           setState({
             data: null,
@@ -49,7 +61,7 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
       active = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, reloadKey]);
+  }, [...deps, reloadKey, token]);
 
   const refetch = useCallback(() => setReloadKey((k) => k + 1), []);
 
@@ -62,6 +74,8 @@ export function usePolling<T>(fetcher: () => Promise<T>, intervalMs: number, dep
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
   const runRef = useRef<() => void>(() => {});
+  // See useApi — snapshot the request-time token for the 401 guard.
+  const token = useAuthToken();
 
   useEffect(() => {
     let active = true;
@@ -73,7 +87,7 @@ export function usePolling<T>(fetcher: () => Promise<T>, intervalMs: number, dep
           if (active) setState({ data, loading: false, error: null });
         })
         .catch((err: unknown) => {
-          handleUnauthorized(err);
+          handleUnauthorized(err, token);
           if (active) {
             setState((prev) => ({
               data: prev.data,
@@ -93,7 +107,7 @@ export function usePolling<T>(fetcher: () => Promise<T>, intervalMs: number, dep
       window.clearInterval(id);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
+  }, [...deps, token]);
 
   const refetch = useCallback(() => runRef.current(), []);
 
