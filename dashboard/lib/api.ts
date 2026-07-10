@@ -140,8 +140,15 @@ export const auth = {
 
 export type SessionStatus = "STOPPED" | "STARTING" | "SCAN_QR_CODE" | "WORKING" | "FAILED";
 
+// Both the create (SessionResponse) and status endpoints key the session by
+// `session_name`; the status route also nests a `status` scalar.
+interface SessionCreateDto {
+  session_name: string;
+  status: SessionStatus;
+}
+
 interface SessionStatusDto {
-  name: string;
+  session_name: string;
   status: SessionStatus;
 }
 
@@ -152,13 +159,16 @@ export interface WhatsappSessionStatus {
 
 export const sessions = {
   create: (payload: { name: string; label?: string }, opts: CallOpts = {}) =>
-    apiFetch<SessionStatusDto>("/api/sessions", { method: "POST", body: payload, ...opts }).then(
-      (dto): WhatsappSessionStatus => ({ name: dto.name, status: dto.status }),
-    ),
+    apiFetch<SessionCreateDto>("/api/sessions", {
+      method: "POST",
+      // Backend requires `session_name` (a bare `name` 422s).
+      body: { session_name: payload.name, label: payload.label },
+      ...opts,
+    }).then((dto): WhatsappSessionStatus => ({ name: dto.session_name, status: dto.status })),
 
   status: (name: string, opts: CallOpts = {}) =>
     apiFetch<SessionStatusDto>(`/api/sessions/${name}/status`, opts).then(
-      (dto): WhatsappSessionStatus => ({ name: dto.name, status: dto.status }),
+      (dto): WhatsappSessionStatus => ({ name: dto.session_name, status: dto.status }),
     ),
 
   /** GET /api/sessions/{name}/qr — returns a PNG; render directly as an <img> src. */
@@ -387,12 +397,20 @@ export const knowledge = {
 // Notifications (§5.5 escalation log, §12.1 disconnect alerts)
 // ---------------------------------------------------------------------------
 
-export type NotificationType = "escalation" | "disconnect" | "quota_warning" | "quota_exceeded" | "other";
+// Mirrors the backend NotificationType enum (app/models/enums.py). An unknown
+// future value is tolerated by the UI's fallback rendering.
+export type NotificationType =
+  | "escalation"
+  | "disconnect"
+  | "quota_warning"
+  | "session_failed"
+  | (string & {});
 
 interface NotificationDto {
   id: string;
   type: NotificationType;
-  message: string;
+  title: string;
+  body: string | null;
   read: boolean;
   created_at: string;
 }
@@ -400,6 +418,9 @@ interface NotificationDto {
 export interface Notification {
   id: string;
   type: NotificationType;
+  title: string;
+  body: string | null;
+  // Convenience one-liner for compact UIs (the bell) — title, then body.
   message: string;
   read: boolean;
   createdAt: string;
@@ -409,7 +430,9 @@ function mapNotification(dto: NotificationDto): Notification {
   return {
     id: dto.id,
     type: dto.type,
-    message: dto.message,
+    title: dto.title,
+    body: dto.body,
+    message: [dto.title, dto.body].filter(Boolean).join(" — "),
     read: dto.read,
     createdAt: dto.created_at,
   };
@@ -431,18 +454,51 @@ export const notifications = {
 
 export type LlmProvider = "openai" | "openrouter" | "groq" | "gemini";
 
-interface BusinessHoursDayDto {
+export interface BusinessHoursDay {
   day: number;
   open: string;
   close: string;
   closed: boolean;
 }
 
-export interface BusinessHoursDay {
-  day: number;
-  open: string;
-  close: string;
-  closed: boolean;
+// Backend stores business_hours as the shape the pipeline reads (§5.2):
+// { enabled, timezone, hours: { mon: [["09:00","17:00"]], ... }, closed_message }.
+// The form edits a friendlier per-day array; these converters bridge the two.
+// (Sending the raw array 422'd the entire config save.)
+interface BusinessHoursConfig {
+  enabled?: boolean;
+  timezone?: string;
+  hours?: Record<string, [string, string][]>;
+  closed_message?: string | null;
+}
+
+const DAY_KEYS = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+
+function daysFromConfig(bh: BusinessHoursConfig | null | undefined): BusinessHoursDay[] {
+  const hours = bh?.hours ?? {};
+  const hasAny = Object.keys(hours).length > 0;
+  return DAY_KEYS.map((key, day) => {
+    if (!hasAny) return { day, open: "09:00", close: "17:00", closed: false };
+    const windows = hours[key] ?? [];
+    if (windows.length > 0) {
+      const [open, close] = windows[0];
+      return { day, open, close, closed: false };
+    }
+    return { day, open: "09:00", close: "17:00", closed: true };
+  });
+}
+
+function configFromDays(
+  days: BusinessHoursDay[],
+  enabled: boolean,
+  timezone: string,
+  closedMessage: string | null,
+): BusinessHoursConfig {
+  const hours: Record<string, [string, string][]> = {};
+  for (const d of days) {
+    if (!d.closed) hours[DAY_KEYS[d.day]] = [[d.open, d.close]];
+  }
+  return { enabled, timezone, hours, closed_message: closedMessage || null };
 }
 
 interface TenantConfigDto {
@@ -451,7 +507,7 @@ interface TenantConfigDto {
   primary_language: string;
   tone: string;
   custom_instructions: string;
-  business_hours: BusinessHoursDayDto[];
+  business_hours: BusinessHoursConfig;
   owner_alert_number: string;
   llm_provider: LlmProvider;
   llm_model: string;
@@ -464,19 +520,26 @@ export interface TenantConfig {
   tone: string;
   customInstructions: string;
   businessHours: BusinessHoursDay[];
+  businessHoursEnabled: boolean;
+  businessHoursTimezone: string;
+  businessHoursClosedMessage: string | null;
   ownerAlertNumber: string;
   llmProvider: LlmProvider;
   llmModel: string;
 }
 
 function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
+  const bh = dto.business_hours ?? {};
   return {
     persona: dto.persona,
     businessName: dto.business_name,
     primaryLanguage: dto.primary_language,
     tone: dto.tone,
     customInstructions: dto.custom_instructions,
-    businessHours: dto.business_hours,
+    businessHours: daysFromConfig(bh),
+    businessHoursEnabled: bh.enabled ?? false,
+    businessHoursTimezone: bh.timezone ?? "UTC",
+    businessHoursClosedMessage: bh.closed_message ?? null,
     ownerAlertNumber: dto.owner_alert_number,
     llmProvider: dto.llm_provider,
     llmModel: dto.llm_model,
@@ -490,7 +553,12 @@ function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
     primary_language: cfg.primaryLanguage,
     tone: cfg.tone,
     custom_instructions: cfg.customInstructions,
-    business_hours: cfg.businessHours,
+    business_hours: configFromDays(
+      cfg.businessHours,
+      cfg.businessHoursEnabled,
+      cfg.businessHoursTimezone,
+      cfg.businessHoursClosedMessage,
+    ),
     owner_alert_number: cfg.ownerAlertNumber,
     llm_provider: cfg.llmProvider,
     llm_model: cfg.llmModel,
@@ -659,8 +727,12 @@ export const adminTenants = {
       ...opts,
     }).then((dto): CreateTenantResult => ({ ...mapAdminTenant(dto), tempPassword: dto.temp_password })),
 
+  // Config is embedded in GET /tenants/{id} — there is no /config GET route.
   getConfig: (id: string, opts: CallOpts = {}) =>
-    apiFetch<TenantConfigDto>(`/api/admin/tenants/${id}/config`, opts).then(mapTenantConfig),
+    apiFetch<AdminTenantDto & { config: TenantConfigDto | null }>(
+      `/api/admin/tenants/${id}`,
+      opts,
+    ).then((dto) => (dto.config ? mapTenantConfig(dto.config) : null)),
 
   updateConfig: (id: string, payload: TenantConfig, opts: CallOpts = {}) =>
     apiFetch<TenantConfigDto>(`/api/admin/tenants/${id}/config`, {
@@ -671,31 +743,31 @@ export const adminTenants = {
 };
 
 interface FleetSessionDto {
-  name: string;
+  session_name: string;
   tenant_id: string;
-  tenant_name: string;
-  label: string;
+  tenant_name: string | null;
+  label: string | null;
   status: SessionStatus;
-  updated_at: string;
+  live_status: string | null;
 }
 
 export interface FleetSession {
   name: string;
   tenantId: string;
-  tenantName: string;
-  label: string;
+  tenantName: string | null;
+  label: string | null;
   status: SessionStatus;
-  updatedAt: string;
+  liveStatus: string | null;
 }
 
 function mapFleetSession(dto: FleetSessionDto): FleetSession {
   return {
-    name: dto.name,
+    name: dto.session_name,
     tenantId: dto.tenant_id,
     tenantName: dto.tenant_name,
     label: dto.label,
     status: dto.status,
-    updatedAt: dto.updated_at,
+    liveStatus: dto.live_status,
   };
 }
 

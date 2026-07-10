@@ -16,7 +16,7 @@ from uuid import UUID
 from arq import ArqRedis
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_arq, get_db, require_tenant
@@ -214,24 +214,34 @@ async def knowledge_gaps(
     tenant_id: UUID = Depends(require_tenant),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    """Recent ``knowledge_gap`` analytics events — unanswered/handed-off questions (§6)."""
-    rows = (
-        await db.execute(
-            select(AnalyticsEvent)
-            .where(
-                AnalyticsEvent.tenant_id == tenant_id,
-                AnalyticsEvent.event_type == "knowledge_gap",
-            )
-            .order_by(AnalyticsEvent.occurred_at.desc())
-            .limit(limit)
+    """Top unanswered/handed-off questions, aggregated by question text (§6, §7).
+
+    The pipeline logs one ``knowledge_gap`` event per miss; the dashboard wants
+    the distinct questions with how many times each was asked, most-asked first.
+    """
+    question = AnalyticsEvent.data["question"].astext
+    stmt = (
+        select(
+            question.label("question"),
+            func.count().label("count"),
+            func.max(AnalyticsEvent.occurred_at).label("last_asked"),
         )
-    ).scalars().all()
+        .where(
+            AnalyticsEvent.tenant_id == tenant_id,
+            AnalyticsEvent.event_type == "knowledge_gap",
+            question.isnot(None),
+        )
+        .group_by(question)
+        .order_by(func.count().desc(), func.max(AnalyticsEvent.occurred_at).desc())
+        .limit(limit)
+    )
+    rows = (await db.execute(stmt)).all()
     return [
         {
-            "id": str(r.id),
-            "conversation_id": str(r.conversation_id) if r.conversation_id else None,
-            "occurred_at": r.occurred_at,
-            "data": r.data,
+            "id": r.question,  # question text is the stable identity of a gap
+            "question": r.question,
+            "count": r.count,
+            "last_asked": r.last_asked,
         }
         for r in rows
     ]

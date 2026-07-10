@@ -40,7 +40,15 @@ function toggleTone(current: string, option: string): string {
   else tones.push(option);
   return tones.join(", ");
 }
-const LANGUAGE_OPTIONS = ["English", "Urdu", "Arabic", "Hindi"];
+// Value is the ISO code the backend stores ("en"); label is what the owner sees.
+// (Previously the option value was the display name, so picking "English"
+// persisted "english" — an invalid language code.)
+const LANGUAGE_OPTIONS: { value: string; label: string }[] = [
+  { value: "en", label: "English" },
+  { value: "ur", label: "Urdu" },
+  { value: "ar", label: "Arabic" },
+  { value: "hi", label: "Hindi" },
+];
 const LLM_PROVIDER_OPTIONS: { value: LlmProvider; label: string }[] = [
   { value: "openai", label: "OpenAI" },
   { value: "openrouter", label: "OpenRouter" },
@@ -164,9 +172,12 @@ export function TenantConfigForm({
               value={form.primaryLanguage}
               onChange={(e) => setForm({ ...form, primaryLanguage: e.target.value })}
             >
-              {withCurrent(LANGUAGE_OPTIONS, form.primaryLanguage).map((option) => (
-                <option key={option} value={option}>
-                  {option}
+              {!LANGUAGE_OPTIONS.some((o) => o.value === form.primaryLanguage) && form.primaryLanguage ? (
+                <option value={form.primaryLanguage}>{form.primaryLanguage}</option>
+              ) : null}
+              {LANGUAGE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
                 </option>
               ))}
             </select>
@@ -186,12 +197,27 @@ export function TenantConfigForm({
 
       <Card>
         <CardHeader>
-          <div>
-            <CardTitle>Business hours</CardTitle>
-            <CardDescription>Outside open hours, customers get your custom auto-reply.</CardDescription>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <CardTitle>Business hours</CardTitle>
+              <CardDescription>Outside open hours, customers get your custom auto-reply.</CardDescription>
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <Switch
+                checked={form.businessHoursEnabled}
+                onCheckedChange={(on) => setForm({ ...form, businessHoursEnabled: on })}
+                label="Enforce business hours"
+              />
+              <span className="text-muted-foreground">{form.businessHoursEnabled ? "On" : "Off"}</span>
+            </label>
           </div>
         </CardHeader>
         <CardContent className="space-y-2">
+          {!form.businessHoursEnabled ? (
+            <p className="rounded-xl bg-surface-muted px-3 py-2 text-xs text-muted-foreground">
+              Off — your AI rep replies around the clock. Turn on to set open hours below.
+            </p>
+          ) : null}
           {businessHours.map((row) => (
             <div key={row.day} className="flex flex-wrap items-center gap-3 rounded-xl border border-border px-3 py-2">
               <span className="w-12 text-sm font-semibold">{DAY_LABELS[row.day]}</span>

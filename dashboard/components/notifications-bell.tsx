@@ -9,13 +9,19 @@ import { cn, formatRelativeTime } from "@/lib/utils";
 
 const NOTIFICATIONS_POLL_MS = 30_000;
 
-const TYPE_ICON: Record<NotificationType, typeof Bell> = {
+// Keyed by the real backend enum. A partial record + fallback means a new/unknown
+// type (e.g. a future notification kind) renders a default icon instead of
+// crashing the whole bell with `<undefined />`.
+const TYPE_ICON: Partial<Record<NotificationType, typeof Bell>> = {
   escalation: ShieldAlert,
   disconnect: Radio,
   quota_warning: TriangleAlert,
-  quota_exceeded: TriangleAlert,
-  other: TrendingUp,
+  session_failed: TriangleAlert,
 };
+
+function iconFor(type: NotificationType): typeof Bell {
+  return TYPE_ICON[type] ?? TrendingUp;
+}
 
 export function NotificationsBell() {
   const token = useAuthToken();
@@ -67,7 +73,7 @@ export function NotificationsBell() {
                 <li className="px-4 py-6 text-center text-sm text-muted-foreground">You&apos;re all caught up.</li>
               ) : (
                 items.map((item) => {
-                  const Icon = TYPE_ICON[item.type];
+                  const Icon = iconFor(item.type);
                   return (
                     <li key={item.id}>
                       <button

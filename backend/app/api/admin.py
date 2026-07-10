@@ -50,7 +50,29 @@ class CreateTenantResponse(BaseModel):
 
 
 def _tenant_to_dict(row: Tenant) -> dict:
-    return {"id": str(row.id), "name": row.name, "slug": row.slug, "status": row.status}
+    return {
+        "id": str(row.id),
+        "name": row.name,
+        "slug": row.slug,
+        "status": row.status,
+        "created_at": row.created_at,
+    }
+
+
+async def _owner_map(
+    db: AsyncSession, tenant_ids: list[UUID]
+) -> dict[UUID, tuple[str, str | None]]:
+    """{tenant_id: (owner_email, owner_name)} for the owner of each tenant."""
+    if not tenant_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(TenantUser.tenant_id, User.email, User.full_name)
+            .join(User, User.id == TenantUser.user_id)
+            .where(TenantUser.tenant_id.in_(tenant_ids), TenantUser.role == UserRole.owner)
+        )
+    ).all()
+    return {r.tenant_id: (r.email, r.full_name) for r in rows}
 
 
 async def _audit(
@@ -79,7 +101,12 @@ async def list_tenants(
     db: AsyncSession = Depends(get_system_db),
 ) -> list[dict]:
     rows = (await db.execute(select(Tenant).order_by(Tenant.created_at.desc()))).scalars().all()
-    return [_tenant_to_dict(t) for t in rows]
+    owners = await _owner_map(db, [t.id for t in rows])
+    result = []
+    for t in rows:
+        email, full_name = owners.get(t.id, (None, None))
+        result.append({**_tenant_to_dict(t), "owner_email": email, "owner_name": full_name})
+    return result
 
 
 @router.post("/tenants", response_model=CreateTenantResponse, status_code=status.HTTP_201_CREATED)
@@ -143,7 +170,13 @@ async def get_tenant(
     config = (
         await db.execute(select(TenantConfig).where(TenantConfig.tenant_id == tenant_id))
     ).scalar_one_or_none()
-    return {**_tenant_to_dict(tenant), "config": _config_to_dict(config) if config else None}
+    email, full_name = (await _owner_map(db, [tenant.id])).get(tenant.id, (None, None))
+    return {
+        **_tenant_to_dict(tenant),
+        "owner_email": email,
+        "owner_name": full_name,
+        "config": _config_to_dict(config) if config else None,
+    }
 
 
 @router.put("/tenants/{tenant_id}/config", response_model=ConfigResponse)
@@ -186,6 +219,7 @@ async def fleet(
     """All WhatsApp sessions across every tenant, cross-checked against live
     WAHA status (DESIGN.md §9 fleet health)."""
     rows = (await db.execute(select(WhatsAppSession))).scalars().all()
+    names = dict((await db.execute(select(Tenant.id, Tenant.name))).all())
     result = []
     for r in rows:
         try:
@@ -197,6 +231,7 @@ async def fleet(
             {
                 "id": str(r.id),
                 "tenant_id": str(r.tenant_id),
+                "tenant_name": names.get(r.tenant_id),
                 "session_name": r.session_name,
                 "label": r.label,
                 "status": r.status.value,
@@ -242,11 +277,15 @@ async def usage(
         stmt = stmt.where(*filters)
 
     rows = (await db.execute(stmt)).all()
+    names = dict((await db.execute(select(Tenant.id, Tenant.name))).all())
     return [
         {
             "tenant_id": str(r.tenant_id),
+            "tenant_name": names.get(r.tenant_id),
+            "month": month or "all",
             "messages_in": r.messages_in or 0,
             "messages_out": r.messages_out or 0,
+            "messages": (r.messages_in or 0) + (r.messages_out or 0),
             "voice_seconds": r.voice_seconds or 0,
             "tokens": r.tokens or 0,
             "cost": float(r.cost or 0),
