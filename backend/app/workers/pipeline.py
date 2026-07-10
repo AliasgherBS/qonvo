@@ -30,7 +30,7 @@ from app.models.ops import AnalyticsEvent, UsageCounter
 from app.models.tenant import TenantConfig
 from app.models.whatsapp import WhatsAppSession
 from app.providers.base import ChatMessage, LLMProvider, LLMResult, ToolCall
-from app.providers.registry import resolve_embedding, resolve_llm
+from app.providers.registry import resolve_embedding, resolve_llm, voice_reply_mode
 from app.skills.registry import SkillContext, execute_skill
 from app.skills.registry import enabled_tools as skill_enabled_tools
 from app.waha.send_gateway import DailyCapExceeded, SendGateway, SessionPacing
@@ -71,11 +71,69 @@ class PipelineResult:
 def coalesce_fragments(fragments: list[InboundFragment]) -> str:
     """Join buffered fragments into a single turn, in arrival order (§5.2).
 
-    Voice fragments would be transcribed first (STT) in Phase 2; here their
-    placeholder text is included so the coalescing behaviour is exercised.
+    Voice fragments are transcribed (STT) into ``body`` before this runs (Phase 2),
+    so their transcript is included like any text fragment.
     """
     parts = [f.body.strip() for f in fragments if f.body and f.body.strip()]
     return "\n".join(parts)
+
+
+# --------------------------------------------------------------------------- #
+# Voice (Phase 2, DESIGN.md §2 voice loop) — pure helpers
+# --------------------------------------------------------------------------- #
+_VOICE_TYPES = {"voice", "ptt", "audio"}
+
+
+def is_voice_fragment(fragment: InboundFragment) -> bool:
+    return bool(fragment.media_url) and fragment.type in _VOICE_TYPES
+
+
+def should_reply_voice(mode: str, *, inbound_had_voice: bool) -> bool:
+    """"always" → always; "never" → never; "match" → mirror the customer."""
+    if mode == "always":
+        return True
+    if mode == "never":
+        return False
+    return inbound_had_voice
+
+
+async def _transcribe_voice_fragments(
+    fragments: list[InboundFragment],
+    tenant_config: Any,
+    waha: Any,
+    bound: Any,
+) -> bool:
+    """STT every voice fragment in place (sets ``body``, normalizes ``type`` to
+    "voice"). Returns True if any voice fragment was present. A missing STT
+    provider or a failed download/transcription degrades to a text-only turn.
+    """
+    voice_frags = [f for f in fragments if is_voice_fragment(f)]
+    if not voice_frags:
+        return False
+    if waha is None:
+        bound.warning("voice message received but no WAHA client for media download")
+        return True
+
+    from app.providers.registry import resolve_stt
+
+    stt = resolve_stt(tenant_config)
+    if stt is None:
+        bound.warning("voice message received but no STT provider configured")
+        return True
+
+    for fragment in voice_frags:
+        try:
+            audio = await waha.download_media(fragment.media_url)
+            result = await stt.transcribe(audio)
+            fragment.body = result.text or ""
+            fragment.type = "voice"
+            bound.info(f"transcribed voice fragment ({len(fragment.body)} chars)")
+        except Exception as exc:  # noqa: BLE001 — degrade to text-only, don't crash the turn
+            bound.warning(f"voice transcription failed: {exc}")
+            fragment.type = "voice"
+    if hasattr(stt, "aclose"):
+        await stt.aclose()
+    return True
 
 
 # --------------------------------------------------------------------------- #
@@ -426,6 +484,7 @@ async def run_pipeline(
     tenant_id: str,
     send_gateway: SendGateway,
     catch_up: bool = False,
+    waha: Any = None,
 ) -> PipelineResult:
     """Produce (and send) a grounded reply for the coalesced fragments.
 
@@ -450,6 +509,9 @@ async def run_pipeline(
         ).scalar_one_or_none()
 
         conversation = await _get_or_create_conversation(db, tenant_uuid, session_row, chat_id)
+        # Voice-in: transcribe before persisting so the inbound Message stores the
+        # transcript as its body (§2 voice loop).
+        inbound_had_voice = await _transcribe_voice_fragments(fragments, tenant_config, waha, bound)
         await _persist_inbound(db, tenant_uuid, conversation, fragments)
 
         now = datetime.now(UTC)
@@ -550,8 +612,49 @@ async def run_pipeline(
             await _send(bound, send_gateway, session, chat_id, CATCH_UP_REPLY)
             return PipelineResult(reply_text=CATCH_UP_REPLY, meta={"catch_up": True})
 
-        # --- RAG retrieve (§6) ---
         coalesced = coalesce_fragments(fragments)
+
+        # --- Gate: reminder opt-out ("stop") (§5.7) ---
+        from app.agent.reminders import is_stop_message
+
+        if is_stop_message(coalesced):
+            from app.models.business import ReminderSuppression
+
+            phone = chat_id.split("@", 1)[0]
+            already = (
+                await db.execute(
+                    select(ReminderSuppression).where(
+                        ReminderSuppression.tenant_id == tenant_uuid,
+                        ReminderSuppression.phone == phone,
+                    )
+                )
+            ).scalar_one_or_none()
+            if already is None:
+                db.add(
+                    ReminderSuppression(
+                        tenant_id=tenant_uuid, phone=phone, reason="customer opted out via chat"
+                    )
+                )
+            reply = "Done — you won't get reminders from us anymore. Message us any time."
+            conversation.last_activity_at = now
+            db.add(
+                Message(
+                    tenant_id=tenant_uuid,
+                    conversation_id=conversation.id,
+                    direction=MessageDirection.outbound,
+                    author=MessageAuthor.bot,
+                    type=MessageType.text,
+                    body=reply,
+                    meta={"auto_reply": "reminder_optout"},
+                )
+            )
+            await _bump_usage(
+                db, tenant_uuid, messages_in=len(fragments), messages_out=1, tokens=0, cost=0.0
+            )
+            await _send(bound, send_gateway, session, chat_id, reply)
+            return PipelineResult(reply_text=reply, meta={"gate": "reminder_optout"})
+
+        # --- RAG retrieve (§6) ---
         embedder = resolve_embedding(tenant_config)
         from app.agent.rag import build_context_block, retrieve
 
@@ -624,6 +727,15 @@ async def run_pipeline(
             provider_name, model_name, loop_result.prompt_tokens, loop_result.completion_tokens
         )
 
+        # --- Voice-out (§2): synthesize when the customer sent voice / tenant opts in ---
+        reply_voice = should_reply_voice(
+            voice_reply_mode(tenant_config), inbound_had_voice=inbound_had_voice
+        )
+        audio_b64 = (
+            await _synthesize_reply(reply_text, tenant_config, bound) if reply_voice else None
+        )
+        was_voice = audio_b64 is not None
+
         # --- Persist outbound + usage, refresh rolling summary (§5.4 step 6, §13) ---
         conversation.last_activity_at = now
         db.add(
@@ -632,8 +744,9 @@ async def run_pipeline(
                 conversation_id=conversation.id,
                 direction=MessageDirection.outbound,
                 author=MessageAuthor.bot,
-                type=MessageType.text,
+                type=MessageType.voice if was_voice else MessageType.text,
                 body=reply_text,
+                transcript=reply_text if was_voice else None,
                 tokens=total_tokens,
                 cost=cost,
                 meta={"knowledge_gap": True} if not chunks else {},
@@ -658,13 +771,21 @@ async def run_pipeline(
             except Exception as exc:  # noqa: BLE001 — summary refresh must not break the turn
                 bound.warning(f"summary refresh failed: {exc}")
 
-        await _send(bound, send_gateway, session, chat_id, reply_text)
+        if was_voice:
+            await _send_voice(bound, send_gateway, session, chat_id, audio_b64)
+        else:
+            await _send(bound, send_gateway, session, chat_id, reply_text)
 
         return PipelineResult(
             reply_text=reply_text,
+            reply_voice=was_voice,
             tokens=total_tokens,
             cost=cost,
-            meta={"chunks": len(chunks), "tool_iterations": loop_result.iterations},
+            meta={
+                "chunks": len(chunks),
+                "tool_iterations": loop_result.iterations,
+                "voice": was_voice,
+            },
         )
 
 
@@ -692,6 +813,36 @@ async def _send(bound: Any, gateway: SendGateway, session: str, chat_id: str, te
         bound.warning("daily cap reached — reply suppressed")
 
 
+async def _synthesize_reply(text: str, tenant_config: Any, bound: Any) -> str | None:
+    """TTS the reply → base64 audio, or None to fall back to text (§2)."""
+    import base64
+
+    from app.providers.registry import resolve_tts
+
+    tts = resolve_tts(tenant_config)
+    if tts is None:
+        bound.info("voice reply wanted but no TTS provider configured — sending text")
+        return None
+    try:
+        audio = await tts.synthesize(text)
+        return base64.b64encode(audio).decode()
+    except Exception as exc:  # noqa: BLE001 — degrade to text, never drop the reply
+        bound.warning(f"TTS synthesis failed, falling back to text: {exc}")
+        return None
+    finally:
+        if hasattr(tts, "aclose"):
+            await tts.aclose()
+
+
+async def _send_voice(
+    bound: Any, gateway: SendGateway, session: str, chat_id: str, data_b64: str
+) -> None:
+    try:
+        await gateway.send_voice(session, chat_id, data=data_b64, pacing=SessionPacing())
+    except DailyCapExceeded:
+        bound.warning("daily cap reached — voice reply suppressed")
+
+
 __all__ = [
     "CATCH_UP_REPLY",
     "GROUNDING_INSTRUCTION",
@@ -705,6 +856,8 @@ __all__ = [
     "compute_cost",
     "is_hard_quota_exceeded",
     "is_paused",
+    "is_voice_fragment",
+    "should_reply_voice",
     "is_within_business_hours",
     "run_pipeline",
     "run_tool_loop",

@@ -113,6 +113,7 @@ async def process_conversation(
             tenant_id=tenant_id,
             send_gateway=gateway,
             catch_up=catch_up,
+            waha=ctx.get("waha"),
         )
     except Exception as exc:  # noqa: BLE001 — retry/DLQ boundary
         job_try = ctx.get("job_try", 1)

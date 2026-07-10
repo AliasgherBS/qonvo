@@ -299,6 +299,35 @@ export function TenantConfigForm({
       <Card>
         <CardHeader>
           <div>
+            <CardTitle>Voice</CardTitle>
+            <CardDescription>
+              Whether your AI rep replies with a voice note. Requires a voice (STT/TTS) provider key
+              in your plan — otherwise it always replies in text.
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-1.5">
+            <Label htmlFor="voice-reply-mode">Voice replies</Label>
+            <select
+              id="voice-reply-mode"
+              className={SELECT_CLASSES}
+              value={form.voiceReplyMode}
+              onChange={(e) =>
+                setForm({ ...form, voiceReplyMode: e.target.value as TenantConfig["voiceReplyMode"] })
+              }
+            >
+              <option value="match">Match the customer (voice in → voice out)</option>
+              <option value="always">Always reply with voice</option>
+              <option value="never">Text only</option>
+            </select>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
             <CardTitle>AI provider</CardTitle>
             <CardDescription>Which LLM powers your AI representative.</CardDescription>
           </div>

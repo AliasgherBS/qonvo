@@ -90,4 +90,54 @@ def resolve_embedding(tenant_config: TenantConfigLike | None = None) -> OpenAICo
     )
 
 
-__all__ = ["PROVIDER_PRESETS", "resolve_embedding", "resolve_llm"]
+def resolve_stt(tenant_config: TenantConfigLike | None = None):
+    """Build an STT provider, or None if no key is configured (voice disabled)."""
+    from app.providers.audio import OpenAICompatSTT
+
+    cfg = _capability_config(tenant_config, "stt")
+    provider_name = cfg.get("provider") or settings.stt_provider
+    api_key = cfg.get("api_key") or settings.stt_api_key
+    if not api_key:
+        return None
+    model = cfg.get("model") or settings.stt_model
+    base_url = _resolve_base_url(provider_name, cfg.get("base_url") or settings.stt_base_url)
+    return OpenAICompatSTT(
+        base_url=base_url or PROVIDER_PRESETS["groq"], api_key=api_key, model=model
+    )
+
+
+def resolve_tts(tenant_config: TenantConfigLike | None = None):
+    """Build a TTS provider, or None if no key is configured (voice replies off)."""
+    from app.providers.audio import OpenAICompatTTS
+
+    cfg = _capability_config(tenant_config, "tts")
+    provider_name = cfg.get("provider") or settings.tts_provider
+    api_key = cfg.get("api_key") or settings.tts_api_key
+    if not api_key:
+        return None
+    model = cfg.get("model") or settings.tts_model
+    voice = cfg.get("voice") or settings.tts_voice
+    base_url = _resolve_base_url(provider_name, cfg.get("base_url") or settings.tts_base_url)
+    return OpenAICompatTTS(
+        base_url=base_url or PROVIDER_PRESETS["openai"],
+        api_key=api_key,
+        model=model,
+        voice=voice,
+        response_format=settings.tts_format,
+    )
+
+
+def voice_reply_mode(tenant_config: TenantConfigLike | None = None) -> str:
+    """"match" | "always" | "never" — per-tenant override, else system default."""
+    cfg = _capability_config(tenant_config, "voice")
+    return cfg.get("mode") or settings.voice_reply_mode
+
+
+__all__ = [
+    "PROVIDER_PRESETS",
+    "resolve_embedding",
+    "resolve_llm",
+    "resolve_stt",
+    "resolve_tts",
+    "voice_reply_mode",
+]

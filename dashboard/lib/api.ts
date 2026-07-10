@@ -512,7 +512,10 @@ interface TenantConfigDto {
   llm_provider: LlmProvider;
   llm_model: string;
   payment_details: string | null;
+  voice_reply_mode: VoiceReplyMode;
 }
+
+export type VoiceReplyMode = "match" | "always" | "never";
 
 export interface TenantConfig {
   persona: string;
@@ -528,6 +531,7 @@ export interface TenantConfig {
   llmProvider: LlmProvider;
   llmModel: string;
   paymentDetails: string;
+  voiceReplyMode: VoiceReplyMode;
 }
 
 function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
@@ -546,6 +550,7 @@ function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
     llmProvider: dto.llm_provider,
     llmModel: dto.llm_model,
     paymentDetails: dto.payment_details ?? "",
+    voiceReplyMode: dto.voice_reply_mode ?? "match",
   };
 }
 
@@ -566,6 +571,7 @@ function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
     llm_provider: cfg.llmProvider,
     llm_model: cfg.llmModel,
     payment_details: cfg.paymentDetails || null,
+    voice_reply_mode: cfg.voiceReplyMode,
   };
 }
 

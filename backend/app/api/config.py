@@ -32,6 +32,16 @@ class ConfigUpdateRequest(BaseModel):
     llm_provider: str | None = None
     llm_model: str | None = None
     payment_details: str | None = None
+    voice_reply_mode: str | None = None  # "match" | "always" | "never"
+
+    @field_validator("voice_reply_mode")
+    @classmethod
+    def _validate_voice_reply_mode(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        if v not in {"match", "always", "never"}:
+            raise ValueError("voice_reply_mode must be match, always, or never")
+        return v
 
     @field_validator("owner_alert_number")
     @classmethod
@@ -67,6 +77,7 @@ class ConfigResponse(BaseModel):
     llm_provider: str | None
     llm_model: str | None
     payment_details: str | None
+    voice_reply_mode: str
 
 
 def _config_to_dict(row: TenantConfig) -> ConfigResponse:
@@ -83,12 +94,20 @@ def _config_to_dict(row: TenantConfig) -> ConfigResponse:
         llm_provider=row.llm_provider,
         llm_model=row.llm_model,
         payment_details=row.payment_details,
+        voice_reply_mode=((row.providers or {}).get("voice") or {}).get("mode") or "match",
     )
 
 
 def _apply_config_update(row: TenantConfig, body: ConfigUpdateRequest) -> None:
-    for field, value in body.model_dump(exclude_unset=True).items():
+    data = body.model_dump(exclude_unset=True)
+    # voice_reply_mode isn't a column — it lives in the providers JSON map (§4).
+    voice_mode = data.pop("voice_reply_mode", None)
+    for field, value in data.items():
         setattr(row, field, value)
+    if voice_mode is not None:
+        providers = dict(row.providers or {})
+        providers["voice"] = {**(providers.get("voice") or {}), "mode": voice_mode}
+        row.providers = providers  # reassign so SQLAlchemy flags the JSONB change
 
 
 async def _get_or_create_config(db: AsyncSession, tenant_id: UUID) -> TenantConfig:

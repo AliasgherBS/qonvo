@@ -13,7 +13,9 @@ from arq.connections import RedisSettings
 
 from app.core.config import settings
 from app.core.logging import configure_logging, logger
+from app.core.redis import get_redis
 from app.waha.client import WahaClient
+from app.waha.send_gateway import SendGateway
 from app.waha.session_health import poll_session_health
 
 
@@ -23,9 +25,23 @@ async def session_health_job(ctx: dict[str, Any]) -> None:
     logger.bind(newly_failed=failed).info("session-health poll complete")
 
 
+async def booking_reminders_job(ctx: dict[str, Any]) -> None:
+    """Send due booking confirmations + 24h reminders (§5.7)."""
+    if not settings.reminders_enabled:
+        return
+    from app.agent.reminders import dispatch_due_reminders
+
+    stats = await dispatch_due_reminders(
+        ctx["send_gateway"], lookahead_hours=settings.reminder_lookahead_hours
+    )
+    logger.bind(**stats).info("booking-reminders scan complete")
+
+
 async def on_startup(ctx: dict[str, Any]) -> None:
     configure_logging()
-    ctx["waha"] = WahaClient()
+    waha = WahaClient()
+    ctx["waha"] = waha
+    ctx["send_gateway"] = SendGateway(waha, get_redis())
     logger.info("scheduler started")
 
 
@@ -40,6 +56,8 @@ class SchedulerSettings:
     # Poll at second 0 of every minute (= every 60s); also once at startup.
     cron_jobs = [
         cron(session_health_job, second=0, run_at_startup=True),
+        # Booking reminders (§5.7): scan every 15 min + once at startup.
+        cron(booking_reminders_job, minute={0, 15, 30, 45}, run_at_startup=True),
     ]
     on_startup = on_startup
     on_shutdown = on_shutdown

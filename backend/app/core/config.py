@@ -112,6 +112,21 @@ class Settings(BaseSettings):
     embedding_model: str = "text-embedding-3-small"
     embedding_base_url: str | None = None
     embedding_api_key: str = "change-me"
+    # --- Phase 2: voice (STT/TTS). Gemini's OpenAI-compat has no audio endpoints,
+    # so these need an OpenAI/Groq-style key; unset api_key = voice disabled. ---
+    stt_provider: str = "groq"
+    stt_model: str = "whisper-large-v3"
+    stt_base_url: str | None = None
+    stt_api_key: str | None = None
+    tts_provider: str = "openai"
+    tts_model: str = "tts-1"
+    tts_voice: str = "alloy"
+    tts_format: str = "opus"  # WhatsApp voice = OPUS/OGG
+    tts_base_url: str | None = None
+    tts_api_key: str | None = None
+    # When to reply with a voice note: "match" (only if the customer sent voice),
+    # "always", or "never". Per-tenant override via tenant_config.providers.voice.
+    voice_reply_mode: str = "match"
     # Provider adapter tuning (retries with exponential backoff, DESIGN.md §4).
     provider_timeout_seconds: float = 30.0
     provider_max_retries: int = 2
@@ -132,6 +147,10 @@ class Settings(BaseSettings):
     google_default_timezone: str = "UTC"
     # Default duration (minutes) for a booked appointment when the model omits one.
     booking_default_duration_minutes: int = 30
+    # Booking reminders (§5.7): the scheduler sends a confirmation + a reminder
+    # this many hours before the appointment. Capped at 2 messages/booking.
+    reminders_enabled: bool = True
+    reminder_lookahead_hours: int = 24
 
     # --- Email (owner alerts, DESIGN.md §12.1) ---
     # Transport: "log" (dev — just logs), "resend" (HTTP API), or "smtp".
