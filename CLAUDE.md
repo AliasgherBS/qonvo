@@ -141,15 +141,24 @@ cd backend && QONVO_SYSTEM_DATABASE_URL=... QONVO_JWT_SECRET=... \
 - Phase 0 (foundation) ✅ and Phase 1 (base offering: RAG + grounded replies + auth + inbox
   with takeover + knowledge manager + ops console) ✅ — both live-verified against a real
   WhatsApp number using Gemini as the LLM/embedding provider.
-- Phase 3 (agentic VAS) — **first slice landed**: Google Calendar `book_appointment` +
-  Google Sheets `append_to_sheet` skills, gated so the LLM is only offered a tool when its
-  integration is connected. Auth is **service-account only** (tenant shares their Calendar/Sheet
-  with the SA email — no OAuth, owner never codes); per-tenant keys are Fernet-encrypted in
-  `integrations`, with an optional system-default `QONVO_GOOGLE_SERVICE_ACCOUNT_JSON`. Owner UI at
-  `/integrations`. Verified live to Google's auth boundary; a **real SA key + shared calendar/sheet**
-  is still needed to prove an actual booking. CRM, chained flows, reminders (§5.7), analytics remain.
-  **Note:** dev `.env` `QONVO_FERNET_KEY` was a placeholder → replaced with a real Fernet key (local
-  only, gitignored) since credential encryption now depends on it.
-- Phase 2 (voice VAS: STT/TTS/multilingual) is the other remaining track.
+- Phase 3 (agentic VAS) — **substantially complete + live-verified** against a real Google account
+  (SA `qonvo-bot@fastapi-cloudrun-454710`, calendar `alihuzezzy@gmail.com`, a Sheets doc):
+  - **Skills:** `book_appointment`, `append_to_sheet`, `check_availability`, `lookup_sheet`,
+    `take_order` (→ `orders` table), `share_payment_details`. Gated by `requires_integration`
+    (Google connected) and `requires_config_key` (e.g. payment_details set).
+  - **Google auth = service-account only** (tenant shares Calendar/Sheet with the SA email — no
+    OAuth); per-tenant keys Fernet-encrypted in `integrations`, system default
+    `QONVO_GOOGLE_SERVICE_ACCOUNT_JSON`. Owner UI `/integrations`.
+  - **Analytics** `GET /api/analytics/summary` + `/analytics` page (live). **Email** owner-alerts
+    (config-driven log/resend/smtp; wired to human_handoff). **Metrics** `GET /metrics` (Prometheus,
+    hand-rolled, no dep). **Payments** = Settings field, shared verbatim by the skill.
+  - Remaining Phase 3: booking reminders (§5.7), CRM sync (want). Chained flows already work via the
+    tool loop.
+- **Gotchas locked in:** (1) dev `.env` `QONVO_FERNET_KEY` was a placeholder → real key now (local,
+  gitignored). (2) A migration-owner-created table does NOT inherit the superuser's DEFAULT
+  PRIVILEGES — new tables need explicit `GRANT … TO qonvo_app, qonvo_system` in the migration
+  (see 0003). (3) Sheets: quote bare tab names in A1 ranges; append with `RAW` (USER_ENTERED
+  evaluates `+`/`=` → corrupts phones + formula-injection risk).
+- Phase 2 (voice VAS: STT/TTS/multilingual) is the remaining track.
 - WhatsApp session `dev-tenant-main` is linked to the user's demo number; unlink from
   WhatsApp → Settings → Linked devices when done.
