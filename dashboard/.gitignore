@@ -30,9 +30,8 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files (can opt-in for committing if needed)
-.env*
-!.env.example
+# env files — intentionally COMMITTED for this private, single-owner repo so a new
+# device is pick-up-and-go (.env.local carries AUTH_SECRET etc.).
 
 # vercel
 .vercel

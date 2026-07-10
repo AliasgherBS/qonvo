@@ -110,7 +110,10 @@ Qonvo/
 | WAHA Swagger | http://localhost:3001 | `X-Api-Key: dev-waha-key-change-me` |
 | Postgres | `localhost:5433` | app: `qonvo_app`/`dev-app-pass` · owner: `qonvo`/`dev-postgres-pass` |
 
-All in [`.env`](.env) (gitignored). **Never commit `.env`.**
+All in [`.env`](.env). **This is a private, single-owner repo, so `.env` (and
+`dashboard/.env.local`) are intentionally committed** with working values — a new device is
+pick-up-and-go. Only deps/build/caches are gitignored (see `.gitignore`). **If the repo ever stops
+being private/solo, rotate every secret in `.env` and switch it back to gitignored.**
 
 ## Common commands
 

@@ -1,12 +1,7 @@
-# Secrets / env
-.env
-.env.*
-!.env.example
-
-# Brand & media assets (large binaries, not code)
-Branding+Marketing/
-*.mp4
-*.pdf
+# What is NOT committed: dependencies, build output, caches, and local tool state.
+# Everything else — INCLUDING .env with real values and brand assets — is
+# intentionally tracked so a new device is pick-up-and-go (private, single-owner
+# repo). Rotate the secrets in .env if this repo ever stops being private/solo.
 
 # Python
 __pycache__/
@@ -16,17 +11,22 @@ __pycache__/
 .ruff_cache/
 .mypy_cache/
 
-# Node
+# Node / Next.js
 node_modules/
 .next/
 out/
 dist/
+build/
+*.tsbuildinfo
+next-env.d.ts
 
-# Tooling / state
+# Local tooling / agent + editor state
 .omc/
 .claude/
-*.log
-
-# Data volumes (if ever mounted locally)
-.data/
 .playwright-mcp/
+.vercel/
+.DS_Store
+
+# Logs & local data volumes
+*.log
+.data/
