@@ -151,6 +151,114 @@ async def test_human_handoff_alert_failure_does_not_raise():
     assert result["status"] == "escalated"  # alert failure must not break the handoff
 
 
+# --- book_appointment ----------------------------------------------------------- #
+class _FakeCalendar:
+    def __init__(self) -> None:
+        self.calls: list = []
+
+    async def create_event(self, **kwargs) -> dict:
+        self.calls.append(kwargs)
+        return {
+            "id": "evt_1",
+            "html_link": "https://cal/evt_1",
+            "start": kwargs["start"].isoformat(),
+        }
+
+    async def ping(self) -> None:  # pragma: no cover - unused here
+        pass
+
+
+async def test_book_appointment_creates_event_and_booking():
+    added: list = []
+    db = _db_with_capture(added)
+    cal = _FakeCalendar()
+    ctx = _ctx(
+        db,
+        chat_id="923001234567@c.us",
+        integration_clients={"google_calendar": cal},
+    )
+
+    result = await SKILL_REGISTRY["book_appointment"].handler(
+        ctx,
+        {"summary": "Haircut", "start_time": "2026-07-12T15:00:00+05:00", "duration_minutes": 45},
+    )
+
+    assert result["status"] == "booked"
+    assert result["event_id"] == "evt_1"
+    assert len(cal.calls) == 1
+    # duration_minutes drives the end time (15:00 + 45m = 15:45).
+    call = cal.calls[0]
+    assert (call["end"] - call["start"]).total_seconds() == 45 * 60
+    bookings = [o for o in added if type(o).__name__ == "Booking"]
+    assert len(bookings) == 1
+    assert bookings[0].external_event_id == "evt_1"
+    assert bookings[0].customer_phone == "923001234567"  # defaulted from chat_id
+    db.flush.assert_awaited()
+
+
+async def test_book_appointment_without_calendar_returns_error():
+    db = AsyncMock()
+    ctx = _ctx(db)  # no integration_clients, resolver will find no DB row either
+    ctx.integration_clients = {}
+    # Force resolver to see no client by injecting an empty dict AND stubbing DB build.
+    from app.integrations import resolver
+
+    async def _no_client(*_a, **_k):
+        return None
+
+    orig = resolver.build_calendar_client
+    resolver.build_calendar_client = _no_client
+    try:
+        result = await SKILL_REGISTRY["book_appointment"].handler(
+            ctx, {"summary": "x", "start_time": "2026-07-12T15:00:00+05:00"}
+        )
+    finally:
+        resolver.build_calendar_client = orig
+    assert result["status"] == "error"
+
+
+async def test_book_appointment_rejects_bad_start_time():
+    db = _db_with_capture([])
+    ctx = _ctx(db, integration_clients={"google_calendar": _FakeCalendar()})
+    result = await SKILL_REGISTRY["book_appointment"].handler(
+        ctx, {"summary": "x", "start_time": "not-a-date"}
+    )
+    assert result["status"] == "error"
+
+
+# --- append_to_sheet ------------------------------------------------------------- #
+class _FakeSheet:
+    def __init__(self) -> None:
+        self.rows: list = []
+
+    async def append_row(self, values: list) -> dict:
+        self.rows.append(values)
+        return {"updated_range": "Sheet1!A1:C1", "updated_rows": 1}
+
+    async def ping(self) -> None:  # pragma: no cover
+        pass
+
+
+async def test_append_to_sheet_appends_field_values():
+    db = AsyncMock()
+    sheet = _FakeSheet()
+    ctx = _ctx(db, integration_clients={"google_sheets": sheet})
+
+    result = await SKILL_REGISTRY["append_to_sheet"].handler(
+        ctx, {"fields": {"name": "Ali", "phone": "+92300", "request": "demo"}}
+    )
+
+    assert result["status"] == "recorded"
+    assert sheet.rows == [["Ali", "+92300", "demo"]]
+
+
+async def test_append_to_sheet_requires_fields():
+    db = AsyncMock()
+    ctx = _ctx(db, integration_clients={"google_sheets": _FakeSheet()})
+    result = await SKILL_REGISTRY["append_to_sheet"].handler(ctx, {"fields": {}})
+    assert result["status"] == "error"
+
+
 # --- registry: enabled_tools + idempotent execution ------------------------------- #
 async def test_execute_skill_unknown_name_raises():
     db = AsyncMock()
@@ -188,11 +296,20 @@ async def test_execute_skill_runs_handler_once_and_caches_second_call():
     assert len([o for o in added if type(o).__name__ == "SkillExecution"]) == 1
 
 
+def _skills_then_integrations(db, *, skill_rows, integration_rows):
+    """Wire the two DB reads enabled_skill_names now makes (skills, then integrations)."""
+    skills_result = MagicMock()
+    skills_result.all.return_value = skill_rows
+    integ_result = MagicMock()
+    integ_result.scalars.return_value.all.return_value = integration_rows
+    db.execute = AsyncMock(side_effect=[skills_result, integ_result])
+
+
 async def test_enabled_tools_defaults_to_enabled_for_unconfigured_skills():
     db = AsyncMock()
-    result_mock = MagicMock()
-    result_mock.all.return_value = []  # no explicit skills rows for this tenant
-    db.execute.return_value = result_mock
+    # No explicit skills rows and no integrations connected → integration-gated
+    # skills (book_appointment, append_to_sheet) are hidden.
+    _skills_then_integrations(db, skill_rows=[], integration_rows=[])
 
     tools = await enabled_tools(db, uuid.uuid4())
     names = {t["function"]["name"] for t in tools}
@@ -201,10 +318,46 @@ async def test_enabled_tools_defaults_to_enabled_for_unconfigured_skills():
 
 async def test_enabled_tools_respects_explicit_disable():
     db = AsyncMock()
-    result_mock = MagicMock()
-    result_mock.all.return_value = [("human_handoff", False)]
-    db.execute.return_value = result_mock
+    _skills_then_integrations(db, skill_rows=[("human_handoff", False)], integration_rows=[])
 
     tools = await enabled_tools(db, uuid.uuid4())
     names = {t["function"]["name"] for t in tools}
     assert names == {"capture_lead"}
+
+
+async def test_enabled_tools_includes_google_skills_when_integrations_ready():
+    db = AsyncMock()
+
+    class _Integ:
+        def __init__(self, provider, config):
+            self.provider = provider
+            self.config = config
+            self.encrypted_credentials = "cipher"  # a per-tenant key is present
+
+    _skills_then_integrations(
+        db,
+        skill_rows=[],
+        integration_rows=[
+            _Integ("google_calendar", {"calendar_id": "cal@group.calendar.google.com"}),
+            _Integ("google_sheets", {"spreadsheet_id": "sheet123"}),
+        ],
+    )
+
+    tools = await enabled_tools(db, uuid.uuid4())
+    names = {t["function"]["name"] for t in tools}
+    assert names == {"capture_lead", "human_handoff", "book_appointment", "append_to_sheet"}
+
+
+async def test_enabled_tools_hides_google_skill_when_target_id_missing():
+    db = AsyncMock()
+
+    class _Integ:
+        provider = "google_calendar"
+        config: dict = {}  # enabled + key but no calendar_id → not ready
+        encrypted_credentials = "cipher"
+
+    _skills_then_integrations(db, skill_rows=[], integration_rows=[_Integ()])
+
+    tools = await enabled_tools(db, uuid.uuid4())
+    names = {t["function"]["name"] for t in tools}
+    assert "book_appointment" not in names

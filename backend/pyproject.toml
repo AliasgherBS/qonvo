@@ -24,6 +24,8 @@ dependencies = [
     "pypdf>=6.14.2",
     "python-docx>=1.2.0",
     "pydantic[email]>=2.9",
+    "google-api-python-client>=2.140",
+    "google-auth>=2.34",
 ]
 
 [dependency-groups]

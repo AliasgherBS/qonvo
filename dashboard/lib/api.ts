@@ -488,6 +488,87 @@ export const config = {
 };
 
 // ---------------------------------------------------------------------------
+// Integrations — Google Calendar / Sheets (§7 agentic skills)
+// ---------------------------------------------------------------------------
+
+export type IntegrationProvider = "google_calendar" | "google_sheets";
+
+interface IntegrationDto {
+  provider: IntegrationProvider;
+  enabled: boolean;
+  config: Record<string, string>;
+  has_credentials: boolean;
+  has_tenant_key: boolean;
+  service_account_email: string | null;
+}
+
+export interface Integration {
+  provider: IntegrationProvider;
+  enabled: boolean;
+  config: Record<string, string>;
+  hasCredentials: boolean;
+  hasTenantKey: boolean;
+  serviceAccountEmail: string | null;
+}
+
+function mapIntegration(dto: IntegrationDto): Integration {
+  return {
+    provider: dto.provider,
+    enabled: dto.enabled,
+    config: dto.config ?? {},
+    hasCredentials: dto.has_credentials,
+    hasTenantKey: dto.has_tenant_key,
+    serviceAccountEmail: dto.service_account_email,
+  };
+}
+
+export interface IntegrationUpdate {
+  config?: Record<string, string>;
+  serviceAccountJson?: string;
+  enabled?: boolean;
+}
+
+export interface IntegrationTestResult {
+  ok: boolean;
+  message: string;
+  serviceAccountEmail: string | null;
+}
+
+interface IntegrationTestResultDto {
+  ok: boolean;
+  message: string;
+  service_account_email: string | null;
+}
+
+export const integrations = {
+  list: (opts: CallOpts = {}) =>
+    apiFetch<IntegrationDto[]>("/api/integrations", opts).then((items) => items.map(mapIntegration)),
+
+  update: (provider: IntegrationProvider, payload: IntegrationUpdate, opts: CallOpts = {}) =>
+    apiFetch<IntegrationDto>(`/api/integrations/${provider}`, {
+      method: "PUT",
+      body: {
+        config: payload.config,
+        service_account_json: payload.serviceAccountJson,
+        enabled: payload.enabled,
+      },
+      ...opts,
+    }).then(mapIntegration),
+
+  disconnect: (provider: IntegrationProvider, opts: CallOpts = {}) =>
+    apiFetch<void>(`/api/integrations/${provider}`, { method: "DELETE", ...opts }),
+
+  test: (provider: IntegrationProvider, opts: CallOpts = {}) =>
+    apiFetch<IntegrationTestResultDto>(`/api/integrations/${provider}/test`, { method: "POST", ...opts }).then(
+      (dto): IntegrationTestResult => ({
+        ok: dto.ok,
+        message: dto.message,
+        serviceAccountEmail: dto.service_account_email,
+      }),
+    ),
+};
+
+// ---------------------------------------------------------------------------
 // Ops console — qonvo_admin only (§9)
 // ---------------------------------------------------------------------------
 

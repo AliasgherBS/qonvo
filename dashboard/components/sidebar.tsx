@@ -6,6 +6,7 @@ import {
   Building2,
   Gauge,
   Inbox,
+  Plug,
   Radio,
   Settings,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import { cn } from "@/lib/utils";
 const NAV_ITEMS = [
   { href: "/inbox", label: "Inbox", icon: Inbox },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
+  { href: "/integrations", label: "Integrations", icon: Plug },
   { href: "/settings", label: "Settings", icon: Settings },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
 ];

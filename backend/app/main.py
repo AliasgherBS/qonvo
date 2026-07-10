@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import admin, auth, conversations, health, knowledge, notifications, sessions, webhooks
 from app.api import config as config_api
+from app.api import integrations as integrations_api
 from app.core.config import settings
 from app.core.logging import configure_logging, logger
 from app.core.redis import close_redis
@@ -59,3 +60,6 @@ app.include_router(knowledge.router)
 app.include_router(config_api.router)
 app.include_router(notifications.router)
 app.include_router(admin.router)
+
+# --- Phase 3: agentic integrations (Google Calendar / Sheets) ---
+app.include_router(integrations_api.router)

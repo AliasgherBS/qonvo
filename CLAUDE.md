@@ -141,7 +141,15 @@ cd backend && QONVO_SYSTEM_DATABASE_URL=... QONVO_JWT_SECRET=... \
 - Phase 0 (foundation) ✅ and Phase 1 (base offering: RAG + grounded replies + auth + inbox
   with takeover + knowledge manager + ops console) ✅ — both live-verified against a real
   WhatsApp number using Gemini as the LLM/embedding provider.
-- Phase 2 (voice VAS: STT/TTS/multilingual) and Phase 3 (agentic VAS: bookings, CRM, chained
-  flows, reminders, analytics) are the next tracks.
+- Phase 3 (agentic VAS) — **first slice landed**: Google Calendar `book_appointment` +
+  Google Sheets `append_to_sheet` skills, gated so the LLM is only offered a tool when its
+  integration is connected. Auth is **service-account only** (tenant shares their Calendar/Sheet
+  with the SA email — no OAuth, owner never codes); per-tenant keys are Fernet-encrypted in
+  `integrations`, with an optional system-default `QONVO_GOOGLE_SERVICE_ACCOUNT_JSON`. Owner UI at
+  `/integrations`. Verified live to Google's auth boundary; a **real SA key + shared calendar/sheet**
+  is still needed to prove an actual booking. CRM, chained flows, reminders (§5.7), analytics remain.
+  **Note:** dev `.env` `QONVO_FERNET_KEY` was a placeholder → replaced with a real Fernet key (local
+  only, gitignored) since credential encryption now depends on it.
+- Phase 2 (voice VAS: STT/TTS/multilingual) is the other remaining track.
 - WhatsApp session `dev-tenant-main` is linked to the user's demo number; unlink from
   WhatsApp → Settings → Linked devices when done.

@@ -33,6 +33,9 @@ class SkillContext:
     send_gateway: Any | None = None
     session_name: str | None = None
     chat_id: str | None = None
+    # Pre-resolved integration clients keyed by provider (tests / pipeline
+    # injection); when absent, handlers build a real client from the DB.
+    integration_clients: dict[str, Any] | None = None
 
 
 SkillHandler = Callable[[SkillContext, dict[str, Any]], Awaitable[dict[str, Any]]]
@@ -44,6 +47,9 @@ class SkillDefinition:
     description: str
     parameters: dict[str, Any]
     handler: SkillHandler
+    # When set, the skill is only offered to the model if the named integration
+    # (see app.integrations) is connected and usable for the tenant.
+    requires_integration: str | None = None
 
     def tool_schema(self) -> dict[str, Any]:
         """OpenAI tools-API JSON schema for this skill."""
@@ -60,12 +66,16 @@ class SkillDefinition:
 # Imported after the dataclasses above so each module can import them back
 # (`from app.skills.registry import SkillContext, SkillDefinition`) without a
 # circular-import failure.
+from app.skills.append_to_sheet import DEFINITION as _APPEND_TO_SHEET  # noqa: E402
+from app.skills.book_appointment import DEFINITION as _BOOK_APPOINTMENT  # noqa: E402
 from app.skills.capture_lead import DEFINITION as _CAPTURE_LEAD  # noqa: E402
 from app.skills.human_handoff import DEFINITION as _HUMAN_HANDOFF  # noqa: E402
 
 SKILL_REGISTRY: dict[str, SkillDefinition] = {
     _CAPTURE_LEAD.name: _CAPTURE_LEAD,
     _HUMAN_HANDOFF.name: _HUMAN_HANDOFF,
+    _BOOK_APPOINTMENT.name: _BOOK_APPOINTMENT,
+    _APPEND_TO_SHEET.name: _APPEND_TO_SHEET,
 }
 
 
@@ -74,16 +84,22 @@ async def enabled_skill_names(db: AsyncSession, tenant_id: uuid.UUID) -> set[str
 
     A built-in with no explicit ``skills`` row is enabled by default (MVP
     behavior — "never miss a customer" should work with zero manual config);
-    an explicit row's ``enabled`` flag always wins.
+    an explicit row's ``enabled`` flag always wins. A skill that
+    ``requires_integration`` is additionally hidden until that integration is
+    connected, so the model is never offered a tool that can't execute.
     """
+    from app.integrations.resolver import ready_providers
+
     rows = (
         await db.execute(select(Skill.key, Skill.enabled).where(Skill.tenant_id == tenant_id))
     ).all()
     configured = dict(rows)
+    ready = await ready_providers(db, tenant_id)
     return {
         name
-        for name in SKILL_REGISTRY
+        for name, definition in SKILL_REGISTRY.items()
         if configured.get(name, True) is True
+        and (definition.requires_integration is None or definition.requires_integration in ready)
     }
 
 

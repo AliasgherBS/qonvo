@@ -123,6 +123,16 @@ class Settings(BaseSettings):
     rag_chunk_tokens: int = 500
     rag_chunk_overlap_tokens: int = 50
 
+    # --- Phase 3: agentic integrations (DESIGN.md §7) ---
+    # System-default Google service-account key (JSON string). Per-tenant keys in
+    # the ``integrations`` table override this; the tenant shares their Calendar /
+    # Sheet with the service-account email so no OAuth flow is needed.
+    google_service_account_json: str | None = None
+    # Default timezone for calendar events when a tenant hasn't set one.
+    google_default_timezone: str = "UTC"
+    # Default duration (minutes) for a booked appointment when the model omits one.
+    booking_default_duration_minutes: int = 30
+
     # --- Agent pipeline (DESIGN.md §5.4) ---
     history_window_messages: int = 20
     history_window_tokens: int = 4_000
