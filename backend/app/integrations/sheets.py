@@ -42,12 +42,23 @@ class GoogleSheetsClient:
         }
 
     async def ping(self) -> None:
-        """Verify the key can reach the spreadsheet (metadata read, no grid data)."""
-        await asyncio.to_thread(
+        """Confirm the key reaches the spreadsheet AND the target tab exists.
+
+        Metadata-only (no grid data). Validating the tab here means a wrong tab
+        name surfaces at Test time with the list of real tabs, instead of a
+        cryptic "Unable to parse range" at the first append.
+        """
+        meta = await asyncio.to_thread(
             lambda: self._service.spreadsheets()
             .get(spreadsheetId=self._spreadsheet_id, includeGridData=False)
             .execute()
         )
+        titles = [s["properties"]["title"] for s in meta.get("sheets", [])]
+        # A range may be a bare tab ("Leads") or "Tab!A1:D" — the tab is the part
+        # before "!". An empty range targets the first tab, which always exists.
+        tab = self._sheet_range.split("!", 1)[0].strip().strip("'")
+        if tab and titles and tab not in titles:
+            raise ValueError(f"Tab '{tab}' not found. Available tabs: {', '.join(titles)}")
 
 
 __all__ = ["GoogleSheetsClient", "SheetsClient"]

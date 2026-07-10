@@ -139,9 +139,11 @@ async def test_integration(
     try:
         await client.ping()
     except Exception as exc:  # noqa: BLE001
-        share_hint = (
-            "calendar" if provider == GOOGLE_CALENDAR else "spreadsheet"
-        )
+        # A "tab not found" means the sheet IS reachable — only the target tab is
+        # wrong; don't misdirect the owner to re-check sharing in that case.
+        if "not found" in str(exc).lower() and "tab" in str(exc).lower():
+            return TestResult(ok=False, message=str(exc), service_account_email=email)
+        share_hint = "calendar" if provider == GOOGLE_CALENDAR else "spreadsheet"
         return TestResult(
             ok=False,
             message=(

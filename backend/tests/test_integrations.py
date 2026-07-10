@@ -146,6 +146,39 @@ async def test_ready_providers_requires_key_and_target(monkeypatch):
     assert ready == {GOOGLE_CALENDAR}
 
 
+# --- sheets client tab validation (ping) ----------------------------------------- #
+class _FakeSheetsService:
+    def __init__(self, titles):
+        self._titles = titles
+
+    def spreadsheets(self):
+        return self
+
+    def get(self, spreadsheetId, includeGridData):  # noqa: N803 - google kwarg name
+        self._resp = {"sheets": [{"properties": {"title": t}} for t in self._titles]}
+        return self
+
+    def execute(self):
+        return self._resp
+
+
+async def test_sheets_ping_rejects_missing_tab():
+    from app.integrations.sheets import GoogleSheetsClient
+
+    client = GoogleSheetsClient(
+        _FakeSheetsService(["Hook Master Sheet", "Decode Kait"]), "sid", sheet_range="Sheet1"
+    )
+    with pytest.raises(ValueError, match="not found"):
+        await client.ping()
+
+
+async def test_sheets_ping_accepts_existing_tab_with_a1_range():
+    from app.integrations.sheets import GoogleSheetsClient
+
+    client = GoogleSheetsClient(_FakeSheetsService(["Leads"]), "sid", sheet_range="Leads!A:D")
+    await client.ping()  # no raise
+
+
 async def test_ready_providers_uses_system_default_key(monkeypatch):
     monkeypatch.setattr(
         "app.integrations.resolver.settings.google_service_account_json", _FAKE_KEY
