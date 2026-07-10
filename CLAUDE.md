@@ -152,13 +152,22 @@ cd backend && QONVO_SYSTEM_DATABASE_URL=... QONVO_JWT_SECRET=... \
   - **Analytics** `GET /api/analytics/summary` + `/analytics` page (live). **Email** owner-alerts
     (config-driven log/resend/smtp; wired to human_handoff). **Metrics** `GET /metrics` (Prometheus,
     hand-rolled, no dep). **Payments** = Settings field, shared verbatim by the skill.
-  - Remaining Phase 3: booking reminders (§5.7), CRM sync (want). Chained flows already work via the
-    tool loop.
+  - **Booking reminders (§5.7)** ✅ — scheduler cron (every 15 min) sends a confirmation + a 24h
+    reminder, capped at 2/booking (per-timestamp), business-hours-aware, opt-out via
+    `reminder_suppressions` (a "stop" reply suppresses). Verified live with a fake gateway.
+  - Remaining Phase 3: CRM sync (want). Chained flows already work via the tool loop.
+- **Phase 2 (voice VAS)** ✅ landed (commit 1ad91b7): OpenAI-compat STT (`/audio/transcriptions`) +
+  TTS (`/audio/speech`) adapters, `resolve_stt`/`resolve_tts` (return None w/o key → voice off),
+  pipeline voice-in (WAHA media → STT → transcript) + voice-out (TTS → `send_voice`), per-tenant
+  `voice_reply_mode` (match/always/never) in Settings. **Gemini's OpenAI-compat has NO audio
+  endpoints — voice needs a Groq/OpenAI STT/TTS key even when the LLM is Gemini.** Live voice E2E
+  still needs that key + a real voice note.
 - **Gotchas locked in:** (1) dev `.env` `QONVO_FERNET_KEY` was a placeholder → real key now (local,
   gitignored). (2) A migration-owner-created table does NOT inherit the superuser's DEFAULT
   PRIVILEGES — new tables need explicit `GRANT … TO qonvo_app, qonvo_system` in the migration
   (see 0003). (3) Sheets: quote bare tab names in A1 ranges; append with `RAW` (USER_ENTERED
   evaluates `+`/`=` → corrupts phones + formula-injection risk).
-- Phase 2 (voice VAS: STT/TTS/multilingual) is the remaining track.
+- All four tracks (Phases 0–3 + Phase 2 voice) are now built; remaining work is CRM sync (want),
+  a live voice test with a real STT/TTS key, and Phase 4 (team seats, white-label, billing).
 - WhatsApp session `dev-tenant-main` is linked to the user's demo number; unlink from
   WhatsApp → Settings → Linked devices when done.
