@@ -10,6 +10,8 @@ from typing import Any, Protocol, runtime_checkable
 class SheetsClient(Protocol):
     async def append_row(self, values: list[Any]) -> dict[str, Any]: ...
 
+    async def read_rows(self) -> list[list[str]]: ...
+
     async def ping(self) -> None: ...
 
 
@@ -21,6 +23,16 @@ class GoogleSheetsClient:
         self._spreadsheet_id = spreadsheet_id
         self._sheet_range = sheet_range
 
+    @property
+    def _a1_range(self) -> str:
+        """A1 range safe for the Sheets API. A bare tab name with a space (e.g.
+        'Qonvo Leads') must be single-quoted or values.get 400s ('Unable to parse
+        range'); a range that already has a '!' is assumed pre-formatted."""
+        r = self._sheet_range
+        if "!" in r:
+            return r
+        return "'" + r.replace("'", "''") + "'"
+
     async def append_row(self, values: list[Any]) -> dict[str, Any]:
         body = {"values": [values]}
         result = await asyncio.to_thread(
@@ -28,8 +40,12 @@ class GoogleSheetsClient:
             .values()
             .append(
                 spreadsheetId=self._spreadsheet_id,
-                range=self._sheet_range,
-                valueInputOption="USER_ENTERED",
+                range=self._a1_range,
+                # RAW, not USER_ENTERED: store values verbatim. USER_ENTERED
+                # evaluates leading "+"/"=" as formulas — corrupting phone numbers
+                # ("+92..." → a negative number) and, worse, letting a
+                # customer-supplied "=IMPORTXML(...)" run (formula injection).
+                valueInputOption="RAW",
                 insertDataOption="INSERT_ROWS",
                 body=body,
             )
@@ -40,6 +56,19 @@ class GoogleSheetsClient:
             "updated_range": updates.get("updatedRange"),
             "updated_rows": updates.get("updatedRows"),
         }
+
+    async def read_rows(self) -> list[list[str]]:
+        """All rows in the configured tab (first row is typically the header).
+
+        Backs ``lookup_sheet`` (inventory / order-status / price lookups).
+        """
+        resp = await asyncio.to_thread(
+            lambda: self._service.spreadsheets()
+            .values()
+            .get(spreadsheetId=self._spreadsheet_id, range=self._a1_range)
+            .execute()
+        )
+        return resp.get("values", [])
 
     async def ping(self) -> None:
         """Confirm the key reaches the spreadsheet AND the target tab exists.

@@ -511,6 +511,7 @@ interface TenantConfigDto {
   owner_alert_number: string;
   llm_provider: LlmProvider;
   llm_model: string;
+  payment_details: string | null;
 }
 
 export interface TenantConfig {
@@ -526,6 +527,7 @@ export interface TenantConfig {
   ownerAlertNumber: string;
   llmProvider: LlmProvider;
   llmModel: string;
+  paymentDetails: string;
 }
 
 function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
@@ -543,6 +545,7 @@ function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
     ownerAlertNumber: dto.owner_alert_number,
     llmProvider: dto.llm_provider,
     llmModel: dto.llm_model,
+    paymentDetails: dto.payment_details ?? "",
   };
 }
 
@@ -562,6 +565,7 @@ function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
     owner_alert_number: cfg.ownerAlertNumber,
     llm_provider: cfg.llmProvider,
     llm_model: cfg.llmModel,
+    payment_details: cfg.paymentDetails || null,
   };
 }
 
@@ -571,6 +575,51 @@ export const config = {
   update: (payload: TenantConfig, opts: CallOpts = {}) =>
     apiFetch<TenantConfigDto>("/api/config", { method: "PUT", body: toTenantConfigDto(payload), ...opts }).then(
       mapTenantConfig,
+    ),
+};
+
+// ---------------------------------------------------------------------------
+// Analytics (§9 analytics dashboard, §13 metering)
+// ---------------------------------------------------------------------------
+
+interface AnalyticsSummaryDto {
+  range_days: number;
+  totals: Record<string, number>;
+  daily: { day: string; messages_in: number; messages_out: number; cost: number; tokens: number }[];
+  conversation_states: Record<string, number>;
+  top_gaps: { question: string; count: number }[];
+}
+
+export interface AnalyticsDailyPoint {
+  day: string;
+  messagesIn: number;
+  messagesOut: number;
+  cost: number;
+}
+
+export interface AnalyticsSummary {
+  rangeDays: number;
+  totals: Record<string, number>;
+  daily: AnalyticsDailyPoint[];
+  conversationStates: Record<string, number>;
+  topGaps: { question: string; count: number }[];
+}
+
+export const analytics = {
+  summary: (params: { days?: number } = {}, opts: CallOpts = {}) =>
+    apiFetch<AnalyticsSummaryDto>(`/api/analytics/summary${buildQuery(params)}`, opts).then(
+      (dto): AnalyticsSummary => ({
+        rangeDays: dto.range_days,
+        totals: dto.totals,
+        daily: dto.daily.map((d) => ({
+          day: d.day,
+          messagesIn: d.messages_in,
+          messagesOut: d.messages_out,
+          cost: d.cost,
+        })),
+        conversationStates: dto.conversation_states,
+        topGaps: dto.top_gaps,
+      }),
     ),
 };
 

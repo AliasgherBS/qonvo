@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import Boolean, Enum, ForeignKey, String, UniqueConstraint
+from sqlalchemy import Boolean, Enum, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -76,6 +76,10 @@ class TenantConfig(Base, TenantScopedMixin):
     owner_alert_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
     entitlements: Mapped[dict] = mapped_column(JSONBType, nullable=False, default=dict)
     debounce_window_seconds: Mapped[float | None] = mapped_column(nullable=True)
+    # Business's own receiving account details, shared verbatim by the
+    # ``share_payment_details`` skill when a customer wants to pay (§7). Free text
+    # (bank name/title/number/IBAN, JazzCash/Easypaisa, etc.) — never card data.
+    payment_details: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class AuditLog(Base, TenantScopedMixin):

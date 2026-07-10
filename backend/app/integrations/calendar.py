@@ -25,6 +25,10 @@ class CalendarClient(Protocol):
         attendee_emails: list[str] | None = None,
     ) -> dict[str, Any]: ...
 
+    async def list_events(
+        self, *, time_min: datetime, time_max: datetime
+    ) -> list[dict[str, Any]]: ...
+
     async def ping(self) -> None: ...
 
 
@@ -67,6 +71,31 @@ class GoogleCalendarClient:
             "html_link": event.get("htmlLink"),
             "start": (event.get("start") or {}).get("dateTime"),
         }
+
+    async def list_events(
+        self, *, time_min: datetime, time_max: datetime
+    ) -> list[dict[str, Any]]:
+        """Events overlapping [time_min, time_max), expanded and time-ordered.
+
+        Used by ``check_availability`` to compute busy windows.
+        """
+        resp = await asyncio.to_thread(
+            lambda: self._service.events()
+            .list(
+                calendarId=self._calendar_id,
+                timeMin=time_min.isoformat(),
+                timeMax=time_max.isoformat(),
+                singleEvents=True,
+                orderBy="startTime",
+            )
+            .execute()
+        )
+        out: list[dict[str, Any]] = []
+        for e in resp.get("items", []):
+            start = (e.get("start") or {}).get("dateTime") or (e.get("start") or {}).get("date")
+            end = (e.get("end") or {}).get("dateTime") or (e.get("end") or {}).get("date")
+            out.append({"summary": e.get("summary"), "start": start, "end": end})
+        return out
 
     async def ping(self) -> None:
         """Cheap read to verify the key is valid and the calendar is shared with it."""

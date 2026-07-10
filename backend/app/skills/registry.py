@@ -50,6 +50,9 @@ class SkillDefinition:
     # When set, the skill is only offered to the model if the named integration
     # (see app.integrations) is connected and usable for the tenant.
     requires_integration: str | None = None
+    # When set, the skill is only offered if the tenant's config has a truthy
+    # value for this attribute (e.g. "payment_details" for share_payment_details).
+    requires_config_key: str | None = None
 
     def tool_schema(self) -> dict[str, Any]:
         """OpenAI tools-API JSON schema for this skill."""
@@ -69,13 +72,21 @@ class SkillDefinition:
 from app.skills.append_to_sheet import DEFINITION as _APPEND_TO_SHEET  # noqa: E402
 from app.skills.book_appointment import DEFINITION as _BOOK_APPOINTMENT  # noqa: E402
 from app.skills.capture_lead import DEFINITION as _CAPTURE_LEAD  # noqa: E402
+from app.skills.check_availability import DEFINITION as _CHECK_AVAILABILITY  # noqa: E402
 from app.skills.human_handoff import DEFINITION as _HUMAN_HANDOFF  # noqa: E402
+from app.skills.lookup_sheet import DEFINITION as _LOOKUP_SHEET  # noqa: E402
+from app.skills.share_payment_details import DEFINITION as _SHARE_PAYMENT  # noqa: E402
+from app.skills.take_order import DEFINITION as _TAKE_ORDER  # noqa: E402
 
 SKILL_REGISTRY: dict[str, SkillDefinition] = {
     _CAPTURE_LEAD.name: _CAPTURE_LEAD,
     _HUMAN_HANDOFF.name: _HUMAN_HANDOFF,
     _BOOK_APPOINTMENT.name: _BOOK_APPOINTMENT,
     _APPEND_TO_SHEET.name: _APPEND_TO_SHEET,
+    _CHECK_AVAILABILITY.name: _CHECK_AVAILABILITY,
+    _LOOKUP_SHEET.name: _LOOKUP_SHEET,
+    _TAKE_ORDER.name: _TAKE_ORDER,
+    _SHARE_PAYMENT.name: _SHARE_PAYMENT,
 }
 
 
@@ -89,17 +100,28 @@ async def enabled_skill_names(db: AsyncSession, tenant_id: uuid.UUID) -> set[str
     connected, so the model is never offered a tool that can't execute.
     """
     from app.integrations.resolver import ready_providers
+    from app.models.tenant import TenantConfig
 
     rows = (
         await db.execute(select(Skill.key, Skill.enabled).where(Skill.tenant_id == tenant_id))
     ).all()
     configured = dict(rows)
     ready = await ready_providers(db, tenant_id)
+    tenant_config = (
+        await db.execute(select(TenantConfig).where(TenantConfig.tenant_id == tenant_id))
+    ).scalar_one_or_none()
+
+    def _config_ok(definition: SkillDefinition) -> bool:
+        if definition.requires_config_key is None:
+            return True
+        return bool(getattr(tenant_config, definition.requires_config_key, None))
+
     return {
         name
         for name, definition in SKILL_REGISTRY.items()
         if configured.get(name, True) is True
         and (definition.requires_integration is None or definition.requires_integration in ready)
+        and _config_ok(definition)
     }
 
 

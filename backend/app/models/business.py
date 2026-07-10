@@ -10,6 +10,7 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -74,6 +75,27 @@ class ReminderSuppression(Base, TenantScopedMixin):
 
     phone: Mapped[str] = mapped_column(String(32), nullable=False)
     reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class Order(Base, TenantScopedMixin):
+    """A customer order captured by the ``take_order`` skill (DESIGN.md §7)."""
+
+    __tablename__ = "orders"
+
+    conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("conversations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    customer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    customer_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # [{"name": str, "quantity": int, "price": float|None}]
+    items: Mapped[list] = mapped_column(JSONBType, nullable=False, default=list)
+    total: Mapped[float | None] = mapped_column(Numeric(12, 2), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(8), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    data: Mapped[dict] = mapped_column(JSONBType, nullable=False, default=dict)
 
 
 class Handoff(Base, TenantScopedMixin):

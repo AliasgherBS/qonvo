@@ -133,6 +133,21 @@ class Settings(BaseSettings):
     # Default duration (minutes) for a booked appointment when the model omits one.
     booking_default_duration_minutes: int = 30
 
+    # --- Email (owner alerts, DESIGN.md §12.1) ---
+    # Transport: "log" (dev — just logs), "resend" (HTTP API), or "smtp".
+    email_provider: str = "log"
+    email_from: str = "Qonvo <alerts@qonvo.local>"
+    email_resend_api_key: str | None = None
+    email_smtp_host: str | None = None
+    email_smtp_port: int = 587
+    email_smtp_user: str | None = None
+    email_smtp_password: str | None = None
+    email_smtp_starttls: bool = True
+
+    # --- Observability ---
+    # Expose GET /metrics in Prometheus text format (request + pipeline metrics).
+    metrics_enabled: bool = True
+
     # --- Agent pipeline (DESIGN.md §5.4) ---
     history_window_messages: int = 20
     history_window_tokens: int = 4_000

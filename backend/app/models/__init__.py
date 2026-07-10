@@ -6,7 +6,7 @@ create.
 from __future__ import annotations
 
 from app.db.base import Base
-from app.models.business import Booking, Handoff, Lead, ReminderSuppression
+from app.models.business import Booking, Handoff, Lead, Order, ReminderSuppression
 from app.models.conversation import Conversation, Message
 from app.models.knowledge import KnowledgeChunk, KnowledgeSource
 from app.models.ops import AnalyticsEvent, FailedJob, Notification, UsageCounter
@@ -31,6 +31,7 @@ TENANT_SCOPED_TABLES: tuple[str, ...] = (
     "integrations",
     "leads",
     "bookings",
+    "orders",
     "reminder_suppressions",
     "handoffs",
     "notifications",
@@ -53,6 +54,7 @@ __all__ = [
     "Lead",
     "Message",
     "Notification",
+    "Order",
     "ReminderSuppression",
     "Skill",
     "SkillExecution",

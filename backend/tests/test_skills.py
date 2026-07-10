@@ -296,24 +296,30 @@ async def test_execute_skill_runs_handler_once_and_caches_second_call():
     assert len([o for o in added if type(o).__name__ == "SkillExecution"]) == 1
 
 
-def _skills_then_integrations(db, *, skill_rows, integration_rows):
-    """Wire the two DB reads enabled_skill_names now makes (skills, then integrations)."""
+# Skills with no integration/config requirement → on by default.
+_BASE_SKILLS = {"capture_lead", "human_handoff", "take_order"}
+
+
+def _skills_then_integrations(db, *, skill_rows, integration_rows, tenant_config=None):
+    """Wire the three DB reads enabled_skill_names makes: skills, integrations, config."""
     skills_result = MagicMock()
     skills_result.all.return_value = skill_rows
     integ_result = MagicMock()
     integ_result.scalars.return_value.all.return_value = integration_rows
-    db.execute = AsyncMock(side_effect=[skills_result, integ_result])
+    config_result = MagicMock()
+    config_result.scalar_one_or_none.return_value = tenant_config
+    db.execute = AsyncMock(side_effect=[skills_result, integ_result, config_result])
 
 
 async def test_enabled_tools_defaults_to_enabled_for_unconfigured_skills():
     db = AsyncMock()
-    # No explicit skills rows and no integrations connected → integration-gated
-    # skills (book_appointment, append_to_sheet) are hidden.
+    # No integrations + no payment config → integration- and config-gated skills
+    # are hidden; only the always-on base skills remain.
     _skills_then_integrations(db, skill_rows=[], integration_rows=[])
 
     tools = await enabled_tools(db, uuid.uuid4())
     names = {t["function"]["name"] for t in tools}
-    assert names == {"capture_lead", "human_handoff"}
+    assert names == _BASE_SKILLS
 
 
 async def test_enabled_tools_respects_explicit_disable():
@@ -322,7 +328,7 @@ async def test_enabled_tools_respects_explicit_disable():
 
     tools = await enabled_tools(db, uuid.uuid4())
     names = {t["function"]["name"] for t in tools}
-    assert names == {"capture_lead"}
+    assert names == _BASE_SKILLS - {"human_handoff"}
 
 
 async def test_enabled_tools_includes_google_skills_when_integrations_ready():
@@ -345,7 +351,12 @@ async def test_enabled_tools_includes_google_skills_when_integrations_ready():
 
     tools = await enabled_tools(db, uuid.uuid4())
     names = {t["function"]["name"] for t in tools}
-    assert names == {"capture_lead", "human_handoff", "book_appointment", "append_to_sheet"}
+    assert names == _BASE_SKILLS | {
+        "book_appointment",
+        "append_to_sheet",
+        "check_availability",
+        "lookup_sheet",
+    }
 
 
 async def test_enabled_tools_hides_google_skill_when_target_id_missing():
@@ -361,3 +372,128 @@ async def test_enabled_tools_hides_google_skill_when_target_id_missing():
     tools = await enabled_tools(db, uuid.uuid4())
     names = {t["function"]["name"] for t in tools}
     assert "book_appointment" not in names
+    assert "check_availability" not in names
+
+
+async def test_enabled_tools_shows_payment_skill_only_when_configured():
+    class _Config:
+        payment_details = "Bank: HBL, Acct: 1234"
+
+    db = AsyncMock()
+    _skills_then_integrations(db, skill_rows=[], integration_rows=[], tenant_config=_Config())
+    names = {t["function"]["name"] for t in await enabled_tools(db, uuid.uuid4())}
+    assert "share_payment_details" in names
+
+    db2 = AsyncMock()
+    _skills_then_integrations(db2, skill_rows=[], integration_rows=[], tenant_config=None)
+    names2 = {t["function"]["name"] for t in await enabled_tools(db2, uuid.uuid4())}
+    assert "share_payment_details" not in names2
+
+
+# --- new Phase 3 skills: lookup / availability / order / payment ------------------ #
+async def test_take_order_records_order_and_total():
+    added: list = []
+    db = _db_with_capture(added)
+    ctx = _ctx(db, chat_id="923009999999@c.us")
+    result = await SKILL_REGISTRY["take_order"].handler(
+        ctx,
+        {"items": [{"name": "Keratin", "quantity": 2, "price": 12000}], "customer_name": "Sara"},
+    )
+    assert result["status"] == "ordered"
+    assert result["total"] == 24000
+    orders = [o for o in added if type(o).__name__ == "Order"]
+    assert len(orders) == 1
+    assert orders[0].customer_phone == "923009999999"
+    assert orders[0].total == 24000
+
+
+async def test_take_order_requires_items():
+    db = _db_with_capture([])
+    result = await SKILL_REGISTRY["take_order"].handler(_ctx(db), {"items": []})
+    assert result["status"] == "error"
+
+
+async def test_take_order_total_none_when_price_missing():
+    added: list = []
+    db = _db_with_capture(added)
+    result = await SKILL_REGISTRY["take_order"].handler(
+        _ctx(db), {"items": [{"name": "Haircut", "quantity": 1}]}
+    )
+    assert result["total"] is None
+
+
+class _FakeSheetReader:
+    def __init__(self, rows):
+        self._rows = rows
+
+    async def read_rows(self):
+        return self._rows
+
+
+async def test_lookup_sheet_returns_matching_rows():
+    sheet = _FakeSheetReader(
+        [["Item", "Price", "Stock"], ["Shampoo", "500", "12"], ["Keratin", "12000", "3"]]
+    )
+    ctx = _ctx(AsyncMock(), integration_clients={"google_sheets": sheet})
+    result = await SKILL_REGISTRY["lookup_sheet"].handler(ctx, {"query": "keratin"})
+    assert result["status"] == "ok"
+    assert result["count"] == 1
+    assert result["matches"][0]["Item"] == "Keratin"
+    assert result["matches"][0]["Price"] == "12000"
+
+
+async def test_lookup_sheet_no_match():
+    sheet = _FakeSheetReader([["Item"], ["Shampoo"]])
+    ctx = _ctx(AsyncMock(), integration_clients={"google_sheets": sheet})
+    result = await SKILL_REGISTRY["lookup_sheet"].handler(ctx, {"query": "nonexistent"})
+    assert result["count"] == 0
+
+
+class _FakeCalendarReader:
+    def __init__(self, events):
+        self._events = events
+
+    async def list_events(self, *, time_min, time_max):
+        return self._events
+
+
+async def test_check_availability_reports_busy():
+    cal = _FakeCalendarReader(
+        [
+            {
+                "summary": "Bridal",
+                "start": "2026-07-20T10:00:00+05:00",
+                "end": "2026-07-20T12:00:00+05:00",
+            }
+        ]
+    )
+    ctx = _ctx(AsyncMock(), integration_clients={"google_calendar": cal})
+    result = await SKILL_REGISTRY["check_availability"].handler(ctx, {"date": "2026-07-20"})
+    assert result["status"] == "ok"
+    assert len(result["busy"]) == 1
+
+
+async def test_check_availability_rejects_bad_date():
+    cal = _FakeCalendarReader([])
+    ctx = _ctx(AsyncMock(), integration_clients={"google_calendar": cal})
+    result = await SKILL_REGISTRY["check_availability"].handler(ctx, {"date": "not-a-date"})
+    assert result["status"] == "error"
+
+
+async def test_share_payment_details_returns_configured_details():
+    class _Config:
+        payment_details = "Bank: HBL\nTitle: Glow Salon\nAcct: 1234567890"
+
+    ctx = _ctx(AsyncMock(), tenant_config=_Config())
+    result = await SKILL_REGISTRY["share_payment_details"].handler(ctx, {})
+    assert result["status"] == "ok"
+    assert "HBL" in result["payment_details"]
+
+
+async def test_share_payment_details_errors_when_unset():
+    class _Config:
+        payment_details = None
+
+    ctx = _ctx(AsyncMock(), tenant_config=_Config())
+    result = await SKILL_REGISTRY["share_payment_details"].handler(ctx, {})
+    assert result["status"] == "error"

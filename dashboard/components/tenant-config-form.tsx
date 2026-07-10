@@ -272,6 +272,33 @@ export function TenantConfigForm({
       <Card>
         <CardHeader>
           <div>
+            <CardTitle>Payments</CardTitle>
+            <CardDescription>
+              Your own receiving account details. The AI shares these verbatim when a customer wants to
+              pay — never card data, just how to send you money.
+            </CardDescription>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-1.5">
+            <Label htmlFor="payment-details">Payment / account details</Label>
+            <Textarea
+              id="payment-details"
+              rows={4}
+              value={form.paymentDetails}
+              onChange={(e) => setForm({ ...form, paymentDetails: e.target.value })}
+              placeholder={"Bank: HBL\nTitle: Glow Salon\nAccount / IBAN: PK..\nJazzCash/Easypaisa: 03XX-XXXXXXX"}
+            />
+            <p className="text-xs text-muted-foreground">
+              Leave blank to keep the payment option off — the bot only offers it when this is set.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div>
             <CardTitle>AI provider</CardTitle>
             <CardDescription>Which LLM powers your AI representative.</CardDescription>
           </div>

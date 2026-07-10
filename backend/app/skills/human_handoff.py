@@ -64,6 +64,19 @@ async def handle(ctx: SkillContext, args: dict[str, Any]) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 — alert failure must not block handoff
             logger.bind(tenant_id=str(ctx.tenant_id)).warning(f"owner alert send failed: {exc}")
 
+    # Best-effort email alert to the owner (transport is config-driven; §12.1).
+    try:
+        from app.services.email import email_owner
+
+        await email_owner(
+            ctx.db,
+            ctx.tenant_id,
+            subject="A customer needs a human",
+            body=f"Your AI rep escalated a conversation.\n\nReason: {reason}",
+        )
+    except Exception as exc:  # noqa: BLE001 — email failure must not block handoff
+        logger.bind(tenant_id=str(ctx.tenant_id)).warning(f"owner email failed: {exc}")
+
     return {"status": "escalated", "message": "team notified"}
 
 

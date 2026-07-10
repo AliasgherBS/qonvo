@@ -31,6 +31,7 @@ class ConfigUpdateRequest(BaseModel):
     escalation_rules: dict | None = None
     llm_provider: str | None = None
     llm_model: str | None = None
+    payment_details: str | None = None
 
     @field_validator("owner_alert_number")
     @classmethod
@@ -65,6 +66,7 @@ class ConfigResponse(BaseModel):
     escalation_rules: dict
     llm_provider: str | None
     llm_model: str | None
+    payment_details: str | None
 
 
 def _config_to_dict(row: TenantConfig) -> ConfigResponse:
@@ -80,6 +82,7 @@ def _config_to_dict(row: TenantConfig) -> ConfigResponse:
         escalation_rules=row.escalation_rules,
         llm_provider=row.llm_provider,
         llm_model=row.llm_model,
+        payment_details=row.payment_details,
     )
 
 
