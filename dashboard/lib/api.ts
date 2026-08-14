@@ -502,17 +502,20 @@ function configFromDays(
 }
 
 interface TenantConfigDto {
-  persona: string;
-  business_name: string;
-  primary_language: string;
-  tone: string;
-  custom_instructions: string;
-  business_hours: BusinessHoursConfig;
-  owner_alert_number: string;
-  llm_provider: LlmProvider;
-  llm_model: string;
+  // The backend leaves every optional field null until it's set (a freshly
+  // created tenant_config is all-null), so mirror that here and coerce to
+  // safe defaults in mapTenantConfig — the form assumes strings.
+  persona: string | null;
+  business_name: string | null;
+  primary_language: string | null;
+  tone: string | null;
+  custom_instructions: string | null;
+  business_hours: BusinessHoursConfig | null;
+  owner_alert_number: string | null;
+  llm_provider: LlmProvider | null;
+  llm_model: string | null;
   payment_details: string | null;
-  voice_reply_mode: VoiceReplyMode;
+  voice_reply_mode: VoiceReplyMode | null;
 }
 
 export type VoiceReplyMode = "match" | "always" | "never";
@@ -528,7 +531,7 @@ export interface TenantConfig {
   businessHoursTimezone: string;
   businessHoursClosedMessage: string | null;
   ownerAlertNumber: string;
-  llmProvider: LlmProvider;
+  llmProvider: LlmProvider | "";
   llmModel: string;
   paymentDetails: string;
   voiceReplyMode: VoiceReplyMode;
@@ -537,18 +540,18 @@ export interface TenantConfig {
 function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
   const bh = dto.business_hours ?? {};
   return {
-    persona: dto.persona,
-    businessName: dto.business_name,
-    primaryLanguage: dto.primary_language,
-    tone: dto.tone,
-    customInstructions: dto.custom_instructions,
+    persona: dto.persona ?? "",
+    businessName: dto.business_name ?? "",
+    primaryLanguage: dto.primary_language ?? "",
+    tone: dto.tone ?? "",
+    customInstructions: dto.custom_instructions ?? "",
     businessHours: daysFromConfig(bh),
     businessHoursEnabled: bh.enabled ?? false,
     businessHoursTimezone: bh.timezone ?? "UTC",
     businessHoursClosedMessage: bh.closed_message ?? null,
-    ownerAlertNumber: dto.owner_alert_number,
-    llmProvider: dto.llm_provider,
-    llmModel: dto.llm_model,
+    ownerAlertNumber: dto.owner_alert_number ?? "",
+    llmProvider: dto.llm_provider ?? "",
+    llmModel: dto.llm_model ?? "",
     paymentDetails: dto.payment_details ?? "",
     voiceReplyMode: dto.voice_reply_mode ?? "match",
   };
@@ -568,7 +571,7 @@ function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
       cfg.businessHoursClosedMessage,
     ),
     owner_alert_number: cfg.ownerAlertNumber,
-    llm_provider: cfg.llmProvider,
+    llm_provider: cfg.llmProvider || null,
     llm_model: cfg.llmModel,
     payment_details: cfg.paymentDetails || null,
     voice_reply_mode: cfg.voiceReplyMode,

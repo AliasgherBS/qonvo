@@ -339,8 +339,9 @@ export function TenantConfigForm({
               id="llm-provider"
               className={SELECT_CLASSES}
               value={form.llmProvider}
-              onChange={(e) => setForm({ ...form, llmProvider: e.target.value as LlmProvider })}
+              onChange={(e) => setForm({ ...form, llmProvider: e.target.value as LlmProvider | "" })}
             >
+              {form.llmProvider === "" ? <option value="">Use platform default</option> : null}
               {LLM_PROVIDER_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
