@@ -57,9 +57,14 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_system_db)) -
         role=result.role,
         is_qonvo_admin=result.is_qonvo_admin,
     )
+    # A cross-tenant superadmin has no tenant membership role, so surface the
+    # admin flag *as* the role — the dashboard gates admin nav/routes on
+    # role === "qonvo_admin" (an admin otherwise arrives with role null and is
+    # bounced off every /admin page onto a tenant-less, broken /inbox).
+    effective_role = "qonvo_admin" if result.is_qonvo_admin else result.role
     return LoginResponse(
         access_token=token,
-        role=result.role,
+        role=effective_role,
         tenant_id=str(result.tenant_id) if result.tenant_id else None,
         name=result.user.full_name,
     )
@@ -83,7 +88,7 @@ async def me(
     return MeResponse(
         email=user.email,
         name=user.full_name,
-        role=claims.role,
+        role="qonvo_admin" if claims.is_qonvo_admin else claims.role,
         tenant_id=str(claims.tenant_id) if claims.tenant_id else None,
         tenant_name=tenant_name,
     )

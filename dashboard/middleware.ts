@@ -23,6 +23,13 @@ export default auth((req) => {
 
   const isLoggedIn = !!req.auth;
   const isPublicPath = PUBLIC_PATHS.some((path) => nextUrl.pathname.startsWith(path));
+  const isAdmin = req.auth?.user?.role === "qonvo_admin";
+
+  // A cross-tenant admin has no tenant, so the owner pages (inbox, knowledge,
+  // …) 403 for them. Funnel admins to the admin console instead of ever landing
+  // them on a broken tenant-scoped page.
+  const OWNER_ONLY_PREFIXES = ["/inbox", "/knowledge", "/integrations", "/settings", "/analytics", "/onboarding"];
+  const adminHome = "/admin/tenants";
 
   if (!isLoggedIn && !isPublicPath) {
     const loginUrl = new URL("/login", nextUrl.origin);
@@ -31,11 +38,15 @@ export default auth((req) => {
   }
 
   if (isLoggedIn && nextUrl.pathname === "/login") {
-    return NextResponse.redirect(new URL("/inbox", nextUrl.origin));
+    return NextResponse.redirect(new URL(isAdmin ? adminHome : "/inbox", nextUrl.origin));
   }
 
-  if (isLoggedIn && nextUrl.pathname.startsWith("/admin") && req.auth?.user?.role !== "qonvo_admin") {
+  // Non-admins can't see /admin/*; admins get pulled off owner-only pages.
+  if (isLoggedIn && !isAdmin && nextUrl.pathname.startsWith("/admin")) {
     return NextResponse.redirect(new URL("/inbox", nextUrl.origin));
+  }
+  if (isLoggedIn && isAdmin && OWNER_ONLY_PREFIXES.some((p) => nextUrl.pathname.startsWith(p))) {
+    return NextResponse.redirect(new URL(adminHome, nextUrl.origin));
   }
 
   return NextResponse.next();

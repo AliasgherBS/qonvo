@@ -41,20 +41,15 @@ export function Sidebar({ role }: { role: Role }) {
       </div>
 
       <nav className="mt-8 flex flex-1 flex-col gap-1">
-        {NAV_ITEMS.map((item) => (
-          <NavLink key={item.href} {...item} active={pathname.startsWith(item.href)} />
-        ))}
-
-        {role === "qonvo_admin" ? (
-          <>
-            <p className="mt-6 px-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-              Admin
-            </p>
-            {ADMIN_NAV_ITEMS.map((item) => (
+        {/* A qonvo_admin has no tenant, so the owner pages 403 for them — show
+            only the cross-tenant admin console. Owners get the owner nav. */}
+        {role === "qonvo_admin"
+          ? ADMIN_NAV_ITEMS.map((item) => (
+              <NavLink key={item.href} {...item} active={pathname.startsWith(item.href)} />
+            ))
+          : NAV_ITEMS.map((item) => (
               <NavLink key={item.href} {...item} active={pathname.startsWith(item.href)} />
             ))}
-          </>
-        ) : null}
       </nav>
 
       <p className="px-3 text-xs text-muted-foreground">Never miss a customer.</p>
