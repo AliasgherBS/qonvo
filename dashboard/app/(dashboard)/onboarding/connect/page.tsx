@@ -48,8 +48,13 @@ export default function ConnectPage() {
     setStarting(true);
     setStartError(null);
     try {
-      await sessions.create({ name: sessionName.trim(), label: sessionName.trim() }, { token });
-      setActiveSession(sessionName.trim());
+      // The backend derives a globally-unique session name (WAHA keys are
+      // shared across tenants), so poll/QR against the returned name, not input.
+      const created = await sessions.create(
+        { name: sessionName.trim(), label: sessionName.trim() },
+        { token },
+      );
+      setActiveSession(created.name);
     } catch {
       setStartError("Couldn't reach the backend yet — this will start the moment the sessions API is live.");
     } finally {

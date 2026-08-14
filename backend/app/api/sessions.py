@@ -7,6 +7,7 @@ per-session HMAC webhook secret and records the ``whatsapp_sessions`` mapping.
 from __future__ import annotations
 
 import contextlib
+import re
 import secrets
 from uuid import UUID
 
@@ -87,21 +88,21 @@ async def create_session(
     db: AsyncSession = Depends(get_db),
     waha: WahaClient = Depends(get_waha),
 ) -> SessionResponse:
-    existing = (
-        await db.execute(
-            select(WhatsAppSession).where(WhatsAppSession.session_name == body.session_name)
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
-        raise HTTPException(status_code=409, detail="session_name already exists")
+    # The session name is the WAHA session key and is GLOBALLY unique (one WAHA
+    # serves every tenant). A tenant-scoped uniqueness check (RLS) would miss a
+    # clash with another tenant's session and the insert would 500, so instead
+    # derive a globally-unique name from the user's label + a random suffix.
+    slug = re.sub(r"[^a-z0-9]+", "-", body.session_name.lower()).strip("-")[:24] or "wa"
+    session_name = f"{slug}-{secrets.token_hex(4)}"
+    label = body.label or body.session_name
 
     hmac_secret = secrets.token_urlsafe(32)
     engine = body.engine or settings.waha_default_engine
 
     row = WhatsAppSession(
         tenant_id=tenant_id,
-        session_name=body.session_name,
-        label=body.label,
+        session_name=session_name,
+        label=label,
         status=SessionStatus.starting,
         engine=engine,
         hmac_secret=hmac_secret,
@@ -120,7 +121,7 @@ async def create_session(
     }
     try:
         await waha.create_session(
-            body.session_name, webhooks=[webhook_config], engine=engine, start=True
+            session_name, webhooks=[webhook_config], engine=engine, start=True
         )
     except WahaError as exc:
         raise HTTPException(status_code=502, detail=f"WAHA error: {exc.detail}") from exc
