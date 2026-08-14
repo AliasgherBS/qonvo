@@ -12,8 +12,11 @@ services:
   # WhatsApp layer
   # --------------------------------------------------------------------- #
   waha:
-    # WAHA tags are engine-prefixed: latest-* = WEBJS build (pin exact version)
-    image: devlikeapro/waha:latest-2026.6.2
+    # Full image (Chromium + both engines), pinned. We run the NOWEB engine
+    # (WHATSAPP_DEFAULT_ENGINE below) — WEBJS in 2026.6.2 crashed parsing inbound
+    # message IDs and dropped every message; 2026.7.2 also fixes NOWEB's stale
+    # WhatsApp-Web version detection (the handshake "Connection Failure").
+    image: devlikeapro/waha:latest-2026.7.2
     restart: unless-stopped
     environment:
       WHATSAPP_API_KEY: ${WAHA_API_KEY}
