@@ -1,6 +1,6 @@
 "use client";
 
-import { BarChart3, BookOpen, Building2, Gauge, Inbox, Radio, Settings } from "lucide-react";
+import { BarChart3, BookOpen, Building2, Gauge, Inbox, Radio, Settings, Smartphone } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -9,6 +9,7 @@ import { cn } from "@/lib/utils";
 
 const OWNER_ITEMS = [
   { href: "/inbox", label: "Inbox", icon: Inbox },
+  { href: "/onboarding/connect", label: "WhatsApp", icon: Smartphone },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
   { href: "/settings", label: "Settings", icon: Settings },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },

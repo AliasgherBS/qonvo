@@ -1,7 +1,6 @@
 "use client";
 
-import { ExternalLink, Radio } from "lucide-react";
-import Link from "next/link";
+import { Radio } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -75,7 +74,6 @@ function FleetTable({ sessions }: { sessions: FleetSession[] }) {
           <th className="px-5 py-3">Session</th>
           <th className="px-5 py-3">Tenant</th>
           <th className="px-5 py-3">Status</th>
-          <th className="px-5 py-3" />
         </tr>
       </thead>
       <tbody className="divide-y divide-border">
@@ -85,15 +83,6 @@ function FleetTable({ sessions }: { sessions: FleetSession[] }) {
             <td className="px-5 py-3 text-muted-foreground">{session.tenantName}</td>
             <td className="px-5 py-3">
               <Badge tone={STATUS_TONE[session.status]}>{session.status}</Badge>
-            </td>
-            <td className="px-5 py-3 text-right">
-              <Link
-                href="/onboarding/connect"
-                className="inline-flex h-8 items-center gap-1.5 rounded-full px-3.5 text-sm font-semibold text-foreground transition-colors hover:bg-surface-muted"
-              >
-                Connect
-                <ExternalLink className="h-3.5 w-3.5" />
-              </Link>
             </td>
           </tr>
         ))}

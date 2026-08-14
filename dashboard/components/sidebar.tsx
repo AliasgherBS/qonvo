@@ -9,6 +9,7 @@ import {
   Plug,
   Radio,
   Settings,
+  Smartphone,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -19,6 +20,7 @@ import { cn } from "@/lib/utils";
 
 const NAV_ITEMS = [
   { href: "/inbox", label: "Inbox", icon: Inbox },
+  { href: "/onboarding/connect", label: "WhatsApp", icon: Smartphone },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
   { href: "/integrations", label: "Integrations", icon: Plug },
   { href: "/settings", label: "Settings", icon: Settings },

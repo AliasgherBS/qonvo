@@ -30,7 +30,9 @@ export function Topbar({
 
       <div className="flex items-center gap-3">
         <span className="hidden text-sm text-muted-foreground sm:inline">{userName}</span>
-        <NotificationsBell />
+        {/* Notifications are tenant-scoped; a cross-tenant admin has no tenant,
+            so the poll would 403. Only owners/staff get the bell. */}
+        {role === "qonvo_admin" ? null : <NotificationsBell />}
         <ThemeToggle />
         <SignOutButton>
           <LogOut className="h-4 w-4" />
