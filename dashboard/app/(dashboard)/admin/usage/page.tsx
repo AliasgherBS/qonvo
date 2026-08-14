@@ -35,8 +35,8 @@ export default function AdminUsagePage() {
           <div className="p-5">
             <EmptyState
               icon={<Gauge className="h-5 w-5" />}
-              title="Can't reach the backend yet"
-              description="Usage will populate once the ops API is connected."
+              title="Couldn't load"
+              description={error}
               action={
                 <Button variant="outline" size="sm" onClick={refetch}>
                   Retry

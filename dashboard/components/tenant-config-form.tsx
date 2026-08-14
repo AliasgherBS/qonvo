@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/toast";
-import type { LlmProvider, TenantConfig } from "@/lib/api";
+import { describeError, type LlmProvider, type TenantConfig } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const PERSONA_OPTIONS = ["Friendly & warm", "Professional", "Playful & witty", "Formal", "Direct & concise"];
@@ -87,8 +87,8 @@ export function TenantConfigForm({
     try {
       await onSave(form);
       toast({ title: "Settings saved", variant: "success" });
-    } catch {
-      toast({ title: "Couldn't save settings", description: "The config API isn't connected yet.", variant: "error" });
+    } catch (err) {
+      toast({ title: "Couldn't save settings", description: describeError(err), variant: "error" });
     } finally {
       setSaving(false);
     }

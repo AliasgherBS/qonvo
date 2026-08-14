@@ -12,7 +12,13 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/toast";
-import { knowledge, type KnowledgeGap, type KnowledgeSource, type KnowledgeSourceStatus } from "@/lib/api";
+import {
+  describeError,
+  knowledge,
+  type KnowledgeGap,
+  type KnowledgeSource,
+  type KnowledgeSourceStatus,
+} from "@/lib/api";
 import { useApi, useAuthToken } from "@/lib/use-api";
 import { cn } from "@/lib/utils";
 
@@ -55,8 +61,8 @@ export default function KnowledgePage() {
       await knowledge.deleteSource(source.id, { token });
       toast({ title: "Source deleted", variant: "success" });
       refetch();
-    } catch {
-      toast({ title: "Couldn't delete source", description: "The knowledge API isn't connected yet.", variant: "error" });
+    } catch (err) {
+      toast({ title: "Couldn't delete source", description: describeError(err), variant: "error" });
     }
   }
 
@@ -267,8 +273,8 @@ function AddManualEntryDialog({
       setTitle("");
       setContent("");
       onCreated();
-    } catch {
-      toast({ title: "Couldn't add entry", description: "The knowledge API isn't connected yet.", variant: "error" });
+    } catch (err) {
+      toast({ title: "Couldn't add entry", description: describeError(err), variant: "error" });
     } finally {
       setSaving(false);
     }
@@ -326,9 +332,9 @@ function UploadDropzone({ onUploaded }: { onUploaded: () => void }) {
       toast({ title: "File uploaded", description: file.name, variant: "success" });
       onUploaded();
       setStatus("idle");
-    } catch {
+    } catch (err) {
       setStatus("error");
-      toast({ title: "Upload failed", description: "The knowledge API isn't connected yet.", variant: "error" });
+      toast({ title: "Upload failed", description: describeError(err), variant: "error" });
     }
   }
 
@@ -369,7 +375,7 @@ function UploadDropzone({ onUploaded }: { onUploaded: () => void }) {
       </p>
       <p className="text-xs text-muted-foreground">or click to browse</p>
       {status === "error" ? (
-        <p className="text-xs text-danger">Upload failed — the knowledge API isn&apos;t connected yet.</p>
+        <p className="text-xs text-danger">Upload failed — please try again.</p>
       ) : null}
     </div>
   );
@@ -405,8 +411,8 @@ function SourcesTable({
       <div className="p-5">
         <EmptyState
           icon={<BookOpen className="h-5 w-5" />}
-          title="Can't reach the backend yet"
-          description="Sources will list here once the knowledge API is connected."
+          title="Couldn't load"
+          description={error}
           action={
             <Button variant="outline" size="sm" onClick={onRetry}>
               Retry
@@ -499,8 +505,8 @@ function GapsTable({
       <div className="p-5">
         <EmptyState
           icon={<HelpCircle className="h-5 w-5" />}
-          title="Can't reach the backend yet"
-          description="Unanswered questions will list here once the knowledge API is connected."
+          title="Couldn't load"
+          description={error}
           action={
             <Button variant="outline" size="sm" onClick={onRetry}>
               Retry

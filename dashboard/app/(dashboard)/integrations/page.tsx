@@ -74,7 +74,7 @@ export default function IntegrationsPage() {
       ) : error && !data ? (
         <Card>
           <CardContent className="text-sm text-muted-foreground">
-            Can&apos;t reach the backend yet — integrations will load once the API is connected.
+            {error}
             <Button variant="outline" size="sm" className="ml-3" onClick={refetch}>
               Retry
             </Button>

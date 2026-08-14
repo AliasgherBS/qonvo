@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { sessions, type SessionStatus, type WhatsappSessionStatus } from "@/lib/api";
+import { describeError, sessions, type SessionStatus, type WhatsappSessionStatus } from "@/lib/api";
 import { useAuthToken, usePolling } from "@/lib/use-api";
 
 const STATUS_COPY: Record<SessionStatus, { title: string; description: string }> = {
@@ -55,8 +55,8 @@ export default function ConnectPage() {
         { token },
       );
       setActiveSession(created.name);
-    } catch {
-      setStartError("Couldn't reach the backend yet — this will start the moment the sessions API is live.");
+    } catch (err) {
+      setStartError(describeError(err, "Couldn't start the session. Please try again."));
     } finally {
       setStarting(false);
     }

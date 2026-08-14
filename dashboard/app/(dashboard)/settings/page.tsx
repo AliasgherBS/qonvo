@@ -25,7 +25,7 @@ export default function SettingsPage() {
       ) : error && !data ? (
         <Card>
           <CardContent className="text-sm text-muted-foreground">
-            Can&apos;t reach the backend yet — settings will load once the API is connected.
+            {error}
             <Button variant="outline" size="sm" className="ml-3" onClick={refetch}>
               Retry
             </Button>

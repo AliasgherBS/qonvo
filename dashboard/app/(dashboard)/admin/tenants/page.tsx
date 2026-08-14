@@ -15,6 +15,7 @@ import { useToast } from "@/components/ui/toast";
 import {
   adminOverview,
   adminTenants,
+  describeError,
   type AdminTenant,
   type CreateTenantResult,
   type TenantStatus,
@@ -58,8 +59,8 @@ export default function AdminTenantsPage() {
           <div className="p-5">
             <EmptyState
               icon={<Building2 className="h-5 w-5" />}
-              title="Can't reach the backend yet"
-              description="The tenant list will populate once the ops API is connected."
+              title="Couldn't load"
+              description={error}
               action={
                 <Button variant="outline" size="sm" onClick={refetch}>
                   Retry
@@ -193,8 +194,8 @@ function NewTenantDialog({
       setOwnerName("");
       setOwnerEmail("");
       onCreated(tenant);
-    } catch {
-      toast({ title: "Couldn't create tenant", description: "The ops API isn't connected yet.", variant: "error" });
+    } catch (err) {
+      toast({ title: "Couldn't create tenant", description: describeError(err), variant: "error" });
     } finally {
       setSaving(false);
     }

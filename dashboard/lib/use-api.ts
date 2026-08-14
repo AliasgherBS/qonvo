@@ -3,7 +3,7 @@
 import { signOut, useSession } from "next-auth/react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { ApiError } from "@/lib/api";
+import { ApiError, describeError } from "@/lib/api";
 
 interface UseApiState<T> {
   data: T | null;
@@ -52,7 +52,7 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
           setState({
             data: null,
             loading: false,
-            error: err instanceof Error ? err.message : "Something went wrong.",
+            error: describeError(err),
           });
         }
       });
@@ -92,7 +92,7 @@ export function usePolling<T>(fetcher: () => Promise<T>, intervalMs: number, dep
             setState((prev) => ({
               data: prev.data,
               loading: false,
-              error: err instanceof Error ? err.message : "Something went wrong.",
+              error: describeError(err),
             }));
           }
         });

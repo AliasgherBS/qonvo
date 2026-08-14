@@ -49,8 +49,8 @@ export default function AdminTenantDetailPage() {
           <CardContent>
             <EmptyState
               icon={<Building2 className="h-5 w-5" />}
-              title="Can't reach the backend yet"
-              description="Tenant details will load once the ops API is connected."
+              title="Couldn't load tenant"
+              description={tenantError ?? "This tenant couldn't be found."}
               action={
                 <Button variant="outline" size="sm" onClick={refetchTenant}>
                   Retry
@@ -84,8 +84,8 @@ export default function AdminTenantDetailPage() {
             <CardContent>
               <EmptyState
                 icon={<Building2 className="h-5 w-5" />}
-                title="Can't reach the backend yet"
-                description="This tenant's config will load once the ops API is connected."
+                title="Couldn't load config"
+                description={configError ?? "This tenant's config couldn't be loaded."}
                 action={
                   <Button variant="outline" size="sm" onClick={refetchConfig}>
                     Retry

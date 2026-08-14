@@ -41,8 +41,8 @@ export default function AdminFleetPage() {
           <div className="p-5">
             <EmptyState
               icon={<Radio className="h-5 w-5" />}
-              title="Can't reach the backend yet"
-              description="Session health will populate once the fleet API is connected."
+              title="Couldn't load"
+              description={error}
               action={
                 <Button variant="outline" size="sm" onClick={refetch}>
                   Retry

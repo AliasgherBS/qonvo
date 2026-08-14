@@ -27,6 +27,27 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * Turn any thrown value from a request into an honest, human-readable message
+ * that reflects the ACTUAL failure — never a "backend isn't connected"
+ * placeholder. Prefers the backend's error detail for client errors, and a
+ * clear generic for network/server failures.
+ */
+export function describeError(err: unknown, fallback = "Something went wrong. Please try again."): string {
+  if (err instanceof ApiError) {
+    if (err.status === 401) return "Your session expired — please sign in again.";
+    if (err.status === 403) return err.message || "You don't have permission to do that.";
+    if (err.status === 404) return err.message || "Not found.";
+    if (err.status === 429) return err.message || "Too many requests — please wait a moment.";
+    if (err.status >= 500) return `Server error (${err.status}) — please try again in a moment.`;
+    // 400 / 409 / 422 etc. — the backend's detail is the real, useful message.
+    return err.message || fallback;
+  }
+  // fetch() itself rejected (no response) — DNS, offline, CORS, tunnel down.
+  if (err instanceof TypeError) return "Couldn't reach the server — check your connection and try again.";
+  return err instanceof Error && err.message ? err.message : fallback;
+}
+
 interface ApiFetchInit extends Omit<RequestInit, "body"> {
   token?: string;
   body?: BodyInit | object | null;
@@ -48,8 +69,21 @@ async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promise<T> {
   });
 
   if (!res.ok) {
-    const message = await res.text().catch(() => "");
-    throw new ApiError(message || res.statusText, res.status);
+    const raw = await res.text().catch(() => "");
+    let message = raw || res.statusText;
+    // FastAPI errors are {"detail": "..."} or a validation array — extract the
+    // real detail so callers can show what actually went wrong.
+    try {
+      const parsed = JSON.parse(raw) as { detail?: unknown };
+      if (typeof parsed.detail === "string") message = parsed.detail;
+      else if (Array.isArray(parsed.detail)) {
+        const first = parsed.detail[0] as { msg?: string } | undefined;
+        if (first?.msg) message = first.msg;
+      }
+    } catch {
+      /* body isn't JSON — keep the raw text / status text */
+    }
+    throw new ApiError(message, res.status);
   }
 
   if (res.status === 204) {

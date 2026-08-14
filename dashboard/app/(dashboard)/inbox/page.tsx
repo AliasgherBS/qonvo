@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { conversations, type Conversation, type ConversationState, type Message } from "@/lib/api";
+import { conversations, describeError, type Conversation, type ConversationState, type Message } from "@/lib/api";
 import { useAuthToken, usePolling } from "@/lib/use-api";
 import { cn, formatRelativeTime } from "@/lib/utils";
 
@@ -144,8 +144,8 @@ function ConversationList({
       <div className="p-4">
         <EmptyState
           icon={<InboxIcon className="h-5 w-5" />}
-          title="Can't reach the backend yet"
-          description="The inbox will populate once the Qonvo API is connected."
+          title="Couldn't load"
+          description={error}
           action={
             <Button variant="outline" size="sm" onClick={onRetry}>
               Retry
@@ -339,8 +339,8 @@ function Transcript({
     try {
       await conversations.reply(conversationId2, text, { token });
       refetchMessages();
-    } catch {
-      setSendError("Couldn't send — the reply API isn't connected yet.");
+    } catch (err) {
+      setSendError(describeError(err, "Couldn't send your reply. Please try again."));
     } finally {
       setSending(false);
     }
@@ -382,8 +382,8 @@ function Transcript({
         ) : messagesError && allMessages.length === 0 ? (
           <EmptyState
             icon={<MessageCircle className="h-5 w-5" />}
-            title="Can't load this transcript yet"
-            description="Messages will appear here once the messaging API is connected."
+            title="Couldn't load this transcript"
+            description={messagesError}
           />
         ) : allMessages.length === 0 ? (
           <EmptyState
