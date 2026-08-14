@@ -141,12 +141,6 @@ async def waha_webhook(
         bound.info(f"ignored message: no_message_id (keys={sorted(inner)})")
         return {"status": "ignored", "reason": "no_message_id"}
 
-    # Diagnostic (voice routing): what shape does this engine send for media?
-    bound.info(
-        f"message in: type={inner.get('type')!r} hasMedia={inner.get('hasMedia')!r} "
-        f"mediaUrl={inner.get('mediaUrl')!r} media={inner.get('media')!r} keys={sorted(inner)}"
-    )
-
     redis_client = get_redis()
 
     # --- Dedupe (Redis SETNX 24h + messages.wa_message_id unique) (§5.1) ---
@@ -156,11 +150,18 @@ async def waha_webhook(
 
     # --- Debounce buffer (§5.2) ---
     window = session_config_window(session_row)
+    media = inner.get("media") if isinstance(inner.get("media"), dict) else {}
+    mimetype = (media.get("mimetype") or "") if media else ""
+    # NOWEB omits `type` on voice notes (WEBJS set it), so derive it from the
+    # media mimetype — an audio/* attachment is a voice message to transcribe.
+    msg_type = inner.get("type")
+    if not msg_type and mimetype.startswith("audio/"):
+        msg_type = "voice"
     fragment = {
         "message_id": message_id,
-        "type": inner.get("type", "text"),
+        "type": msg_type or "text",
         "body": inner.get("body", "") or "",
-        "media_url": inner.get("mediaUrl") or (inner.get("media") or {}).get("url"),
+        "media_url": inner.get("mediaUrl") or (media.get("url") if media else None),
         "timestamp": inner.get("timestamp"),
     }
     generation = await add_fragment(

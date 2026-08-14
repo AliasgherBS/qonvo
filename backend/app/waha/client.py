@@ -8,6 +8,7 @@ directly (DESIGN.md §5.6).
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -203,6 +204,11 @@ class WahaClient:
             config["webhooks"] = webhooks
         if engine:
             config["metadata"] = {"engine": engine}
+        # The NOWEB engine needs its store enabled at create time, otherwise
+        # sends (and chat/contact resolution) 400 with "Enable NOWEB store".
+        # fullSync pulls history so the store is populated for a fresh number.
+        if engine and engine.upper() == "NOWEB":
+            config["noweb"] = {"store": {"enabled": True, "fullSync": True}}
         payload: dict[str, Any] = {"name": name, "start": start}
         if config:
             payload["config"] = config
@@ -226,9 +232,17 @@ class WahaClient:
 
     # --- Media ----------------------------------------------------------- #
     async def download_media(self, url: str) -> bytes:
-        """Download media immediately on receipt (WAHA URLs are not durable, §12.3)."""
+        """Download media immediately on receipt (WAHA URLs are not durable, §12.3).
+
+        WAHA advertises media URLs using its *own* configured host (e.g.
+        ``http://localhost:3000/api/files/...``), which isn't reachable from
+        inside our network — so keep only the path/query and fetch it through the
+        client's WAHA base URL (``http://waha:3000``).
+        """
+        parts = urlsplit(url)
+        path = parts.path + (f"?{parts.query}" if parts.query else "")
         client = self._ensure_client()
-        resp = await client.get(url)
+        resp = await client.get(path or url)
         if resp.status_code >= 400:
             raise WahaError(resp.status_code, resp.text)
         return resp.content
