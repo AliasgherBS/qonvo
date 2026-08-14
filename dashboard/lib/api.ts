@@ -8,7 +8,14 @@
  * for the rest of the app to consume.
  */
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+// Server-side code (Auth.js authorize, SSR) talks to the backend directly over
+// the internal network; the browser uses NEXT_PUBLIC_API_URL, which in a public
+// (tunnelled) deploy is a relative path like "/backend" that a Next.js rewrite
+// proxies to the API — so we never have to bake the public URL into the bundle.
+const API_BASE_URL =
+  typeof window === "undefined"
+    ? process.env.INTERNAL_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
+    : process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 export class ApiError extends Error {
   status: number;
