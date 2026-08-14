@@ -110,6 +110,13 @@ export interface Me {
   tenantName: string;
 }
 
+export interface SignupRequest {
+  businessName: string;
+  ownerName: string;
+  email: string;
+  password: string;
+}
+
 export const auth = {
   login: (payload: LoginRequest, opts: CallOpts = {}) =>
     apiFetch<LoginResponseDto>("/api/auth/login", { method: "POST", body: payload, signal: opts.signal }).then(
@@ -121,6 +128,24 @@ export const auth = {
         name: dto.name,
       }),
     ),
+
+  signup: (payload: SignupRequest, opts: CallOpts = {}) =>
+    apiFetch<LoginResponseDto>("/api/auth/signup", {
+      method: "POST",
+      body: {
+        business_name: payload.businessName,
+        owner_name: payload.ownerName,
+        email: payload.email,
+        password: payload.password,
+      },
+      signal: opts.signal,
+    }).then((dto): LoginResult => ({
+      accessToken: dto.access_token,
+      tokenType: dto.token_type,
+      role: dto.role,
+      tenantId: dto.tenant_id,
+      name: dto.name,
+    })),
 
   me: (opts: CallOpts = {}) =>
     apiFetch<MeDto>("/api/me", opts).then(

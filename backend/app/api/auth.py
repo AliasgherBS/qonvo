@@ -8,17 +8,32 @@ resolve one.
 
 from __future__ import annotations
 
+import re
+import secrets
+from datetime import UTC, datetime, timedelta
+
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_claims, get_system_db
-from app.core.security import TokenClaims
-from app.models.tenant import Tenant, User
+from app.core.security import TokenClaims, hash_password
+from app.models.enums import UserRole
+from app.models.tenant import Tenant, TenantConfig, TenantUser, User
 from app.services.auth import authenticate, create_access_token
 
 router = APIRouter(prefix="/api", tags=["auth"])
+
+# Self-serve signups get a free trial; after it ends the tenant is gated until
+# it's on a paid plan (§9 billing).
+TRIAL_DAYS = 14
+
+
+def _slugify(name: str) -> str:
+    base = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40] or "biz"
+    # random suffix keeps the globally-unique slug constraint collision-free.
+    return f"{base}-{secrets.token_hex(3)}"
 
 
 class LoginRequest(BaseModel):
@@ -67,6 +82,60 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_system_db)) -
         role=effective_role,
         tenant_id=str(result.tenant_id) if result.tenant_id else None,
         name=result.user.full_name,
+    )
+
+
+class SignupRequest(BaseModel):
+    business_name: str = Field(min_length=1, max_length=255)
+    owner_name: str = Field(min_length=1, max_length=255)
+    email: EmailStr
+    password: str = Field(min_length=8, max_length=128)
+
+
+@router.post("/auth/signup", response_model=LoginResponse, status_code=status.HTTP_201_CREATED)
+async def signup(body: SignupRequest, db: AsyncSession = Depends(get_system_db)) -> LoginResponse:
+    """Public self-serve registration: provisions a tenant + owner on a free
+    trial and returns a token (auto-login). Admins can still create tenants via
+    /admin/tenants. Cross-tenant (no tenant context yet) so it runs on the
+    system session, like login."""
+    email = body.email.lower().strip()
+    if (await db.execute(select(User).where(User.email == email))).scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="an account with this email already exists",
+        )
+
+    tenant = Tenant(
+        name=body.business_name.strip(),
+        slug=_slugify(body.business_name),
+        status="active",
+        plan="trial",
+        trial_ends_at=datetime.now(UTC) + timedelta(days=TRIAL_DAYS),
+    )
+    db.add(tenant)
+    await db.flush()
+    db.add(TenantConfig(tenant_id=tenant.id, business_name=body.business_name.strip()))
+    user = User(
+        email=email,
+        hashed_password=hash_password(body.password),
+        full_name=body.owner_name.strip(),
+    )
+    db.add(user)
+    await db.flush()
+    db.add(TenantUser(tenant_id=tenant.id, user_id=user.id, role=UserRole.owner))
+    await db.flush()
+
+    token = create_access_token(
+        subject=user.email,
+        tenant_id=tenant.id,
+        role=UserRole.owner.value,
+        is_qonvo_admin=False,
+    )
+    return LoginResponse(
+        access_token=token,
+        role=UserRole.owner.value,
+        tenant_id=str(tenant.id),
+        name=user.full_name,
     )
 
 

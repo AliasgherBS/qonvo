@@ -5,7 +5,7 @@ import { auth } from "@/auth";
 // `/api/auth/*` must be public — Auth.js's own routes serve login callbacks,
 // csrf, and session, and gating them behind auth is a chicken-and-egg lockout
 // (caught live: /login redirected to itself, no cookie was ever issued).
-const PUBLIC_PATHS = ["/login", "/api/auth"];
+const PUBLIC_PATHS = ["/login", "/signup", "/api/auth"];
 
 export default auth((req) => {
   const { nextUrl } = req;
@@ -37,7 +37,7 @@ export default auth((req) => {
     return NextResponse.redirect(loginUrl);
   }
 
-  if (isLoggedIn && nextUrl.pathname === "/login") {
+  if (isLoggedIn && (nextUrl.pathname === "/login" || nextUrl.pathname === "/signup")) {
     return NextResponse.redirect(new URL(isAdmin ? adminHome : "/inbox", nextUrl.origin));
   }
 

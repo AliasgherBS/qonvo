@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
-from sqlalchemy import Boolean, Enum, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,6 +22,11 @@ class Tenant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+    # Billing lifecycle: "trial" (self-serve signup) → "paid" (or admin-created).
+    # trial_ends_at is the cutoff after which a trial tenant is gated (§9 billing);
+    # NULL means no trial limit (admin-provisioned or paid).
+    plan: Mapped[str] = mapped_column(String(32), nullable=False, default="trial")
+    trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):

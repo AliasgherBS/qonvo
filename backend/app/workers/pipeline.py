@@ -27,7 +27,7 @@ from app.core.tenancy import tenant_session
 from app.models.conversation import Conversation, Message
 from app.models.enums import ConversationState, MessageAuthor, MessageDirection, MessageType
 from app.models.ops import AnalyticsEvent, UsageCounter
-from app.models.tenant import TenantConfig
+from app.models.tenant import Tenant, TenantConfig
 from app.models.whatsapp import WhatsAppSession
 from app.providers.base import ChatMessage, LLMProvider, LLMResult, ToolCall
 from app.providers.registry import resolve_embedding, resolve_llm, voice_reply_mode
@@ -526,6 +526,19 @@ async def run_pipeline(
             return PipelineResult(
                 reply_text="", meta={"gate": "paused", "state": str(conversation.state)}
             )
+
+        # --- Gate: free trial ended (§9 billing) ---
+        # A self-serve tenant on an expired trial goes silent — we deliberately
+        # do NOT message the customer about the business's subscription; the
+        # owner sees the upgrade prompt in the dashboard.
+        trial = (
+            await db.execute(
+                select(Tenant.plan, Tenant.trial_ends_at).where(Tenant.id == tenant_uuid)
+            )
+        ).one_or_none()
+        if trial and trial.plan == "trial" and trial.trial_ends_at and trial.trial_ends_at <= now:
+            bound.info("trial expired — bot silent (owner must upgrade)")
+            return PipelineResult(reply_text="", meta={"gate": "trial_expired"})
 
         # --- Gate: hard quota (§13) ---
         entitlements = tenant_config.entitlements if tenant_config else {}
