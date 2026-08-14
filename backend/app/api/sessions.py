@@ -65,6 +65,21 @@ async def _get_row(db: AsyncSession, session_name: str) -> WhatsAppSession:
     return row
 
 
+@router.get("", response_model=list[SessionResponse])
+async def list_sessions(
+    tenant_id: UUID = Depends(require_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> list[SessionResponse]:
+    """This tenant's WhatsApp sessions with their last-known status. RLS scopes
+    the rows to the caller's tenant; the status is kept fresh by the 60s
+    ``session_health`` cron, so the owner's connection banner (§10) can flag a
+    dropped session without a live WAHA round-trip per poll."""
+    rows = (
+        await db.execute(select(WhatsAppSession).order_by(WhatsAppSession.session_name))
+    ).scalars().all()
+    return [_to_response(r) for r in rows]
+
+
 @router.post("", response_model=SessionResponse, status_code=201)
 async def create_session(
     body: CreateSessionRequest,

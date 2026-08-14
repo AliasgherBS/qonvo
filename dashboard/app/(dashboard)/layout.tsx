@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 
+import { ConnectionBanner } from "@/components/connection-banner";
 import { MobileNav } from "@/components/mobile-nav";
 import { Sidebar } from "@/components/sidebar";
 import { Topbar } from "@/components/topbar";
@@ -25,7 +26,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
           role={session.user.role}
         />
 
-        <main className="flex-1 overflow-y-auto p-4 lg:p-8">{children}</main>
+        <main className="flex-1 overflow-y-auto p-4 lg:p-8">
+          {/* A cross-tenant admin has no session; the banner is for owners. */}
+          {session.user.role === "qonvo_admin" ? null : <ConnectionBanner />}
+          {children}
+        </main>
 
         <MobileNav role={session.user.role} />
       </div>

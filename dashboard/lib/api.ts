@@ -171,6 +171,12 @@ export const sessions = {
       (dto): WhatsappSessionStatus => ({ name: dto.session_name, status: dto.status }),
     ),
 
+  /** This tenant's sessions with last-known status — powers the connect banner. */
+  list: (opts: CallOpts = {}) =>
+    apiFetch<SessionStatusDto[]>("/api/sessions", opts).then((rows) =>
+      rows.map((dto): WhatsappSessionStatus => ({ name: dto.session_name, status: dto.status })),
+    ),
+
   /**
    * GET /api/sessions/{name}/qr — the QR PNG. The endpoint requires auth, and an
    * <img> tag can't send a bearer header (it would 401 and the QR never renders),
