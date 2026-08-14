@@ -141,6 +141,12 @@ async def waha_webhook(
         bound.info(f"ignored message: no_message_id (keys={sorted(inner)})")
         return {"status": "ignored", "reason": "no_message_id"}
 
+    # Diagnostic (voice routing): what shape does this engine send for media?
+    bound.info(
+        f"message in: type={inner.get('type')!r} hasMedia={inner.get('hasMedia')!r} "
+        f"mediaUrl={inner.get('mediaUrl')!r} media={inner.get('media')!r} keys={sorted(inner)}"
+    )
+
     redis_client = get_redis()
 
     # --- Dedupe (Redis SETNX 24h + messages.wa_message_id unique) (§5.1) ---

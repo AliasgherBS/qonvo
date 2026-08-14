@@ -710,7 +710,12 @@ async def run_pipeline(
                 return {"status": "error", "message": str(exc)}
 
         loop_result = await run_tool_loop(llm, llm_messages, tools, dispatch)
-        reply_text = loop_result.text or "Sorry, I didn't catch that — could you rephrase?"
+        # .strip() so a whitespace-only model output (seen when an untranscribed
+        # voice note yields an empty user turn) falls back instead of sending a
+        # blank WhatsApp message.
+        reply_text = (loop_result.text or "").strip() or (
+            "Sorry, I didn't catch that — could you rephrase?"
+        )
 
         provider_name = (
             tenant_config.llm_provider
