@@ -103,13 +103,39 @@ function QrFlow({ sessionName, onRetry }: { sessionName: string; onRetry: () => 
   const copy = STATUS_COPY[status];
   const showQr = status === "SCAN_QR_CODE";
 
-  const [qrNonce, setQrNonce] = useState(0);
+  // The QR endpoint is authenticated, so it can't be an <img src> (no bearer
+  // header). Fetch it as a blob with the token, wrap in an object URL, and
+  // refresh every 15s (the QR expires ~20s). Revoke the previous URL each cycle.
+  const [qrUrl, setQrUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!showQr) return;
-    const id = window.setInterval(() => setQrNonce((n) => n + 1), QR_REFRESH_MS);
-    return () => window.clearInterval(id);
-  }, [showQr]);
+    if (!showQr) {
+      setQrUrl(null);
+      return;
+    }
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    const load = async () => {
+      try {
+        const blob = await sessions.qrBlob(sessionName, { token });
+        if (cancelled) return;
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        objectUrl = URL.createObjectURL(blob);
+        setQrUrl(objectUrl);
+      } catch {
+        // Transient (token not hydrated yet, QR rotating) — retry next tick.
+      }
+    };
+
+    void load();
+    const id = window.setInterval(load, QR_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [showQr, sessionName, token]);
 
   return (
     <Card>
@@ -123,16 +149,16 @@ function QrFlow({ sessionName, onRetry }: { sessionName: string; onRetry: () => 
         {showQr ? (
           <div className="flex flex-col items-center gap-2">
             <div className="flex h-56 w-56 items-center justify-center overflow-hidden rounded-2xl border border-border bg-surface-muted">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                key={qrNonce}
-                src={`${sessions.qrImageUrl(sessionName)}?t=${qrNonce}`}
-                alt="Scan this QR code with WhatsApp to link the device"
-                className="h-full w-full object-contain"
-                onError={(e) => {
-                  e.currentTarget.style.display = "none";
-                }}
-              />
+              {qrUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={qrUrl}
+                  alt="Scan this QR code with WhatsApp to link the device"
+                  className="h-full w-full object-contain"
+                />
+              ) : (
+                <div className="h-full w-full animate-pulse bg-surface-muted" />
+              )}
             </div>
             <p className="text-xs text-muted-foreground">Refreshes automatically every 15s</p>
           </div>

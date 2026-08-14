@@ -171,8 +171,20 @@ export const sessions = {
       (dto): WhatsappSessionStatus => ({ name: dto.session_name, status: dto.status }),
     ),
 
-  /** GET /api/sessions/{name}/qr — returns a PNG; render directly as an <img> src. */
-  qrImageUrl: (name: string) => `${API_BASE_URL}/api/sessions/${name}/qr`,
+  /**
+   * GET /api/sessions/{name}/qr — the QR PNG. The endpoint requires auth, and an
+   * <img> tag can't send a bearer header (it would 401 and the QR never renders),
+   * so fetch it as an authenticated blob and let the caller wrap it in an object
+   * URL (revoking the previous one to avoid leaks).
+   */
+  qrBlob: async (name: string, opts: CallOpts = {}): Promise<Blob> => {
+    const res = await fetch(`${API_BASE_URL}/api/sessions/${name}/qr`, {
+      headers: opts.token ? { Authorization: `Bearer ${opts.token}` } : {},
+      signal: opts.signal,
+    });
+    if (!res.ok) throw new ApiError((await res.text().catch(() => "")) || res.statusText, res.status);
+    return res.blob();
+  },
 };
 
 // ---------------------------------------------------------------------------
