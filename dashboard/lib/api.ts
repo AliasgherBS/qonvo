@@ -812,6 +812,41 @@ export const adminTenants = {
     }).then(mapTenantConfig),
 };
 
+interface AdminOverviewDto {
+  total_tenants: number;
+  connected_tenants: number;
+  total_sessions: number;
+  tenants_with_knowledge: number;
+  knowledge_sources_ready: number;
+  messages_30d: number;
+  cost_30d: number;
+}
+
+export interface AdminOverview {
+  totalTenants: number;
+  connectedTenants: number;
+  totalSessions: number;
+  tenantsWithKnowledge: number;
+  knowledgeSourcesReady: number;
+  messages30d: number;
+  cost30d: number;
+}
+
+export const adminOverview = {
+  get: (opts: CallOpts = {}) =>
+    apiFetch<AdminOverviewDto>("/api/admin/overview", opts).then(
+      (dto): AdminOverview => ({
+        totalTenants: dto.total_tenants,
+        connectedTenants: dto.connected_tenants,
+        totalSessions: dto.total_sessions,
+        tenantsWithKnowledge: dto.tenants_with_knowledge,
+        knowledgeSourcesReady: dto.knowledge_sources_ready,
+        messages30d: dto.messages_30d,
+        cost30d: dto.cost_30d,
+      }),
+    ),
+};
+
 interface FleetSessionDto {
   session_name: string;
   tenant_id: string;

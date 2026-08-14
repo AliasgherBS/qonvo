@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import calendar
 import secrets
-from datetime import date
+from datetime import date, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -25,7 +25,8 @@ from app.api.config import (
 )
 from app.api.deps import get_system_db, get_waha, require_admin
 from app.core.security import TokenClaims, hash_password
-from app.models.enums import UserRole
+from app.models.enums import SessionStatus, UserRole
+from app.models.knowledge import KnowledgeSource
 from app.models.ops import UsageCounter
 from app.models.tenant import AuditLog, Tenant, TenantConfig, TenantUser, User
 from app.models.whatsapp import WhatsAppSession
@@ -93,6 +94,56 @@ async def _audit(
             meta={"admin": claims.subject, **(meta or {})},
         )
     )
+
+
+@router.get("/overview")
+async def overview(
+    claims: TokenClaims = Depends(require_admin),
+    db: AsyncSession = Depends(get_system_db),
+) -> dict:
+    """Platform-wide summary tiles: how many businesses exist, how many have a
+    live WhatsApp session, how many have ingested knowledge, and 30-day volume.
+    Cross-tenant, so it runs on the BYPASSRLS system session like the rest of
+    /admin (DESIGN.md §9)."""
+    since = date.today() - timedelta(days=30)
+
+    async def count(stmt) -> int:
+        return int(await db.scalar(stmt) or 0)
+
+    return {
+        "total_tenants": await count(select(func.count(Tenant.id))),
+        # A business is "connected" when it has at least one WORKING session.
+        "connected_tenants": await count(
+            select(func.count(func.distinct(WhatsAppSession.tenant_id))).where(
+                WhatsAppSession.status == SessionStatus.working
+            )
+        ),
+        "total_sessions": await count(select(func.count(WhatsAppSession.id))),
+        # Ingested = at least one source that finished ingestion (status "ready").
+        "tenants_with_knowledge": await count(
+            select(func.count(func.distinct(KnowledgeSource.tenant_id))).where(
+                KnowledgeSource.status == "ready"
+            )
+        ),
+        "knowledge_sources_ready": await count(
+            select(func.count(KnowledgeSource.id)).where(KnowledgeSource.status == "ready")
+        ),
+        "messages_30d": await count(
+            select(
+                func.coalesce(
+                    func.sum(UsageCounter.messages_in + UsageCounter.messages_out), 0
+                )
+            ).where(UsageCounter.day >= since)
+        ),
+        "cost_30d": float(
+            await db.scalar(
+                select(func.coalesce(func.sum(UsageCounter.cost), 0)).where(
+                    UsageCounter.day >= since
+                )
+            )
+            or 0
+        ),
+    }
 
 
 @router.get("/tenants")

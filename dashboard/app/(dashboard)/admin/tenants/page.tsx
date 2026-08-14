@@ -12,7 +12,13 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
-import { adminTenants, type AdminTenant, type CreateTenantResult, type TenantStatus } from "@/lib/api";
+import {
+  adminOverview,
+  adminTenants,
+  type AdminTenant,
+  type CreateTenantResult,
+  type TenantStatus,
+} from "@/lib/api";
 import { useApi, useAuthToken } from "@/lib/use-api";
 
 const STATUS_TONE: Record<TenantStatus, "success" | "warning" | "default"> = {
@@ -38,6 +44,8 @@ export default function AdminTenantsPage() {
         </div>
         <Button onClick={() => setCreateOpen(true)}>New tenant</Button>
       </div>
+
+      <OverviewTiles />
 
       <div className="overflow-hidden rounded-2xl border border-border bg-surface">
         {loading ? (
@@ -83,6 +91,40 @@ export default function AdminTenantsPage() {
       />
 
       <TempPasswordDialog result={created} onClose={() => setCreated(null)} />
+    </div>
+  );
+}
+
+function OverviewTiles() {
+  const token = useAuthToken();
+  const { data, loading } = useApi(() => adminOverview.get({ token }), [token]);
+
+  const tiles = [
+    { label: "Businesses", value: data?.totalTenants, hint: "total tenants" },
+    { label: "Connected", value: data?.connectedTenants, hint: "live WhatsApp session" },
+    { label: "With knowledge", value: data?.tenantsWithKnowledge, hint: "ingested ≥1 source" },
+    { label: "Knowledge sources", value: data?.knowledgeSourcesReady, hint: "ready across platform" },
+    { label: "Messages (30d)", value: data?.messages30d, hint: "in + out" },
+    {
+      label: "AI cost (30d)",
+      value: data ? `$${data.cost30d.toFixed(2)}` : undefined,
+      hint: "across all tenants",
+    },
+  ];
+
+  return (
+    <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      {tiles.map((t) => (
+        <div key={t.label} className="rounded-2xl border border-border bg-surface p-4">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{t.label}</p>
+          {loading ? (
+            <Skeleton className="mt-2 h-7 w-14" />
+          ) : (
+            <p className="mt-1 text-2xl font-extrabold tracking-tight">{t.value ?? "—"}</p>
+          )}
+          <p className="mt-1 text-xs text-muted-foreground">{t.hint}</p>
+        </div>
+      ))}
     </div>
   );
 }
