@@ -36,22 +36,45 @@ def own_send_key(message_id: str) -> str:
     return f"waha:ownsend:{message_id}"
 
 
-def extract_message_id(result: dict | None) -> str | None:
-    """Pull the message id out of a WAHA send response.
+def own_send_fingerprint(source: object) -> str | None:
+    """Stable per-message id-hash for recognizing our own sends across engines.
 
-    WEBJS returns ``{"id": {"_serialized": "true_...@c.us_HASH", ...}, ...}``;
-    other engines may return a flat string id.
+    WAHA echoes every send back as a ``fromMe`` ``message.any``; we must match it
+    against what we sent so the bot doesn't mistake its own reply for the owner
+    replying (which triggers implicit takeover and silences the bot, §5.5).
+
+    Engines disagree on both the id shape *and* the JID suffix — NOWEB sends to
+    ``…@s.whatsapp.net`` but echoes the copy as ``…@c.us``/``@lid`` — so the full
+    serialized id never round-trips. The bare id hash is identical on the send
+    response and its echo, so we key on that:
+
+    - NOWEB send result:  ``{"key": {"id": "3EB0…"}}``            → ``3EB0…``
+    - WEBJS send result:  ``{"id": {"_serialized": "true_…_H"}}`` → ``H``
+    - webhook echo id:    ``"true_29918…@lid_3EB0…"``             → ``3EB0…``
     """
-    if not isinstance(result, dict):
+    serialized: str | None
+    if isinstance(source, str):
+        serialized = source or None
+    elif isinstance(source, dict):
+        key = source.get("key")
+        raw = source.get("id")
+        if isinstance(key, dict) and isinstance(key.get("id"), str):
+            serialized = key["id"]  # NOWEB send response
+        elif isinstance(raw, str):
+            serialized = raw
+        elif isinstance(raw, dict) and isinstance(raw.get("_serialized"), str):
+            serialized = raw["_serialized"]  # WEBJS send response
+        elif isinstance(source.get("_serialized"), str):
+            serialized = source["_serialized"]
+        else:
+            serialized = None
+    else:
+        serialized = None
+    if not serialized:
         return None
-    raw = result.get("id")
-    if isinstance(raw, str):
-        return raw
-    if isinstance(raw, dict):
-        serialized = raw.get("_serialized")
-        if isinstance(serialized, str):
-            return serialized
-    return None
+    # Serialized ids are "<fromMe>_<jid>_<hash>"; the bare hash is the tail and
+    # is engine/JID-agnostic (a bare id with no "_" is returned unchanged).
+    return serialized.rsplit("_", 1)[-1]
 
 
 async def is_own_send(client: redis.Redis, message_id: str | None) -> bool:
@@ -210,9 +233,9 @@ class SendGateway:
         phone. Without this marker the bot's own reply triggers implicit
         takeover and the bot silences itself (caught live, §5.5).
         """
-        message_id = extract_message_id(result)
-        if message_id:
-            await self._redis.set(own_send_key(message_id), "1", ex=86_400)
+        fingerprint = own_send_fingerprint(result)
+        if fingerprint:
+            await self._redis.set(own_send_key(fingerprint), "1", ex=86_400)
 
     async def send_voice(
         self,

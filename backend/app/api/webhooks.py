@@ -21,7 +21,7 @@ from app.core.security import verify_waha_hmac
 from app.core.tenancy import system_session
 from app.models.whatsapp import WhatsAppSession
 from app.services.takeover import implicit_takeover
-from app.waha.send_gateway import extract_message_id, is_own_send
+from app.waha.send_gateway import is_own_send, own_send_fingerprint
 
 router = APIRouter(tags=["webhooks"])
 
@@ -47,15 +47,6 @@ def is_processable_chat_id(chat_id: str | None) -> bool:
 def _extract(payload: dict) -> dict:
     """Pull the inner message object from a WAHA webhook envelope."""
     return payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
-
-
-def _message_id_str(message_id) -> str | None:
-    """Normalize a webhook message id (string, or WEBJS ``{"_serialized": ...}``)."""
-    if isinstance(message_id, str):
-        return message_id
-    if isinstance(message_id, dict):
-        return extract_message_id({"id": message_id})
-    return None
 
 
 async def _resolve_session(session_name: str) -> WhatsAppSession | None:
@@ -121,7 +112,7 @@ async def waha_webhook(
         # 2. On a fromMe message the customer chat is ``to``, not ``from``.
         if from_me:
             takeover_chat = inner.get("to") or chat_id
-            own = await is_own_send(get_redis(), _message_id_str(message_id))
+            own = await is_own_send(get_redis(), own_send_fingerprint(message_id))
             if not own and is_processable_chat_id(takeover_chat):
                 async with system_session() as db:
                     await implicit_takeover(
