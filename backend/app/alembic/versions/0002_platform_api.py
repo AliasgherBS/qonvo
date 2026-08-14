@@ -20,8 +20,6 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-import sqlalchemy as sa
-
 from alembic import op
 
 revision: str = "0002_platform_api"
@@ -31,40 +29,36 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    # These columns are also present in the shared SQLAlchemy metadata, so a
+    # fresh install where 0001 ran ``Base.metadata.create_all`` already has them.
+    # Guard every statement with IF NOT EXISTS so this historical increment is a
+    # no-op on a fresh DB yet still applies to a legacy 0001-era schema, in both
+    # cases advancing alembic_version to this revision.
+
     # --- conversations: takeover TTL + unread inbox counter (§5.5, §10) ---
-    op.add_column(
-        "conversations",
-        sa.Column("paused_until", sa.DateTime(timezone=True), nullable=True),
+    op.execute(
+        "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS "
+        "paused_until TIMESTAMP WITH TIME ZONE"
     )
-    op.add_column(
-        "conversations",
-        sa.Column(
-            "unread_count",
-            sa.Integer(),
-            nullable=False,
-            server_default="0",
-        ),
+    op.execute(
+        "ALTER TABLE conversations ADD COLUMN IF NOT EXISTS "
+        "unread_count INTEGER NOT NULL DEFAULT 0"
     )
-    op.alter_column("conversations", "unread_count", server_default=None)
+    op.execute("ALTER TABLE conversations ALTER COLUMN unread_count DROP DEFAULT")
 
     # --- tenant_config: dashboard config API fields (§10 Settings) ---
-    op.add_column("tenant_config", sa.Column("business_name", sa.String(255), nullable=True))
-    op.add_column("tenant_config", sa.Column("custom_instructions", sa.String(), nullable=True))
-    op.add_column("tenant_config", sa.Column("llm_provider", sa.String(64), nullable=True))
-    op.add_column("tenant_config", sa.Column("llm_model", sa.String(128), nullable=True))
+    op.execute("ALTER TABLE tenant_config ADD COLUMN IF NOT EXISTS business_name VARCHAR(255)")
+    op.execute("ALTER TABLE tenant_config ADD COLUMN IF NOT EXISTS custom_instructions VARCHAR")
+    op.execute("ALTER TABLE tenant_config ADD COLUMN IF NOT EXISTS llm_provider VARCHAR(64)")
+    op.execute("ALTER TABLE tenant_config ADD COLUMN IF NOT EXISTS llm_model VARCHAR(128)")
 
     # --- knowledge_sources: inline content + ingestion status (§6) ---
-    op.add_column("knowledge_sources", sa.Column("content", sa.Text(), nullable=True))
-    op.add_column(
-        "knowledge_sources",
-        sa.Column(
-            "status",
-            sa.String(32),
-            nullable=False,
-            server_default="pending_ingest",
-        ),
+    op.execute("ALTER TABLE knowledge_sources ADD COLUMN IF NOT EXISTS content TEXT")
+    op.execute(
+        "ALTER TABLE knowledge_sources ADD COLUMN IF NOT EXISTS "
+        "status VARCHAR(32) NOT NULL DEFAULT 'pending_ingest'"
     )
-    op.alter_column("knowledge_sources", "status", server_default=None)
+    op.execute("ALTER TABLE knowledge_sources ALTER COLUMN status DROP DEFAULT")
 
 
 def downgrade() -> None:
