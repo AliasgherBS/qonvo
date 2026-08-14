@@ -1,7 +1,13 @@
-# What is NOT committed: dependencies, build output, caches, and local tool state.
-# Everything else — INCLUDING .env with real values and brand assets — is
-# intentionally tracked so a new device is pick-up-and-go (private, single-owner
-# repo). Rotate the secrets in .env if this repo ever stops being private/solo.
+# What is NOT committed: secrets, dependencies, build output, caches, and local
+# tool state. The .env.example templates ARE tracked as a pick-up-and-go guide;
+# copy them to .env / .env.local and fill in real values locally.
+
+# Secrets — never commit. Provider secret-scanning (Google, Groq, …) auto-revokes
+# API keys the moment they land in a repo, even a private one, so real keys must
+# stay untracked. Templates (.env.example) are kept.
+.env
+.env.*
+!.env.example
 
 # Python
 __pycache__/
