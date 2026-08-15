@@ -11,11 +11,11 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, field_validator
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_tenant
-from app.models.tenant import TenantConfig
+from app.models.tenant import Tenant, TenantConfig
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -138,6 +138,12 @@ async def update_config(
 ) -> ConfigResponse:
     row = await _get_or_create_config(db, tenant_id)
     _apply_config_update(row, body)
+    # Keep the tenant's display name in sync with the business name edited here —
+    # the topbar/JWT read Tenant.name, so otherwise the two silently diverge.
+    if "business_name" in body.model_dump(exclude_unset=True) and body.business_name:
+        await db.execute(
+            update(Tenant).where(Tenant.id == tenant_id).values(name=body.business_name.strip())
+        )
     await db.flush()
     return _config_to_dict(row)
 

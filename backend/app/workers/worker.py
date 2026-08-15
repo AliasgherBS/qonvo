@@ -161,7 +161,7 @@ async def ingest_knowledge_source(ctx: dict[str, Any], source_id: str, tenant_id
     Bridges the API (stores source/upload) and the agent-core ingestion module
     (parses, chunks, embeds). Sets source.status ready/error accordingly.
     """
-    from app.agent.ingestion import extract_text, ingest_source
+    from app.agent.ingestion import extract_text, fetch_url_text, ingest_source
     from app.models.knowledge import KnowledgeSource
     from app.models.tenant import TenantConfig
     from app.providers.registry import resolve_embedding
@@ -177,6 +177,8 @@ async def ingest_knowledge_source(ctx: dict[str, Any], source_id: str, tenant_id
         try:
             if source.content:
                 text = extract_text(source_type="text", raw_text=source.content)
+            elif source.url:
+                text = await fetch_url_text(source.url)
             else:
                 upload_path = (source.meta or {}).get("upload_path")
                 if not upload_path:

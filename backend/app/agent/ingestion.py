@@ -16,12 +16,41 @@ from __future__ import annotations
 import csv
 import io
 
+import httpx
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.knowledge import KnowledgeChunk, KnowledgeSource
 from app.providers.base import EmbeddingProvider
+
+
+async def fetch_url_text(url: str) -> str:
+    """Fetch a web page and extract its readable text (URL knowledge sources).
+
+    Strips script/style/nav/header/footer chrome and collapses whitespace so the
+    chunker gets clean prose. Raises on a bad status or an empty page.
+    """
+    async with httpx.AsyncClient(
+        timeout=20.0,
+        follow_redirects=True,
+        headers={"User-Agent": "QonvoBot/1.0 (+knowledge ingestion)"},
+    ) as client:
+        resp = await client.get(url)
+        resp.raise_for_status()
+
+    from lxml import html as lxml_html  # lazy — heavy import, only for URL sources
+
+    doc = lxml_html.fromstring(resp.text)
+    for bad in doc.xpath("//script|//style|//noscript|//nav|//footer|//header|//form"):
+        parent = bad.getparent()
+        if parent is not None:
+            parent.remove(bad)
+    lines = [ln.strip() for ln in doc.text_content().splitlines()]
+    cleaned = "\n".join(ln for ln in lines if ln)
+    if not cleaned.strip():
+        raise ValueError("no readable text found at that URL")
+    return cleaned
 
 
 # --------------------------------------------------------------------------- #

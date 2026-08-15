@@ -478,6 +478,14 @@ export const knowledge = {
       ...opts,
     }).then(mapKnowledgeSource),
 
+  /** Website source: the backend fetches the URL, extracts text, chunks + embeds. */
+  addUrlSource: (payload: { title: string; url: string }, opts: CallOpts = {}) =>
+    apiFetch<KnowledgeSourceDto>("/api/knowledge/sources", {
+      method: "POST",
+      body: { type: "url", title: payload.title, url: payload.url },
+      ...opts,
+    }).then(mapKnowledgeSource),
+
   /** File upload: create the source record, then upload the file to it. */
   createFileSource: (title: string, opts: CallOpts = {}) =>
     apiFetch<KnowledgeSourceDto>("/api/knowledge/sources", {

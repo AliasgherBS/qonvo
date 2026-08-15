@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, FileUp, HelpCircle, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { BookOpen, FileUp, Globe, HelpCircle, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +45,7 @@ export default function KnowledgePage() {
   const { toast } = useToast();
   const [tab, setTab] = useState<Tab>("sources");
   const [manualOpen, setManualOpen] = useState(false);
+  const [urlOpen, setUrlOpen] = useState(false);
   const [editing, setEditing] = useState<KnowledgeSource | null>(null);
 
   const { data, loading, error, refetch } = useApi(() => knowledge.listSources({ token }), [token]);
@@ -75,10 +76,16 @@ export default function KnowledgePage() {
             What your AI representative knows — upload docs, write entries by hand, or review the gaps.
           </p>
         </div>
-        <Button onClick={() => setManualOpen(true)}>
-          <Plus className="h-4 w-4" />
-          Add entry
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={() => setUrlOpen(true)}>
+            <Globe className="h-4 w-4" />
+            Add website
+          </Button>
+          <Button onClick={() => setManualOpen(true)}>
+            <Plus className="h-4 w-4" />
+            Add entry
+          </Button>
+        </div>
       </div>
 
       <div className="flex gap-2">
@@ -145,6 +152,15 @@ export default function KnowledgePage() {
         onClose={() => setManualOpen(false)}
         onCreated={() => {
           setManualOpen(false);
+          refetch();
+        }}
+      />
+
+      <AddUrlDialog
+        open={urlOpen}
+        onClose={() => setUrlOpen(false)}
+        onCreated={() => {
+          setUrlOpen(false);
           refetch();
         }}
       />
@@ -310,6 +326,80 @@ function AddManualEntryDialog({
           </Button>
           <Button type="submit" disabled={saving}>
             {saving ? "Adding…" : "Add entry"}
+          </Button>
+        </div>
+      </form>
+    </Dialog>
+  );
+}
+
+function AddUrlDialog({
+  open,
+  onClose,
+  onCreated,
+}: {
+  open: boolean;
+  onClose: () => void;
+  onCreated: () => void;
+}) {
+  const token = useAuthToken();
+  const { toast } = useToast();
+  const [title, setTitle] = useState("");
+  const [url, setUrl] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (!title.trim() || !url.trim()) return;
+    setSaving(true);
+    try {
+      await knowledge.addUrlSource({ title: title.trim(), url: url.trim() }, { token });
+      toast({ title: "Website added", description: "We're fetching and indexing the page.", variant: "success" });
+      setTitle("");
+      setUrl("");
+      onCreated();
+    } catch (err) {
+      toast({ title: "Couldn't add website", description: describeError(err), variant: "error" });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="Add a website"
+      description="We'll fetch the page, extract its text, and add it to your rep's knowledge."
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div className="space-y-1.5">
+          <Label htmlFor="url-title">Title</Label>
+          <Input
+            id="url-title"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="e.g. Our FAQ page"
+            required
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="url-address">URL</Label>
+          <Input
+            id="url-address"
+            type="url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://yourbusiness.com/faq"
+            required
+          />
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button type="button" variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button type="submit" disabled={saving}>
+            {saving ? "Adding…" : "Add website"}
           </Button>
         </div>
       </form>

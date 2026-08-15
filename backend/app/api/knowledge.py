@@ -48,6 +48,7 @@ class CreateSourceRequest(BaseModel):
     type: SourceTypeIn
     title: str
     content: str | None = None
+    url: str | None = None  # for type="url": the page to fetch + ingest
 
 
 class UpdateSourceRequest(BaseModel):
@@ -117,10 +118,16 @@ async def create_source(
     arq: ArqRedis = Depends(get_arq),
 ) -> SourceResponse:
     db_type = _TYPE_IN_TO_DB[body.type]
+    url = (body.url or "").strip() or None
+    if db_type == KnowledgeSourceType.website and not url:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="a URL is required for a website source"
+        )
     row = KnowledgeSource(
         tenant_id=tenant_id,
         type=db_type,
         name=body.title,
+        url=url,
         content=body.content,
         # Everything goes through the ingestion worker (chunk + embed, §6);
         # a source without chunks is invisible to RAG even if "stored".
@@ -128,7 +135,9 @@ async def create_source(
     )
     db.add(row)
     await db.flush()
-    if body.content:
+    # Ingest now if there's inline content OR a URL to fetch (file uploads enqueue
+    # from the upload route instead).
+    if body.content or url:
         await arq.enqueue_job("ingest_knowledge_source", str(row.id), str(tenant_id))
     return _to_response(row)
 
