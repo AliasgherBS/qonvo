@@ -33,6 +33,7 @@ from app.models.knowledge import KnowledgeSource
 from app.models.ops import UsageCounter
 from app.models.tenant import AuditLog, Tenant, TenantConfig, TenantUser, User
 from app.models.whatsapp import WhatsAppSession
+from app.services.auth import create_access_token
 from app.waha.client import WahaClient, WahaError
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -394,6 +395,124 @@ async def fleet(
             }
         )
     return result
+
+
+_SESSION_ACTIONS = {"start", "stop", "restart", "logout"}
+
+
+@router.post("/fleet/{session_name}/{action}")
+async def fleet_session_action(
+    session_name: str,
+    action: str,
+    claims: TokenClaims = Depends(require_admin),
+    db: AsyncSession = Depends(get_system_db),
+    waha: WahaClient = Depends(get_waha),
+) -> dict:
+    """Control a tenant's WhatsApp session from the fleet console: start / stop /
+    restart / logout. ``logout`` unlinks the phone (a fresh QR scan is needed to
+    reconnect). Every action is audited against the owning tenant."""
+    if action not in _SESSION_ACTIONS:
+        raise HTTPException(
+            status_code=400, detail=f"action must be one of {sorted(_SESSION_ACTIONS)}"
+        )
+    row = (
+        await db.execute(
+            select(WhatsAppSession).where(WhatsAppSession.session_name == session_name)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="session not found")
+    try:
+        if action == "start":
+            await waha.start_session(session_name)
+        elif action == "stop":
+            await waha.stop_session(session_name)
+        elif action == "logout":
+            await waha.logout_session(session_name)
+        elif action == "restart":
+            await waha.stop_session(session_name)
+            await waha.start_session(session_name)
+    except WahaError as exc:
+        raise HTTPException(status_code=502, detail=f"WAHA error: {exc.detail}") from exc
+    await _audit(
+        db, tenant_id=row.tenant_id, claims=claims, action=f"session.{action}", target=session_name
+    )
+    await db.flush()
+    try:
+        info = await waha.get_session(session_name)
+        live_status = info.get("status")
+    except WahaError:
+        live_status = "unreachable"
+    return {"session_name": session_name, "action": action, "live_status": live_status}
+
+
+async def _tenant_owner(db: AsyncSession, tenant_id: UUID) -> User | None:
+    return (
+        await db.execute(
+            select(User)
+            .join(TenantUser, TenantUser.user_id == User.id)
+            .where(TenantUser.tenant_id == tenant_id, TenantUser.role == UserRole.owner)
+        )
+    ).scalar_one_or_none()
+
+
+class ResetPasswordResponse(BaseModel):
+    owner_email: str
+    temp_password: str
+
+
+@router.post("/tenants/{tenant_id}/reset-password", response_model=ResetPasswordResponse)
+async def reset_owner_password(
+    tenant_id: UUID,
+    claims: TokenClaims = Depends(require_admin),
+    db: AsyncSession = Depends(get_system_db),
+) -> ResetPasswordResponse:
+    """Mint a new one-time password for the tenant owner (support recovery when
+    an owner is locked out). Returned once; the admin relays it out-of-band."""
+    owner = await _tenant_owner(db, tenant_id)
+    if owner is None:
+        raise HTTPException(status_code=404, detail="tenant owner not found")
+    temp_password = secrets.token_urlsafe(12)
+    owner.hashed_password = hash_password(temp_password)
+    await _audit(
+        db, tenant_id=tenant_id, claims=claims, action="user.reset_password", target=owner.email
+    )
+    await db.flush()
+    return ResetPasswordResponse(owner_email=owner.email, temp_password=temp_password)
+
+
+class ImpersonateResponse(BaseModel):
+    access_token: str
+    tenant_id: UUID
+    owner_email: str
+
+
+@router.post("/tenants/{tenant_id}/impersonate", response_model=ImpersonateResponse)
+async def impersonate_tenant(
+    tenant_id: UUID,
+    claims: TokenClaims = Depends(require_admin),
+    db: AsyncSession = Depends(get_system_db),
+) -> ImpersonateResponse:
+    """Mint an owner-scoped JWT so support can "log in as" a tenant to reproduce
+    an issue. The token carries the tenant owner's identity (NOT admin), so it is
+    subject to normal RLS; the impersonation itself is audited."""
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=404, detail="tenant not found")
+    owner = await _tenant_owner(db, tenant_id)
+    if owner is None:
+        raise HTTPException(status_code=404, detail="tenant owner not found")
+    token = create_access_token(
+        subject=owner.email,
+        tenant_id=tenant_id,
+        role=UserRole.owner.value,
+        is_qonvo_admin=False,
+    )
+    await _audit(
+        db, tenant_id=tenant_id, claims=claims, action="tenant.impersonate", target=owner.email
+    )
+    await db.flush()
+    return ImpersonateResponse(access_token=token, tenant_id=tenant_id, owner_email=owner.email)
 
 
 @router.get("/usage")

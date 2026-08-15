@@ -29,9 +29,10 @@ if _APP_URL is None or _SYSTEM_URL is None:
     )
 
 from app.api.deps import get_arq, get_db, get_system_db, get_waha, require_tenant  # noqa: E402
+from app.core.security import hash_password, verify_password  # noqa: E402
 from app.core.tenancy import set_tenant  # noqa: E402
 from app.main import app  # noqa: E402
-from app.models.enums import SessionStatus  # noqa: E402
+from app.models.enums import SessionStatus, UserRole  # noqa: E402
 from app.models.ops import UsageCounter  # noqa: E402
 from app.models.tenant import AuditLog, Tenant, TenantConfig, TenantUser, User  # noqa: E402
 from app.models.whatsapp import WhatsAppSession  # noqa: E402
@@ -117,12 +118,19 @@ async def created_tenant_cleanup():
     yield tenant_ids
     async with _system_session() as db:
         for tid in tenant_ids:
+            user_ids = (
+                (await db.execute(select(TenantUser.user_id).where(TenantUser.tenant_id == tid)))
+                .scalars()
+                .all()
+            )
             await db.execute(delete(AuditLog).where(AuditLog.tenant_id == tid))
             await db.execute(delete(TenantUser).where(TenantUser.tenant_id == tid))
             await db.execute(delete(TenantConfig).where(TenantConfig.tenant_id == tid))
             await db.execute(delete(WhatsAppSession).where(WhatsAppSession.tenant_id == tid))
             await db.execute(delete(UsageCounter).where(UsageCounter.tenant_id == tid))
             await db.execute(delete(Tenant).where(Tenant.id == tid))
+            if user_ids:
+                await db.execute(delete(User).where(User.id.in_(user_ids)))
         await db.execute(delete(User).where(User.email == "new-owner@example.com"))
 
 
@@ -299,3 +307,96 @@ async def test_admin_routes_scoped_from_regular_tenant_token(client):
     assert resp.status_code == 403
     resp = await client.get("/api/admin/usage", headers=headers)
     assert resp.status_code == 403
+
+
+async def _seed_tenant_with_owner(tenant_id: uuid.UUID, email: str) -> None:
+    async with _system_session() as db:
+        db.add(Tenant(id=tenant_id, name="Owned Co", slug=f"own-{tenant_id.hex[:8]}"))
+        await db.flush()
+        user = User(email=email, hashed_password=hash_password("old-pass"), full_name="Owner")
+        db.add(user)
+        await db.flush()
+        db.add(TenantUser(tenant_id=tenant_id, user_id=user.id, role=UserRole.owner))
+
+
+async def test_fleet_session_restart(client, created_tenant_cleanup, mock_waha):
+    tenant_id = uuid.uuid4()
+    session_name = f"ctl-{tenant_id.hex[:8]}"
+    async with _system_session() as db:
+        db.add(Tenant(id=tenant_id, name="Ctl Co", slug=f"ctl-{tenant_id.hex[:8]}"))
+        await db.flush()
+        db.add(
+            WhatsAppSession(
+                tenant_id=tenant_id, session_name=session_name, status=SessionStatus.working
+            )
+        )
+    created_tenant_cleanup.append(tenant_id)
+
+    headers = {"Authorization": f"Bearer {_admin_token()}"}
+    resp = await client.post(f"/api/admin/fleet/{session_name}/restart", headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["action"] == "restart"
+    mock_waha.stop_session.assert_awaited_with(session_name)
+    mock_waha.start_session.assert_awaited_with(session_name)
+
+
+async def test_fleet_session_bad_action(client, created_tenant_cleanup):
+    tenant_id = uuid.uuid4()
+    session_name = f"bad-{tenant_id.hex[:8]}"
+    async with _system_session() as db:
+        db.add(Tenant(id=tenant_id, name="Bad Co", slug=f"bad-{tenant_id.hex[:8]}"))
+        await db.flush()
+        db.add(
+            WhatsAppSession(
+                tenant_id=tenant_id, session_name=session_name, status=SessionStatus.working
+            )
+        )
+    created_tenant_cleanup.append(tenant_id)
+
+    headers = {"Authorization": f"Bearer {_admin_token()}"}
+    resp = await client.post(f"/api/admin/fleet/{session_name}/frobnicate", headers=headers)
+    assert resp.status_code == 400
+
+
+async def test_reset_owner_password(client, created_tenant_cleanup):
+    tenant_id = uuid.uuid4()
+    email = f"reset-{tenant_id.hex[:8]}@example.com"
+    await _seed_tenant_with_owner(tenant_id, email)
+    created_tenant_cleanup.append(tenant_id)
+
+    headers = {"Authorization": f"Bearer {_admin_token()}"}
+    resp = await client.post(f"/api/admin/tenants/{tenant_id}/reset-password", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["owner_email"] == email
+    temp = body["temp_password"]
+    assert temp
+
+    async with _system_session() as db:
+        user = (await db.execute(select(User).where(User.email == email))).scalar_one()
+        assert verify_password(temp, user.hashed_password)
+        assert not verify_password("old-pass", user.hashed_password)
+
+
+async def test_impersonate_mints_owner_token(client, created_tenant_cleanup):
+    tenant_id = uuid.uuid4()
+    email = f"imp-{tenant_id.hex[:8]}@example.com"
+    await _seed_tenant_with_owner(tenant_id, email)
+    created_tenant_cleanup.append(tenant_id)
+
+    headers = {"Authorization": f"Bearer {_admin_token()}"}
+    resp = await client.post(f"/api/admin/tenants/{tenant_id}/impersonate", headers=headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["owner_email"] == email
+    assert body["tenant_id"] == str(tenant_id)
+
+    # The minted token acts as the tenant owner (not admin) → admin routes 403.
+    owner_headers = {"Authorization": f"Bearer {body['access_token']}"}
+    assert (await client.get("/api/admin/tenants", headers=owner_headers)).status_code == 403
+
+
+async def test_reset_password_unknown_tenant(client):
+    headers = {"Authorization": f"Bearer {_admin_token()}"}
+    resp = await client.post(f"/api/admin/tenants/{uuid.uuid4()}/reset-password", headers=headers)
+    assert resp.status_code == 404
