@@ -139,10 +139,24 @@ class Settings(BaseSettings):
     rag_chunk_overlap_tokens: int = 50
 
     # --- Phase 3: agentic integrations (DESIGN.md §7) ---
-    # System-default Google service-account key (JSON string). Per-tenant keys in
-    # the ``integrations`` table override this; the tenant shares their Calendar /
-    # Sheet with the service-account email so no OAuth flow is needed.
-    google_service_account_json: str | None = None
+    # One platform-wide Google OAuth client serves every tenant; each tenant's
+    # refresh token is Fernet-encrypted per-row in ``integrations``. The same
+    # client also backs "Sign in with Google" (its redirect URI is Auth.js's).
+    google_oauth_client_id: str | None = None
+    google_oauth_client_secret: str | None = None
+    # Public origin Google redirects back to. Must match the Cloud console entry
+    # exactly, or the flow dies with a bare ``redirect_uri_mismatch``.
+    google_oauth_redirect_base: str = "http://localhost:8000"
+    # Where the OAuth callback sends the browser once the grant is stored.
+    dashboard_base_url: str = "http://localhost:3002"
+    google_oauth_state_ttl_seconds: int = 600
+    # Expire the cached access token this many seconds before Google would, so an
+    # in-flight tool call never races the expiry.
+    google_token_cache_skew_seconds: int = 120
+    # Google Picker (browser-side sheet chooser) — Picker-restricted API key and
+    # the Cloud project number.
+    google_picker_api_key: str | None = None
+    google_picker_app_id: str | None = None
     # Default timezone for calendar events when a tenant hasn't set one.
     google_default_timezone: str = "UTC"
     # Default duration (minutes) for a booked appointment when the model omits one.
@@ -187,7 +201,12 @@ class Settings(BaseSettings):
                 "llama-3.1-8b-instant": {"input": 0.00005, "output": 0.00008},
             },
             "gemini": {
+                # $/1K tokens. Keep the running model's id here or compute_cost
+                # records $0.00 (it returns 0 on a pricing miss).
                 "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
+                "gemini-2.0-flash": {"input": 0.0001, "output": 0.0004},
+                "gemini-2.5-flash": {"input": 0.0003, "output": 0.0025},
+                "gemini-embedding-001": {"input": 0.00015, "output": 0.0},
             },
         }
     )

@@ -292,6 +292,10 @@ def compute_cost(
     pricing = pricing if pricing is not None else settings.llm_pricing
     rates = (pricing.get(provider) or {}).get(model)
     if not rates:
+        # A miss silently records $0.00 for every turn — loud so it's caught, not
+        # discovered months later in flat-zero analytics. Add the model to
+        # settings.llm_pricing to fix.
+        logger.warning(f"no pricing for {provider}/{model} — recording $0.00; add it to llm_pricing")
         return 0.0
     return (prompt_tokens / 1000) * rates.get("input", 0.0) + (
         completion_tokens / 1000

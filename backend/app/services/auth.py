@@ -28,6 +28,9 @@ from app.models.tenant import Tenant, TenantConfig, TenantUser, User
 # Self-serve signups get a free trial; after it ends the tenant is gated until
 # it's on a paid plan (§9 billing).
 TRIAL_DAYS = 14
+# Hard message cap for a trial tenant — bounds LLM/voice spend for a free signup
+# (the date check alone left trials able to burn unlimited credits for 14 days).
+TRIAL_MESSAGE_QUOTA = 300
 
 # Password-reset links expire after this long.
 PASSWORD_RESET_TTL_MINUTES = 30
@@ -248,7 +251,15 @@ async def provision_tenant(
     )
     db.add(tenant)
     await db.flush()
-    db.add(TenantConfig(tenant_id=tenant.id, business_name=business_name))
+    db.add(
+        TenantConfig(
+            tenant_id=tenant.id,
+            business_name=business_name,
+            # Trial tenants get a hard message cap so a free signup can't burn
+            # unlimited LLM/voice credits (enforced by the pipeline's quota gate).
+            entitlements={"monthly_message_quota": TRIAL_MESSAGE_QUOTA},
+        )
+    )
 
     user = User(
         email=email.lower().strip(),
