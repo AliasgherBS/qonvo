@@ -911,11 +911,15 @@ export const integrations = {
 
 export type TenantStatus = "onboarding" | "active" | "suspended";
 
+export type TenantPlan = "trial" | "paid";
+
 interface AdminTenantDto {
   id: string;
   name: string;
   slug: string;
   status: TenantStatus;
+  plan: TenantPlan;
+  trial_ends_at: string | null;
   owner_email: string;
   owner_name: string;
   created_at: string;
@@ -926,6 +930,8 @@ export interface AdminTenant {
   name: string;
   slug: string;
   status: TenantStatus;
+  plan: TenantPlan;
+  trialEndsAt: string | null;
   ownerEmail: string;
   ownerName: string;
   createdAt: string;
@@ -937,6 +943,8 @@ function mapAdminTenant(dto: AdminTenantDto): AdminTenant {
     name: dto.name,
     slug: dto.slug,
     status: dto.status,
+    plan: dto.plan,
+    trialEndsAt: dto.trial_ends_at,
     ownerEmail: dto.owner_email,
     ownerName: dto.owner_name,
     createdAt: dto.created_at,
@@ -990,6 +998,25 @@ export const adminTenants = {
       body: toTenantConfigDto(payload),
       ...opts,
     }).then(mapTenantConfig),
+
+  update: (
+    id: string,
+    payload: { name?: string; status?: TenantStatus; plan?: TenantPlan; trialEndsAt?: string | null },
+    opts: CallOpts = {},
+  ) =>
+    apiFetch<AdminTenantDto>(`/api/admin/tenants/${id}`, {
+      method: "PATCH",
+      body: {
+        ...(payload.name !== undefined ? { name: payload.name } : {}),
+        ...(payload.status !== undefined ? { status: payload.status } : {}),
+        ...(payload.plan !== undefined ? { plan: payload.plan } : {}),
+        ...(payload.trialEndsAt !== undefined ? { trial_ends_at: payload.trialEndsAt } : {}),
+      },
+      ...opts,
+    }).then(mapAdminTenant),
+
+  remove: (id: string, opts: CallOpts = {}) =>
+    apiFetch<void>(`/api/admin/tenants/${id}`, { method: "DELETE", ...opts }),
 };
 
 interface AdminOverviewDto {

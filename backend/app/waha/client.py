@@ -226,6 +226,10 @@ class WahaClient:
     async def logout_session(self, name: str) -> dict[str, Any]:
         return await self._request("POST", f"/api/sessions/{name}/logout")
 
+    async def delete_session(self, name: str) -> dict[str, Any]:
+        """Fully remove a WAHA session (used when offboarding a tenant)."""
+        return await self._request("DELETE", f"/api/sessions/{name}")
+
     async def get_qr(self, name: str) -> bytes:
         """Fetch the current QR image (expires ~20s — poll & re-render, §10)."""
         return await self._request("GET", f"/api/{name}/auth/qr")

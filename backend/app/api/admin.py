@@ -8,13 +8,14 @@ writes an ``audit_log`` row (§8, §9).
 from __future__ import annotations
 
 import calendar
+import contextlib
 import secrets
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.config import (
@@ -24,7 +25,9 @@ from app.api.config import (
     _config_to_dict,
 )
 from app.api.deps import get_system_db, get_waha, require_admin
+from app.core.logging import logger
 from app.core.security import TokenClaims, hash_password
+from app.models import TENANT_SCOPED_TABLES
 from app.models.enums import SessionStatus, UserRole
 from app.models.knowledge import KnowledgeSource
 from app.models.ops import UsageCounter
@@ -56,6 +59,8 @@ def _tenant_to_dict(row: Tenant) -> dict:
         "name": row.name,
         "slug": row.slug,
         "status": row.status,
+        "plan": row.plan,
+        "trial_ends_at": row.trial_ends_at,
         "created_at": row.created_at,
     }
 
@@ -228,6 +233,102 @@ async def get_tenant(
         "owner_name": full_name,
         "config": _config_to_dict(config) if config else None,
     }
+
+
+class UpdateTenantRequest(BaseModel):
+    name: str | None = None
+    status: str | None = None  # "active" | "suspended"
+    plan: str | None = None  # "trial" | "paid"
+    trial_ends_at: datetime | None = None
+
+
+@router.patch("/tenants/{tenant_id}")
+async def update_tenant(
+    tenant_id: UUID,
+    body: UpdateTenantRequest,
+    claims: TokenClaims = Depends(require_admin),
+    db: AsyncSession = Depends(get_system_db),
+) -> dict:
+    """Edit tenant lifecycle: name, status (active/suspended), plan, trial end.
+    A ``suspended`` tenant's bot goes silent (enforced in the pipeline)."""
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tenant not found")
+
+    fields = body.model_dump(exclude_unset=True)
+    if fields.get("status") not in (None, "active", "suspended", "onboarding"):
+        raise HTTPException(status_code=400, detail="status must be active or suspended")
+    if fields.get("plan") not in (None, "trial", "paid"):
+        raise HTTPException(status_code=400, detail="plan must be trial or paid")
+    for key, value in fields.items():
+        setattr(tenant, key, value)
+
+    await _audit(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="tenant.update",
+        target=str(tenant_id),
+        meta={"fields": list(fields)},
+    )
+    await db.flush()
+    email, full_name = (await _owner_map(db, [tenant.id])).get(tenant.id, (None, None))
+    return {**_tenant_to_dict(tenant), "owner_email": email, "owner_name": full_name}
+
+
+@router.delete("/tenants/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_tenant(
+    tenant_id: UUID,
+    claims: TokenClaims = Depends(require_admin),
+    db: AsyncSession = Depends(get_system_db),
+    waha: WahaClient = Depends(get_waha),
+) -> None:
+    """Permanently offboard a tenant: tear down its WAHA sessions, purge every
+    tenant-scoped row, remove orphaned users, then drop the tenant. Irreversible.
+    (tenant_id has no FK cascade — RLS isolation — so this must be explicit.)"""
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tenant not found")
+
+    # 1. Best-effort WAHA teardown — a missing/broken session must not block delete.
+    names = (
+        await db.execute(
+            select(WhatsAppSession.session_name).where(WhatsAppSession.tenant_id == tenant_id)
+        )
+    ).scalars().all()
+    for name in names:
+        with contextlib.suppress(Exception):
+            await waha.delete_session(name)
+
+    # 2. Capture members before dropping memberships (to clean up orphaned users).
+    user_ids = (
+        await db.execute(select(TenantUser.user_id).where(TenantUser.user_id.isnot(None)).where(
+            TenantUser.tenant_id == tenant_id
+        ))
+    ).scalars().all()
+
+    # 3. Purge every tenant-scoped table (names are a trusted hardcoded constant).
+    for table in TENANT_SCOPED_TABLES:
+        await db.execute(text(f'DELETE FROM "{table}" WHERE tenant_id = :tid'), {"tid": tenant_id})
+
+    # 4. Delete users left with no remaining membership (never a platform admin).
+    for uid in user_ids:
+        remaining = (
+            await db.execute(
+                select(func.count()).select_from(TenantUser).where(TenantUser.user_id == uid)
+            )
+        ).scalar_one()
+        if remaining == 0:
+            await db.execute(
+                text("DELETE FROM users WHERE id = :uid AND is_qonvo_admin = false"), {"uid": uid}
+            )
+
+    # 5. Drop the tenant. (audit_log is tenant-scoped and just got purged, so log
+    #    the offboarding to the ops log instead.)
+    await db.execute(text("DELETE FROM tenants WHERE id = :tid"), {"tid": tenant_id})
+    logger.bind(tenant_id=str(tenant_id), actor=claims.subject).info(
+        f"tenant offboarded (deleted): {tenant.name}"
+    )
 
 
 @router.put("/tenants/{tenant_id}/config", response_model=ConfigResponse)

@@ -527,16 +527,26 @@ async def run_pipeline(
                 reply_text="", meta={"gate": "paused", "state": str(conversation.state)}
             )
 
-        # --- Gate: free trial ended (§9 billing) ---
-        # A self-serve tenant on an expired trial goes silent — we deliberately
-        # do NOT message the customer about the business's subscription; the
-        # owner sees the upgrade prompt in the dashboard.
-        trial = (
+        # --- Gate: tenant suspended / trial ended (§9 billing, admin lifecycle) ---
+        # A suspended tenant (admin action) or a self-serve tenant on an expired
+        # trial goes silent — we deliberately do NOT message the customer about
+        # the business's account status.
+        tenant_row = (
             await db.execute(
-                select(Tenant.plan, Tenant.trial_ends_at).where(Tenant.id == tenant_uuid)
+                select(Tenant.status, Tenant.plan, Tenant.trial_ends_at).where(
+                    Tenant.id == tenant_uuid
+                )
             )
         ).one_or_none()
-        if trial and trial.plan == "trial" and trial.trial_ends_at and trial.trial_ends_at <= now:
+        if tenant_row and tenant_row.status == "suspended":
+            bound.info("tenant suspended — bot silent")
+            return PipelineResult(reply_text="", meta={"gate": "suspended"})
+        if (
+            tenant_row
+            and tenant_row.plan == "trial"
+            and tenant_row.trial_ends_at
+            and tenant_row.trial_ends_at <= now
+        ):
             bound.info("trial expired — bot silent (owner must upgrade)")
             return PipelineResult(reply_text="", meta={"gate": "trial_expired"})
 

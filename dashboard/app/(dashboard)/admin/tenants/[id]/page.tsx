@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 
 import { TenantConfigForm } from "@/components/tenant-config-form";
+import { TenantLifecycleCard } from "@/components/tenant-lifecycle-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -70,6 +71,8 @@ export default function AdminTenantDetailPage() {
           <Badge tone={STATUS_TONE[tenant.status]}>{tenant.status}</Badge>
         </div>
       )}
+
+      {tenant ? <TenantLifecycleCard tenant={tenant} onChanged={refetchTenant} /> : null}
 
       <div>
         <h2 className="mb-3 text-lg font-bold tracking-tight">Configuration</h2>
