@@ -89,7 +89,7 @@ def is_voice_fragment(fragment: InboundFragment) -> bool:
 
 
 def should_reply_voice(mode: str, *, inbound_had_voice: bool) -> bool:
-    """"always" → always; "never" → never; "match" → mirror the customer."""
+    """ "always" → always; "never" → never; "match" → mirror the customer."""
     if mode == "always":
         return True
     if mode == "never":
@@ -102,38 +102,49 @@ async def _transcribe_voice_fragments(
     tenant_config: Any,
     waha: Any,
     bound: Any,
-) -> bool:
+) -> tuple[bool, int]:
     """STT every voice fragment in place (sets ``body``, normalizes ``type`` to
-    "voice"). Returns True if any voice fragment was present. A missing STT
-    provider or a failed download/transcription degrades to a text-only turn.
+    "voice"). Returns ``(had_voice, estimated_seconds)`` — the second is the
+    metered inbound voice duration for this turn (0 when nothing transcribed).
+    A missing STT provider or a failed download/transcription degrades to a
+    text-only turn; an oversized note is skipped before STT (abuse guard).
     """
     voice_frags = [f for f in fragments if is_voice_fragment(f)]
     if not voice_frags:
-        return False
+        return False, 0
     if waha is None:
         bound.warning("voice message received but no WAHA client for media download")
-        return True
+        return True, 0
 
     from app.providers.registry import resolve_stt
 
     stt = resolve_stt(tenant_config)
     if stt is None:
         bound.warning("voice message received but no STT provider configured")
-        return True
+        return True, 0
 
+    total_seconds = 0
     for fragment in voice_frags:
         try:
             audio = await waha.download_media(fragment.media_url)
+            if len(audio) > settings.max_inbound_audio_bytes:
+                bound.warning(
+                    f"voice note too large ({len(audio)} bytes > "
+                    f"{settings.max_inbound_audio_bytes}) — skipping transcription"
+                )
+                fragment.type = "voice"
+                continue
             result = await stt.transcribe(audio)
             fragment.body = result.text or ""
             fragment.type = "voice"
+            total_seconds += max(1, len(audio) // settings.voice_bytes_per_second)
             bound.info(f"transcribed voice fragment ({len(fragment.body)} chars)")
         except Exception as exc:  # noqa: BLE001 — degrade to text-only, don't crash the turn
             bound.warning(f"voice transcription failed: {exc}")
             fragment.type = "voice"
     if hasattr(stt, "aclose"):
         await stt.aclose()
-    return True
+    return True, total_seconds
 
 
 # --------------------------------------------------------------------------- #
@@ -144,9 +155,7 @@ def should_auto_resume(
 ) -> bool:
     """True when a paused conversation's auto-resume TTL has elapsed (§5.5)."""
     return (
-        state != ConversationState.bot_active
-        and paused_until is not None
-        and now >= paused_until
+        state != ConversationState.bot_active and paused_until is not None and now >= paused_until
     )
 
 
@@ -295,7 +304,9 @@ def compute_cost(
         # A miss silently records $0.00 for every turn — loud so it's caught, not
         # discovered months later in flat-zero analytics. Add the model to
         # settings.llm_pricing to fix.
-        logger.warning(f"no pricing for {provider}/{model} — recording $0.00; add it to llm_pricing")
+        logger.warning(
+            f"no pricing for {provider}/{model} — recording $0.00; add it to llm_pricing"
+        )
         return 0.0
     return (prompt_tokens / 1000) * rates.get("input", 0.0) + (
         completion_tokens / 1000
@@ -356,9 +367,7 @@ async def run_tool_loop(
                 tool_results=tool_results,
             )
 
-        working.append(
-            ChatMessage(role="assistant", content=last.text, tool_calls=last.tool_calls)
-        )
+        working.append(ChatMessage(role="assistant", content=last.text, tool_calls=last.tool_calls))
         for call in last.tool_calls:
             result = await dispatch(call)
             tool_results.append(result)
@@ -443,6 +452,7 @@ async def _bump_usage(
     messages_out: int,
     tokens: int,
     cost: float,
+    voice_seconds: int = 0,
 ) -> None:
     today = date.today()
     row = (
@@ -461,6 +471,7 @@ async def _bump_usage(
     row.messages_out = (row.messages_out or 0) + messages_out
     row.tokens = (row.tokens or 0) + tokens
     row.cost = float(row.cost or 0) + cost
+    row.voice_seconds = (row.voice_seconds or 0) + voice_seconds
 
 
 async def _messages_this_month(db: AsyncSession, tenant_id: uuid.UUID) -> int:
@@ -500,9 +511,7 @@ async def run_pipeline(
 
     async with tenant_session(tenant_uuid) as db:
         session_row = (
-            await db.execute(
-                select(WhatsAppSession).where(WhatsAppSession.session_name == session)
-            )
+            await db.execute(select(WhatsAppSession).where(WhatsAppSession.session_name == session))
         ).scalar_one_or_none()
         if session_row is None:
             bound.error("no whatsapp_sessions row for session — cannot process")
@@ -515,7 +524,9 @@ async def run_pipeline(
         conversation = await _get_or_create_conversation(db, tenant_uuid, session_row, chat_id)
         # Voice-in: transcribe before persisting so the inbound Message stores the
         # transcript as its body (§2 voice loop).
-        inbound_had_voice = await _transcribe_voice_fragments(fragments, tenant_config, waha, bound)
+        inbound_had_voice, voice_seconds = await _transcribe_voice_fragments(
+            fragments, tenant_config, waha, bound
+        )
         await _persist_inbound(db, tenant_uuid, conversation, fragments)
 
         now = datetime.now(UTC)
@@ -571,7 +582,13 @@ async def run_pipeline(
                 )
             )
             await _bump_usage(
-                db, tenant_uuid, messages_in=len(fragments), messages_out=1, tokens=0, cost=0.0
+                db,
+                tenant_uuid,
+                messages_in=len(fragments),
+                messages_out=1,
+                tokens=0,
+                cost=0.0,
+                voice_seconds=voice_seconds,
             )
             await _send(bound, send_gateway, session, chat_id, QUOTA_EXCEEDED_REPLY)
             return PipelineResult(reply_text=QUOTA_EXCEEDED_REPLY, meta={"gate": "quota_exceeded"})
@@ -612,7 +629,13 @@ async def run_pipeline(
                     )
                 )
                 await _bump_usage(
-                    db, tenant_uuid, messages_in=len(fragments), messages_out=1, tokens=0, cost=0.0
+                    db,
+                    tenant_uuid,
+                    messages_in=len(fragments),
+                    messages_out=1,
+                    tokens=0,
+                    cost=0.0,
+                    voice_seconds=voice_seconds,
                 )
                 await _send(bound, send_gateway, session, chat_id, reply)
                 return PipelineResult(reply_text=reply, meta={"gate": "business_hours"})
@@ -634,7 +657,13 @@ async def run_pipeline(
                 )
             )
             await _bump_usage(
-                db, tenant_uuid, messages_in=len(fragments), messages_out=1, tokens=0, cost=0.0
+                db,
+                tenant_uuid,
+                messages_in=len(fragments),
+                messages_out=1,
+                tokens=0,
+                cost=0.0,
+                voice_seconds=voice_seconds,
             )
             await _send(bound, send_gateway, session, chat_id, CATCH_UP_REPLY)
             return PipelineResult(reply_text=CATCH_UP_REPLY, meta={"catch_up": True})
@@ -676,7 +705,13 @@ async def run_pipeline(
                 )
             )
             await _bump_usage(
-                db, tenant_uuid, messages_in=len(fragments), messages_out=1, tokens=0, cost=0.0
+                db,
+                tenant_uuid,
+                messages_in=len(fragments),
+                messages_out=1,
+                tokens=0,
+                cost=0.0,
+                voice_seconds=voice_seconds,
             )
             await _send(bound, send_gateway, session, chat_id, reply)
             return PipelineResult(reply_text=reply, meta={"gate": "reminder_optout"})
@@ -767,6 +802,10 @@ async def run_pipeline(
             await _synthesize_reply(reply_text, tenant_config, bound) if reply_voice else None
         )
         was_voice = audio_b64 is not None
+        if was_voice and audio_b64:
+            # base64 → raw bytes ≈ len * 3/4; meter the synthesized reply too.
+            out_bytes = (len(audio_b64) * 3) // 4
+            voice_seconds += max(1, out_bytes // settings.voice_bytes_per_second)
 
         # --- Persist outbound + usage, refresh rolling summary (§5.4 step 6, §13) ---
         conversation.last_activity_at = now
@@ -791,6 +830,7 @@ async def run_pipeline(
             messages_out=1,
             tokens=total_tokens,
             cost=cost,
+            voice_seconds=voice_seconds,
         )
 
         prior_bot_turns = sum(1 for m in history_rows if m.author == MessageAuthor.bot)

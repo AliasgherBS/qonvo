@@ -131,6 +131,13 @@ class Settings(BaseSettings):
     # When to reply with a voice note: "match" (only if the customer sent voice),
     # "always", or "never". Per-tenant override via tenant_config.providers.voice.
     voice_reply_mode: str = "match"
+    # Reject inbound voice notes larger than this before STT (abuse/cost guard) —
+    # a customer can't force an arbitrarily long transcription bill. 8 MB of
+    # OPUS/OGG is ~40 min, well past any real voice message.
+    max_inbound_audio_bytes: int = 8_000_000
+    # Bytes→seconds estimate for metering inbound/outbound voice when the STT/TTS
+    # response carries no duration (WhatsApp voice ≈ 16 kbps OPUS ≈ 2 KB/s).
+    voice_bytes_per_second: int = 2_000
     # Provider adapter tuning (retries with exponential backoff, DESIGN.md §4).
     provider_timeout_seconds: float = 30.0
     provider_max_retries: int = 2

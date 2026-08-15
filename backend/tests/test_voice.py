@@ -81,9 +81,10 @@ async def test_transcribe_sets_body_from_stt(monkeypatch):
 
     frags = [InboundFragment(message_id="1", type="ptt", media_url="http://waha/media")]
     bound = SimpleNamespace(info=lambda *_a, **_k: None, warning=lambda *_a, **_k: None)
-    had_voice = await pipeline._transcribe_voice_fragments(frags, None, waha, bound)
+    had_voice, seconds = await pipeline._transcribe_voice_fragments(frags, None, waha, bound)
 
     assert had_voice is True
+    assert seconds >= 1  # metered from audio byte length
     assert frags[0].body == "I want to book"
     assert frags[0].type == "voice"
     waha.download_media.assert_awaited_once()
@@ -92,7 +93,7 @@ async def test_transcribe_sets_body_from_stt(monkeypatch):
 async def test_transcribe_no_voice_fragments_returns_false():
     frags = [InboundFragment(message_id="1", type="text", body="hi")]
     bound = SimpleNamespace(info=lambda *_a, **_k: None, warning=lambda *_a, **_k: None)
-    assert await pipeline._transcribe_voice_fragments(frags, None, None, bound) is False
+    assert await pipeline._transcribe_voice_fragments(frags, None, None, bound) == (False, 0)
 
 
 async def test_transcribe_without_stt_degrades_to_text(monkeypatch):
@@ -100,9 +101,28 @@ async def test_transcribe_without_stt_degrades_to_text(monkeypatch):
     waha = AsyncMock()
     frags = [InboundFragment(message_id="1", type="ptt", media_url="http://a")]
     bound = SimpleNamespace(info=lambda *_a, **_k: None, warning=lambda *_a, **_k: None)
-    had_voice = await pipeline._transcribe_voice_fragments(frags, None, waha, bound)
+    had_voice, seconds = await pipeline._transcribe_voice_fragments(frags, None, waha, bound)
     assert had_voice is True  # voice was present...
+    assert seconds == 0  # ...but nothing transcribed, so nothing metered
     assert frags[0].body == ""  # ...but not transcribed
+
+
+async def test_transcribe_skips_oversized_audio(monkeypatch):
+    from app.core.config import settings
+
+    fake_stt = AsyncMock()
+    fake_stt.transcribe = AsyncMock()
+    monkeypatch.setattr(registry, "resolve_stt", lambda _tc: fake_stt)
+    waha = AsyncMock()
+    waha.download_media = AsyncMock(
+        return_value=b"x" * (settings.max_inbound_audio_bytes + 1)
+    )
+    frags = [InboundFragment(message_id="1", type="ptt", media_url="http://a")]
+    bound = SimpleNamespace(info=lambda *_a, **_k: None, warning=lambda *_a, **_k: None)
+    had_voice, seconds = await pipeline._transcribe_voice_fragments(frags, None, waha, bound)
+    assert had_voice is True
+    assert seconds == 0  # over the cap → never metered
+    fake_stt.transcribe.assert_not_awaited()  # never sent to STT
 
 
 # --- synthesis (voice-out) ------------------------------------------------------- #
