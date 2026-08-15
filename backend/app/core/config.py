@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     # --- Pipeline tuning (DESIGN.md §5) ---
     debounce_window_seconds: float = 5.0
     dedupe_ttl_seconds: int = 86_400
+    # Per-(session, chat) inbound cap — drops messages beyond this many in the
+    # window, bounding LLM spend from a single customer flooding the number.
+    inbound_rate_limit: int = 20
+    inbound_rate_window_seconds: int = 60
     staleness_threshold_seconds: int = 7_200  # 2h
     conversation_lock_ttl_ms: int = 120_000
     conversation_lock_retry_delay_seconds: float = 2.0

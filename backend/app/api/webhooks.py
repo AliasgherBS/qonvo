@@ -12,7 +12,7 @@ from arq import ArqRedis
 from fastapi import APIRouter, Depends, Header, Request, Response, status
 from sqlalchemy import select
 
-from app.agent.debounce import add_fragment, is_duplicate
+from app.agent.debounce import add_fragment, is_duplicate, is_rate_limited
 from app.api.deps import get_arq
 from app.core.config import settings
 from app.core.logging import logger
@@ -147,6 +147,17 @@ async def waha_webhook(
     if await is_duplicate(redis_client, message_id, settings.dedupe_ttl_seconds):
         bound.info(f"duplicate message ignored: {message_id}")
         return {"status": "ignored", "reason": "duplicate"}
+
+    # --- Rate limit: drop a single customer flooding the number (bounds LLM spend) ---
+    if await is_rate_limited(
+        redis_client,
+        session_name,
+        chat_id,
+        limit=settings.inbound_rate_limit,
+        window_seconds=settings.inbound_rate_window_seconds,
+    ):
+        bound.info(f"rate limited: {chat_id}")
+        return {"status": "ignored", "reason": "rate_limited"}
 
     # --- Debounce buffer (§5.2) ---
     window = session_config_window(session_row)

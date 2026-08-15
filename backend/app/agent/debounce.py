@@ -41,6 +41,23 @@ async def is_duplicate(client: redis.Redis, message_id: str, ttl_seconds: int) -
     return not bool(was_set)
 
 
+async def is_rate_limited(
+    client: redis.Redis, session: str, chat_id: str, *, limit: int, window_seconds: int
+) -> bool:
+    """Fixed-window per-(session, chat) inbound rate limit.
+
+    Bounds LLM spend from a single customer hammering the number — the debounce
+    window coalesces bursts, but nothing else caps sustained inbound. Returns
+    True once more than ``limit`` messages arrive from the same chat inside
+    ``window_seconds`` (those are dropped before they reach the pipeline).
+    """
+    key = f"waha:rl:{session}:{chat_id}"
+    count = await client.incr(key)
+    if count == 1:
+        await client.expire(key, window_seconds)
+    return count > limit
+
+
 async def add_fragment(
     client: redis.Redis,
     session: str,
