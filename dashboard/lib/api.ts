@@ -188,6 +188,41 @@ export const auth = {
       name: dto.name,
     })),
 
+  /**
+   * Exchange a Google id_token for a Qonvo JWT, provisioning a tenant if this
+   * Google account is new. Identity only — Calendar/Sheets consent is requested
+   * separately from the Integrations page (incremental authorization).
+   */
+  google: (idToken: string, businessName?: string, opts: CallOpts = {}) =>
+    apiFetch<LoginResponseDto>("/api/auth/google", {
+      method: "POST",
+      body: { id_token: idToken, business_name: businessName },
+      signal: opts.signal,
+    }).then((dto): LoginResult => ({
+      accessToken: dto.access_token,
+      tokenType: dto.token_type,
+      role: dto.role,
+      tenantId: dto.tenant_id,
+      name: dto.name,
+    })),
+
+  changePassword: (payload: { currentPassword: string; newPassword: string }, opts: CallOpts = {}) =>
+    apiFetch<void>("/api/auth/change-password", {
+      method: "POST",
+      body: { current_password: payload.currentPassword, new_password: payload.newPassword },
+      ...opts,
+    }),
+
+  forgotPassword: (email: string, opts: CallOpts = {}) =>
+    apiFetch<unknown>("/api/auth/forgot-password", { method: "POST", body: { email }, ...opts }),
+
+  resetPassword: (payload: { token: string; newPassword: string }, opts: CallOpts = {}) =>
+    apiFetch<void>("/api/auth/reset-password", {
+      method: "POST",
+      body: { token: payload.token, new_password: payload.newPassword },
+      ...opts,
+    }),
+
   me: (opts: CallOpts = {}) =>
     apiFetch<MeDto>("/api/me", opts).then(
       (dto): Me => ({
@@ -722,22 +757,30 @@ export const analytics = {
 
 export type IntegrationProvider = "google_calendar" | "google_sheets";
 
+/** Backend `credential_state`. "ok" still needs a target before it's usable. */
+export type IntegrationStatus = "missing" | "reauth_required" | "scope_upgrade_required" | "ok";
+
 interface IntegrationDto {
   provider: IntegrationProvider;
   enabled: boolean;
   config: Record<string, string>;
-  has_credentials: boolean;
-  has_tenant_key: boolean;
-  service_account_email: string | null;
+  status: IntegrationStatus;
+  connected: boolean;
+  account_email: string | null;
+  granted_scopes: string[];
+  connected_at: string | null;
 }
 
 export interface Integration {
   provider: IntegrationProvider;
   enabled: boolean;
   config: Record<string, string>;
-  hasCredentials: boolean;
-  hasTenantKey: boolean;
-  serviceAccountEmail: string | null;
+  status: IntegrationStatus;
+  /** Grant is live AND a calendar/spreadsheet target is set. */
+  connected: boolean;
+  accountEmail: string | null;
+  grantedScopes: string[];
+  connectedAt: string | null;
 }
 
 function mapIntegration(dto: IntegrationDto): Integration {
@@ -745,28 +788,58 @@ function mapIntegration(dto: IntegrationDto): Integration {
     provider: dto.provider,
     enabled: dto.enabled,
     config: dto.config ?? {},
-    hasCredentials: dto.has_credentials,
-    hasTenantKey: dto.has_tenant_key,
-    serviceAccountEmail: dto.service_account_email,
+    status: dto.status,
+    connected: dto.connected,
+    accountEmail: dto.account_email,
+    grantedScopes: dto.granted_scopes ?? [],
+    connectedAt: dto.connected_at,
   };
 }
 
 export interface IntegrationUpdate {
   config?: Record<string, string>;
-  serviceAccountJson?: string;
   enabled?: boolean;
 }
 
 export interface IntegrationTestResult {
   ok: boolean;
   message: string;
-  serviceAccountEmail: string | null;
+  accountEmail: string | null;
 }
 
 interface IntegrationTestResultDto {
   ok: boolean;
   message: string;
-  service_account_email: string | null;
+  account_email: string | null;
+}
+
+export interface SheetTarget {
+  spreadsheetId: string;
+  title: string;
+  tabs: string[];
+  sheetRange: string;
+}
+
+interface SheetTargetDto {
+  spreadsheet_id: string;
+  title: string;
+  tabs: string[];
+  sheet_range: string;
+}
+
+function mapSheetTarget(dto: SheetTargetDto): SheetTarget {
+  return {
+    spreadsheetId: dto.spreadsheet_id,
+    title: dto.title,
+    tabs: dto.tabs ?? [],
+    sheetRange: dto.sheet_range,
+  };
+}
+
+export interface PickerConfig {
+  accessToken: string;
+  apiKey: string;
+  appId: string;
 }
 
 export const integrations = {
@@ -776,11 +849,7 @@ export const integrations = {
   update: (provider: IntegrationProvider, payload: IntegrationUpdate, opts: CallOpts = {}) =>
     apiFetch<IntegrationDto>(`/api/integrations/${provider}`, {
       method: "PUT",
-      body: {
-        config: payload.config,
-        service_account_json: payload.serviceAccountJson,
-        enabled: payload.enabled,
-      },
+      body: { config: payload.config, enabled: payload.enabled },
       ...opts,
     }).then(mapIntegration),
 
@@ -792,9 +861,48 @@ export const integrations = {
       (dto): IntegrationTestResult => ({
         ok: dto.ok,
         message: dto.message,
-        serviceAccountEmail: dto.service_account_email,
+        accountEmail: dto.account_email,
       }),
     ),
+
+  /**
+   * Start the Google consent flow. Returns a URL for the caller to navigate to —
+   * it can't be a server-side redirect because a top-level navigation carries no
+   * Authorization header.
+   */
+  oauthStart: (provider: IntegrationProvider, opts: CallOpts = {}) =>
+    apiFetch<{ authorize_url: string }>(`/api/integrations/${provider}/oauth/start`, {
+      method: "POST",
+      ...opts,
+    }).then((dto) => dto.authorize_url),
+
+  /** Retry creating the "Qonvo Bookings" calendar if connect's attempt failed. */
+  provisionCalendar: (opts: CallOpts = {}) =>
+    apiFetch<IntegrationDto>("/api/integrations/google_calendar/provision", {
+      method: "POST",
+      ...opts,
+    }).then(mapIntegration),
+
+  pickerConfig: (opts: CallOpts = {}) =>
+    apiFetch<{ access_token: string; api_key: string; app_id: string }>(
+      "/api/integrations/google_sheets/picker-token",
+      opts,
+    ).then((dto): PickerConfig => ({ accessToken: dto.access_token, apiKey: dto.api_key, appId: dto.app_id })),
+
+  /** Record the spreadsheet chosen in the Picker; reads back its tabs. */
+  selectSheet: (spreadsheetId: string, sheetRange: string | undefined, opts: CallOpts = {}) =>
+    apiFetch<SheetTargetDto>("/api/integrations/google_sheets/select", {
+      method: "POST",
+      body: { spreadsheet_id: spreadsheetId, sheet_range: sheetRange },
+      ...opts,
+    }).then(mapSheetTarget),
+
+  createSheet: (title: string, opts: CallOpts = {}) =>
+    apiFetch<SheetTargetDto>("/api/integrations/google_sheets/create", {
+      method: "POST",
+      body: { title },
+      ...opts,
+    }).then(mapSheetTarget),
 };
 
 // ---------------------------------------------------------------------------

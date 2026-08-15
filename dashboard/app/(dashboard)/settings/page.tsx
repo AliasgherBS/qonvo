@@ -1,5 +1,6 @@
 "use client";
 
+import { ChangePasswordCard } from "@/components/change-password-card";
 import { TenantConfigForm } from "@/components/tenant-config-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -34,6 +35,8 @@ export default function SettingsPage() {
       ) : data ? (
         <TenantConfigForm config={data} onSave={(next) => config.update(next, { token }).then(() => undefined)} />
       ) : null}
+
+      <ChangePasswordCard />
     </div>
   );
 }

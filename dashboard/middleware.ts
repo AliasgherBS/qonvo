@@ -5,7 +5,20 @@ import { auth } from "@/auth";
 // `/api/auth/*` must be public — Auth.js's own routes serve login callbacks,
 // csrf, and session, and gating them behind auth is a chicken-and-egg lockout
 // (caught live: /login redirected to itself, no cookie was ever issued).
-const PUBLIC_PATHS = ["/login", "/signup", "/api/auth"];
+// /terms and /privacy must be public too: Google's OAuth verification fetches
+// the privacy policy anonymously, and a login redirect reads as "no policy".
+const PUBLIC_PREFIXES = [
+  "/login",
+  "/signup",
+  "/forgot-password",
+  "/reset-password",
+  "/api/auth",
+  "/terms",
+  "/privacy",
+];
+
+// Matched exactly, not by prefix — "/" as a prefix would make the whole app public.
+const PUBLIC_EXACT = ["/"];
 
 export default auth((req) => {
   const { nextUrl } = req;
@@ -21,8 +34,13 @@ export default auth((req) => {
     return NextResponse.redirect(fixed);
   }
 
-  const isLoggedIn = !!req.auth;
-  const isPublicPath = PUBLIC_PATHS.some((path) => nextUrl.pathname.startsWith(path));
+  // A session without a backend token isn't usable: it happens when Google SSO
+  // succeeded at Google but the id_token exchange with our API failed. Treat it
+  // as logged out, or the user lands on an inbox where every request 401s.
+  const isLoggedIn = !!req.auth && !!req.auth.accessToken;
+  const isPublicPath =
+    PUBLIC_EXACT.includes(nextUrl.pathname) ||
+    PUBLIC_PREFIXES.some((path) => nextUrl.pathname.startsWith(path));
   const isAdmin = req.auth?.user?.role === "qonvo_admin";
 
   // Behind a tunnel/reverse-proxy the Host header is the internal target
