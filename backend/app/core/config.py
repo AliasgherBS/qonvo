@@ -200,56 +200,6 @@ class Settings(BaseSettings):
     # Expose GET /metrics in Prometheus text format (request + pipeline metrics).
     metrics_enabled: bool = True
 
-    # --- Qonvo Personal (qonvo-individuals/OPS-RUNBOOK.md §1) ---
-    # Master switch. Off => personal sessions are ignored at the webhook, the
-    # personal crons no-op, and /api/personal/* is unavailable.
-    personal_enabled: bool = False
-    personal_signup_enabled: bool = True
-    # Flip to False for full self-serve — this one flag is the entire
-    # "open it up later" mechanism, no code change.
-    personal_allowlist_enabled: bool = True
-    personal_digests_enabled: bool = True
-    personal_trial_days: int = 7
-    # "reaction" => silent ✓ ack. "text" is the fallback when the configured
-    # WAHA engine can't react (support differs by engine — verify live).
-    personal_ack_mode: str = "reaction"
-    personal_ack_emoji: str = "✅"
-    personal_pairing_code_ttl_seconds: int = 900
-    # Pool sizing: max_bindings is derived as
-    # effective_daily_cap // expected_msgs_per_user_per_day, floored by the cap.
-    personal_expected_msgs_per_user_per_day: int = 12
-    personal_max_bindings_per_session: int = 75
-    # Stranger policy — the shared number's reputation is the asset.
-    personal_stranger_reply_ttl_seconds: int = 2_592_000  # 30 days
-    personal_stranger_daily_cap: int = 20
-    # Go silent to strangers once the session is this far into its daily cap,
-    # so anonymous traffic can never starve paying users.
-    personal_stranger_cap_reserve_pct: float = 0.5
-    # Self-link loop guard: replies per chat per minute before a 10m cooldown.
-    personal_turn_budget_per_minute: int = 12
-    # A shared number's token bucket is a GLOBAL queue across every paired user,
-    # so it runs much shallower than a business number. Business is untouched.
-    personal_send_min_delay_seconds: float = 0.8
-    personal_send_max_delay_seconds: float = 2.0
-    personal_send_burst: int = 10
-    personal_typing_max_seconds: float = 4.0
-    personal_binding_cache_ttl_seconds: int = 600
-    # Recall: far below rag_min_score. The 0.5 business cutoff exists to force
-    # "I don't know / hand off", which is the opposite of what recall needs —
-    # rank fusion does the filtering here, not a threshold.
-    memory_semantic_min_score: float = 0.15
-    memory_auto_inject_top_k: int = 3
-    memory_rrf_k: int = 60
-    memory_recency_half_life_days: float = 30.0
-    memory_recency_weight: float = 0.5
-    memory_pin_boost: float = 1.25
-    # (Vision size guard already exists above as ``max_inbound_image_bytes``.)
-    media_retention_days: int = 90
-    media_retention_days_sensitive: int = 30
-    profile_refresh_min_new_items: int = 5
-    digest_max_bot_initiated_per_day: int = 2
-    digest_dormant_days: int = 30
-
     # --- Agent pipeline (DESIGN.md §5.4) ---
     history_window_messages: int = 20
     history_window_tokens: int = 4_000
