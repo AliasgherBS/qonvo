@@ -1124,9 +1124,37 @@ function mapFleetSession(dto: FleetSessionDto): FleetSession {
   };
 }
 
+export type FleetAction = "start" | "stop" | "restart" | "logout";
+
 export const adminFleet = {
   list: (opts: CallOpts = {}) =>
     apiFetch<FleetSessionDto[]>("/api/admin/fleet", opts).then((items) => items.map(mapFleetSession)),
+
+  action: (sessionName: string, action: FleetAction, opts: CallOpts = {}) =>
+    apiFetch<{ session_name: string; action: FleetAction; live_status: string | null }>(
+      `/api/admin/fleet/${encodeURIComponent(sessionName)}/${action}`,
+      { method: "POST", ...opts },
+    ),
+};
+
+export const adminUsers = {
+  // Mint a one-time password for a tenant owner (support recovery).
+  resetOwnerPassword: (tenantId: string, opts: CallOpts = {}) =>
+    apiFetch<{ owner_email: string; temp_password: string }>(
+      `/api/admin/tenants/${tenantId}/reset-password`,
+      { method: "POST", ...opts },
+    ).then((dto) => ({ ownerEmail: dto.owner_email, tempPassword: dto.temp_password })),
+
+  // "Log in as" a tenant: returns an owner-scoped access token.
+  impersonate: (tenantId: string, opts: CallOpts = {}) =>
+    apiFetch<{ access_token: string; tenant_id: string; owner_email: string }>(
+      `/api/admin/tenants/${tenantId}/impersonate`,
+      { method: "POST", ...opts },
+    ).then((dto) => ({
+      accessToken: dto.access_token,
+      tenantId: dto.tenant_id,
+      ownerEmail: dto.owner_email,
+    })),
 };
 
 interface UsageRowDto {

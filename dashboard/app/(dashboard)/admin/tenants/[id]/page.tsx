@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 
 import { TenantConfigForm } from "@/components/tenant-config-form";
 import { TenantLifecycleCard } from "@/components/tenant-lifecycle-card";
+import { TenantSupportCard } from "@/components/tenant-support-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -73,6 +74,7 @@ export default function AdminTenantDetailPage() {
       )}
 
       {tenant ? <TenantLifecycleCard tenant={tenant} onChanged={refetchTenant} /> : null}
+      {tenant ? <TenantSupportCard tenant={tenant} /> : null}
 
       <div>
         <h2 className="mb-3 text-lg font-bold tracking-tight">Configuration</h2>
