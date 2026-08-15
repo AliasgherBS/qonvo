@@ -269,6 +269,7 @@ def build_system_prompt(
     custom_instructions: str | None,
     primary_language: str,
     context_block: str,
+    conversation_summary: str | None = None,
 ) -> str:
     lines = [f"You are the AI customer representative for {business_name or 'this business'}."]
     if persona:
@@ -277,6 +278,10 @@ def build_system_prompt(
         lines.append(f"Tone: {tone}.")
     if custom_instructions:
         lines.append(custom_instructions)
+    if conversation_summary:
+        # Rolling summary of turns that have scrolled out of the history window
+        # (§5.4 step 6) — gives the model long-term memory of this conversation.
+        lines.append("Summary of the conversation so far:\n" + conversation_summary)
     lines.append(GROUNDING_INSTRUCTION)
     lines.append(
         "Always reply in the customer's language; default to "
@@ -790,6 +795,7 @@ async def run_pipeline(
             custom_instructions=tenant_config.custom_instructions if tenant_config else None,
             primary_language=tenant_config.primary_language if tenant_config else "en",
             context_block=context_block,
+            conversation_summary=conversation.summary,
         )
         windowed = window_history(history_rows)
         images = await _images_as_data_uris(fragments, waha, bound)

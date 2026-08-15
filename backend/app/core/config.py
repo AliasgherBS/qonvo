@@ -152,6 +152,10 @@ class Settings(BaseSettings):
     rag_min_score: float = 0.5
     rag_chunk_tokens: int = 500
     rag_chunk_overlap_tokens: int = 50
+    # Hard cap on the retrieved-context block fed to the LLM. top_k chunks at
+    # rag_chunk_tokens each could be ~3k tokens of grounding on every single turn;
+    # this trims the tail so a long knowledge base doesn't inflate every request.
+    rag_context_max_tokens: int = 2_000
 
     # --- Phase 3: agentic integrations (DESIGN.md §7) ---
     # One platform-wide Google OAuth client serves every tenant; each tenant's

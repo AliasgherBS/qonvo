@@ -82,11 +82,39 @@ async def retrieve(
     return results
 
 
-def build_context_block(chunks: list[RetrievedChunk]) -> str:
-    """Render retrieved chunks into a system-prompt context block."""
+def _norm(text: str) -> str:
+    return " ".join(text.split()).lower()
+
+
+def build_context_block(chunks: list[RetrievedChunk], *, max_tokens: int | None = None) -> str:
+    """Render retrieved chunks into a system-prompt context block.
+
+    Chunks arrive best-first (by score). Overlapping ingestion produces
+    near-identical neighbours, so exact-normalized duplicates are dropped, and
+    the block is trimmed to ``max_tokens`` (~4 chars/token) so a big knowledge
+    base can't inflate the grounding on every turn.
+    """
     if not chunks:
         return ""
-    parts = [f"[{i + 1}] {chunk.content}" for i, chunk in enumerate(chunks)]
+    max_tokens = max_tokens if max_tokens is not None else settings.rag_context_max_tokens
+    budget_chars = max_tokens * 4
+
+    parts: list[str] = []
+    seen: set[str] = set()
+    used_chars = 0
+    idx = 0
+    for chunk in chunks:
+        key = _norm(chunk.content)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        idx += 1
+        entry = f"[{idx}] {chunk.content}"
+        # Always include the top chunk; stop once the budget is spent.
+        if parts and used_chars + len(entry) > budget_chars:
+            break
+        parts.append(entry)
+        used_chars += len(entry)
     return "\n\n".join(parts)
 
 

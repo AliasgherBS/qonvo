@@ -168,6 +168,30 @@ def test_build_context_block_empty():
     assert build_context_block([]) == ""
 
 
+def test_build_context_block_dedupes_near_identical():
+    chunks = [
+        RetrievedChunk(id=uuid.uuid4(), source_id=uuid.uuid4(), content="Open 9 to 5", score=0.9),
+        # Same content, different whitespace/case (ingestion overlap) → dropped.
+        RetrievedChunk(id=uuid.uuid4(), source_id=uuid.uuid4(), content="open 9 to 5", score=0.8),
+        RetrievedChunk(id=uuid.uuid4(), source_id=uuid.uuid4(), content="We ship daily", score=0.7),
+    ]
+    block = build_context_block(chunks)
+    assert block == "[1] Open 9 to 5\n\n[2] We ship daily"
+
+
+def test_build_context_block_respects_token_budget():
+    big = "word " * 500  # ~2500 chars each
+    chunks = [
+        RetrievedChunk(id=uuid.uuid4(), source_id=uuid.uuid4(), content=big + "a", score=0.9),
+        RetrievedChunk(id=uuid.uuid4(), source_id=uuid.uuid4(), content=big + "b", score=0.8),
+        RetrievedChunk(id=uuid.uuid4(), source_id=uuid.uuid4(), content=big + "c", score=0.7),
+    ]
+    # 100-token budget = 400 chars; only the top chunk fits (always kept).
+    block = build_context_block(chunks, max_tokens=100)
+    assert block.count("[") == 1
+    assert block.startswith("[1] ")
+
+
 # --- ingestion orchestration (mocked db) --------------------------------------- #
 async def test_ingest_source_tombstones_then_inserts():
     tenant_id = uuid.uuid4()
