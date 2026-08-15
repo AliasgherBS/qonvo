@@ -10,7 +10,17 @@ from arq.connections import RedisSettings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import admin, auth, conversations, health, knowledge, notifications, sessions, webhooks
+from app.api import (
+    admin,
+    auth,
+    billing,
+    conversations,
+    health,
+    knowledge,
+    notifications,
+    sessions,
+    webhooks,
+)
 from app.api import analytics as analytics_api
 from app.api import config as config_api
 from app.api import integrations as integrations_api
@@ -77,6 +87,7 @@ app.include_router(auth.router)
 app.include_router(conversations.router)
 app.include_router(knowledge.router)
 app.include_router(config_api.router)
+app.include_router(billing.router)
 app.include_router(notifications.router)
 app.include_router(admin.router)
 

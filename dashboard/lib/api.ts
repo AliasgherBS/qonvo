@@ -707,6 +707,39 @@ export const config = {
 };
 
 // ---------------------------------------------------------------------------
+// Billing / trial status (§9)
+// ---------------------------------------------------------------------------
+
+interface BillingStatusDto {
+  plan: string;
+  status: string;
+  trial_ends_at: string | null;
+  days_left: number | null;
+  expired: boolean;
+}
+
+export interface BillingStatus {
+  plan: string;
+  status: string;
+  trialEndsAt: string | null;
+  daysLeft: number | null;
+  expired: boolean;
+}
+
+export const billing = {
+  get: (opts: CallOpts = {}) =>
+    apiFetch<BillingStatusDto>("/api/billing", opts).then(
+      (d): BillingStatus => ({
+        plan: d.plan,
+        status: d.status,
+        trialEndsAt: d.trial_ends_at,
+        daysLeft: d.days_left,
+        expired: d.expired,
+      }),
+    ),
+};
+
+// ---------------------------------------------------------------------------
 // Analytics (§9 analytics dashboard, §13 metering)
 // ---------------------------------------------------------------------------
 

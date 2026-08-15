@@ -4,6 +4,7 @@ import { ConnectionBanner } from "@/components/connection-banner";
 import { MobileNav } from "@/components/mobile-nav";
 import { Sidebar } from "@/components/sidebar";
 import { Topbar } from "@/components/topbar";
+import { TrialBanner } from "@/components/trial-banner";
 import { auth } from "@/auth";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -27,8 +28,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
         />
 
         <main className="flex-1 overflow-y-auto p-4 lg:p-8">
-          {/* A cross-tenant admin has no session; the banner is for owners. */}
-          {session.user.role === "qonvo_admin" ? null : <ConnectionBanner />}
+          {/* Owner-only banners (a cross-tenant admin has no tenant/session). */}
+          {session.user.role === "qonvo_admin" ? null : (
+            <>
+              <TrialBanner />
+              <ConnectionBanner />
+            </>
+          )}
           {children}
         </main>
 
