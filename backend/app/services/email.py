@@ -65,6 +65,38 @@ def _send_smtp(to: str, subject: str, body: str) -> bool:
     return True
 
 
+async def send_welcome_email(to: str, name: str | None, business: str) -> bool:
+    """Onboarding welcome email sent right after signup."""
+    hello = f"Hi {name}," if name else "Hi there,"
+    body = (
+        f"{hello}\n\n"
+        f"Welcome to Qonvo — your AI WhatsApp rep for {business} is ready to set up.\n\n"
+        "Next steps:\n"
+        "  1. Connect your WhatsApp number (scan the QR).\n"
+        "  2. Add what your rep should know (hours, prices, policies).\n"
+        "  3. Message the number to see it reply.\n\n"
+        f"Open your dashboard: {settings.dashboard_base_url}\n\n"
+        "You're on a 14-day free trial. Reply to this email if you need a hand.\n\n"
+        "— The Qonvo team"
+    )
+    return await send_email(to, "Welcome to Qonvo 👋", body)
+
+
+async def send_password_reset_email(to: str, name: str | None, reset_url: str) -> bool:
+    """Password-reset link email (link expires in 30 minutes)."""
+    hello = f"Hi {name}," if name else "Hi there,"
+    body = (
+        f"{hello}\n\n"
+        "We received a request to reset your Qonvo password. Click the link below "
+        "to choose a new one — it expires in 30 minutes:\n\n"
+        f"{reset_url}\n\n"
+        "If you didn't request this, you can safely ignore this email; your "
+        "password won't change.\n\n"
+        "— The Qonvo team"
+    )
+    return await send_email(to, "Reset your Qonvo password", body)
+
+
 async def email_owner(db: AsyncSession, tenant_id: uuid.UUID, subject: str, body: str) -> bool:
     """Email the tenant's owner. No-op (False) if no owner email is found."""
     email = (
@@ -80,4 +112,9 @@ async def email_owner(db: AsyncSession, tenant_id: uuid.UUID, subject: str, body
     return await send_email(email, subject, body)
 
 
-__all__ = ["email_owner", "send_email"]
+__all__ = [
+    "email_owner",
+    "send_email",
+    "send_password_reset_email",
+    "send_welcome_email",
+]
