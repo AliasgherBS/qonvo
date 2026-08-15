@@ -147,6 +147,55 @@ async def _transcribe_voice_fragments(
     return True, total_seconds
 
 
+_IMAGE_MAGIC = (
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"GIF87a", "image/gif"),
+    (b"GIF89a", "image/gif"),
+)
+
+
+def _sniff_image_mime(data: bytes) -> str:
+    for magic, mime in _IMAGE_MAGIC:
+        if data.startswith(magic):
+            return mime
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"  # WhatsApp photos are JPEG by default
+
+
+async def _images_as_data_uris(
+    fragments: list[InboundFragment], waha: Any, bound: Any
+) -> list[str]:
+    """Download inbound image fragments and inline them as base64 data URIs.
+
+    The raw ``media_url`` points at WAHA's internal host (``waha:3000``), which
+    the LLM provider can't fetch — so vision silently saw nothing. Mirror the
+    voice path: download the bytes here and hand the model a self-contained
+    data URI. Oversized images and download failures degrade to a text-only turn.
+    """
+    import base64
+
+    image_frags = [f for f in fragments if f.type == "image" and f.media_url]
+    if not image_frags:
+        return []
+    if waha is None:
+        bound.warning("image message received but no WAHA client for media download")
+        return []
+    uris: list[str] = []
+    for fragment in image_frags:
+        try:
+            data = await waha.download_media(fragment.media_url)
+            if len(data) > settings.max_inbound_image_bytes:
+                bound.warning(f"image too large ({len(data)} bytes) — skipping vision")
+                continue
+            mime = _sniff_image_mime(data)
+            uris.append(f"data:{mime};base64,{base64.b64encode(data).decode()}")
+        except Exception as exc:  # noqa: BLE001 — degrade to text-only, don't crash the turn
+            bound.warning(f"image download failed: {exc}")
+    return uris
+
+
 # --------------------------------------------------------------------------- #
 # Gates (DESIGN.md §5.4 step 4) — pure, unit-testable
 # --------------------------------------------------------------------------- #
@@ -743,7 +792,7 @@ async def run_pipeline(
             context_block=context_block,
         )
         windowed = window_history(history_rows)
-        images = [f.media_url for f in fragments if f.type == "image" and f.media_url]
+        images = await _images_as_data_uris(fragments, waha, bound)
         llm_messages = [
             ChatMessage(role="system", content=system_prompt),
             *to_chat_messages(windowed),

@@ -140,3 +140,41 @@ async def test_synthesize_reply_none_without_tts(monkeypatch):
     monkeypatch.setattr(registry, "resolve_tts", lambda _tc: None)
     bound = SimpleNamespace(info=lambda *_a, **_k: None, warning=lambda *_a, **_k: None)
     assert await pipeline._synthesize_reply("hi", None, bound) is None
+
+
+# --------------------------------------------------------------------------- #
+# Vision: inbound images inlined as data URIs (LLM can't reach WAHA's host)
+# --------------------------------------------------------------------------- #
+def test_sniff_image_mime():
+    assert pipeline._sniff_image_mime(b"\xff\xd8\xff\xe0rest") == "image/jpeg"
+    assert pipeline._sniff_image_mime(b"\x89PNG\r\n\x1a\nrest") == "image/png"
+    assert pipeline._sniff_image_mime(b"GIF89a...") == "image/gif"
+    assert pipeline._sniff_image_mime(b"RIFF\x00\x00\x00\x00WEBPvp8") == "image/webp"
+    assert pipeline._sniff_image_mime(b"unknownbytes") == "image/jpeg"
+
+
+async def test_images_as_data_uris_downloads_and_inlines():
+    waha = AsyncMock()
+    waha.download_media = AsyncMock(return_value=b"\xff\xd8\xffjpegdata")
+    frags = [InboundFragment(message_id="1", type="image", media_url="http://waha/x")]
+    bound = SimpleNamespace(info=lambda *_a, **_k: None, warning=lambda *_a, **_k: None)
+    uris = await pipeline._images_as_data_uris(frags, waha, bound)
+    assert len(uris) == 1
+    assert uris[0].startswith("data:image/jpeg;base64,")
+    assert base64.b64decode(uris[0].split(",", 1)[1]) == b"\xff\xd8\xffjpegdata"
+
+
+async def test_images_as_data_uris_skips_oversized(monkeypatch):
+    from app.core.config import settings
+
+    waha = AsyncMock()
+    waha.download_media = AsyncMock(return_value=b"x" * (settings.max_inbound_image_bytes + 1))
+    frags = [InboundFragment(message_id="1", type="image", media_url="http://waha/x")]
+    bound = SimpleNamespace(info=lambda *_a, **_k: None, warning=lambda *_a, **_k: None)
+    assert await pipeline._images_as_data_uris(frags, waha, bound) == []
+
+
+async def test_images_as_data_uris_empty_without_images():
+    bound = SimpleNamespace(info=lambda *_a, **_k: None, warning=lambda *_a, **_k: None)
+    frags = [InboundFragment(message_id="1", type="text", body="hi")]
+    assert await pipeline._images_as_data_uris(frags, AsyncMock(), bound) == []
