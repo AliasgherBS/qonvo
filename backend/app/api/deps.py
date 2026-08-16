@@ -42,6 +42,15 @@ def require_tenant(claims: TokenClaims = Depends(get_claims)) -> UUID:
     return claims.tenant_id
 
 
+def require_owner(claims: TokenClaims = Depends(get_claims)) -> UUID:
+    """Tenant present AND the caller holds the ``owner`` role (staff can't manage
+    team seats or export the whole account). Returns the acting tenant id."""
+    tenant_id = require_tenant(claims)
+    if claims.role != "owner":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="owner role required")
+    return tenant_id
+
+
 async def get_db(tenant_id: UUID = Depends(require_tenant)) -> AsyncIterator[AsyncSession]:
     """Yield a tenant-scoped session (RLS enforced via ``app.tenant_id``)."""
     async with tenant_session(tenant_id) as session:
@@ -90,3 +99,10 @@ def get_send_gateway(request: Request):
     from app.waha.send_gateway import SendGateway
 
     return SendGateway(get_waha(request), get_redis())
+
+
+def get_redis_dep():
+    """Redis as a dependency so route tests can override it with a fake."""
+    from app.core.redis import get_redis
+
+    return get_redis()

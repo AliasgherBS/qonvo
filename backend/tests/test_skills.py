@@ -127,6 +127,35 @@ async def test_human_handoff_skips_alert_without_owner_number():
     send_gateway.send_text.assert_not_awaited()
 
 
+async def test_human_handoff_respects_notify_off_but_still_records():
+    added: list = []
+    db = _db_with_capture(added)
+
+    class _FakeConversation:
+        state = ConversationState.bot_active
+
+    class _MutedConfig:
+        owner_alert_number = "923001234567"
+        escalation_rules = {"notify_on_handoff": False}
+
+    send_gateway = AsyncMock()
+    ctx = _ctx(
+        db,
+        conversation=_FakeConversation(),
+        tenant_config=_MutedConfig(),
+        send_gateway=send_gateway,
+        session_name="s1",
+        chat_id="1@c.us",
+    )
+    result = await SKILL_REGISTRY["human_handoff"].handler(ctx, {"reason": "asked for manager"})
+    assert result["status"] == "escalated"
+    # Push alert muted...
+    send_gateway.send_text.assert_not_awaited()
+    # ...but the in-app Notification + Handoff record are still written.
+    assert any(type(o).__name__ == "Notification" for o in added)
+    assert any(type(o).__name__ == "Handoff" for o in added)
+
+
 async def test_human_handoff_alert_failure_does_not_raise():
     added: list = []
     db = _db_with_capture(added)
@@ -331,21 +360,33 @@ async def test_enabled_tools_respects_explicit_disable():
     assert names == _BASE_SKILLS - {"human_handoff"}
 
 
-async def test_enabled_tools_includes_google_skills_when_integrations_ready():
-    db = AsyncMock()
+def _granted(provider: str, **config) -> object:
+    """An integration row holding a live OAuth grant for ``provider``."""
+    import json as _json
+
+    from app.core.security import encrypt_secret
+    from app.integrations.scopes import CALENDAR_SCOPE, SHEETS_SCOPE
+
+    scope = CALENDAR_SCOPE if provider == "google_calendar" else SHEETS_SCOPE
 
     class _Integ:
-        def __init__(self, provider, config):
-            self.provider = provider
-            self.config = config
-            self.encrypted_credentials = "cipher"  # a per-tenant key is present
+        pass
 
+    integ = _Integ()
+    integ.provider = provider
+    integ.config = {"granted_scopes": [scope], **config}
+    integ.encrypted_credentials = encrypt_secret(_json.dumps({"refresh_token": "1//rt"}))
+    return integ
+
+
+async def test_enabled_tools_includes_google_skills_when_integrations_ready():
+    db = AsyncMock()
     _skills_then_integrations(
         db,
         skill_rows=[],
         integration_rows=[
-            _Integ("google_calendar", {"calendar_id": "cal@group.calendar.google.com"}),
-            _Integ("google_sheets", {"spreadsheet_id": "sheet123"}),
+            _granted("google_calendar", calendar_id="cal@group.calendar.google.com"),
+            _granted("google_sheets", spreadsheet_id="sheet123"),
         ],
     )
 
@@ -361,18 +402,36 @@ async def test_enabled_tools_includes_google_skills_when_integrations_ready():
 
 async def test_enabled_tools_hides_google_skill_when_target_id_missing():
     db = AsyncMock()
-
-    class _Integ:
-        provider = "google_calendar"
-        config: dict = {}  # enabled + key but no calendar_id → not ready
-        encrypted_credentials = "cipher"
-
-    _skills_then_integrations(db, skill_rows=[], integration_rows=[_Integ()])
+    # Live grant but nothing provisioned yet → not ready.
+    _skills_then_integrations(db, skill_rows=[], integration_rows=[_granted("google_calendar")])
 
     tools = await enabled_tools(db, uuid.uuid4())
     names = {t["function"]["name"] for t in tools}
     assert "book_appointment" not in names
     assert "check_availability" not in names
+
+
+async def test_enabled_tools_drops_google_skills_when_grant_needs_reauth():
+    """The revocation degradation path, end to end: once a grant dies the model
+    must stop being offered booking tools on the very next turn, rather than
+    calling them and failing in front of a customer."""
+    db = AsyncMock()
+    _skills_then_integrations(
+        db,
+        skill_rows=[],
+        integration_rows=[
+            _granted("google_calendar", calendar_id="cal123", needs_reauth=True),
+            _granted("google_sheets", spreadsheet_id="sheet123"),
+        ],
+    )
+
+    tools = await enabled_tools(db, uuid.uuid4())
+    names = {t["function"]["name"] for t in tools}
+    assert "book_appointment" not in names
+    assert "check_availability" not in names
+    # The healthy provider is untouched — one dead grant must not disable the other.
+    assert "append_to_sheet" in names
+    assert "lookup_sheet" in names
 
 
 async def test_enabled_tools_shows_payment_skill_only_when_configured():

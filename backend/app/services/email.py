@@ -97,6 +97,20 @@ async def send_password_reset_email(to: str, name: str | None, reset_url: str) -
     return await send_email(to, "Reset your Qonvo password", body)
 
 
+async def send_team_invite_email(to: str, business: str, role: str, accept_url: str) -> bool:
+    """Invite email with the accept link (link expires in 7 days)."""
+    body = (
+        "Hi there,\n\n"
+        f"You've been invited to join {business} on Qonvo as {role}. "
+        "Qonvo is the AI WhatsApp rep that answers customers for the business.\n\n"
+        "Accept your invitation and set up your account here (expires in 7 days):\n\n"
+        f"{accept_url}\n\n"
+        "If you weren't expecting this, you can ignore this email.\n\n"
+        "— The Qonvo team"
+    )
+    return await send_email(to, f"You're invited to {business} on Qonvo", body)
+
+
 async def email_owner(db: AsyncSession, tenant_id: uuid.UUID, subject: str, body: str) -> bool:
     """Email the tenant's owner. No-op (False) if no owner email is found."""
     email = (

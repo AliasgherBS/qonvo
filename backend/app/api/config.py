@@ -33,6 +33,9 @@ class ConfigUpdateRequest(BaseModel):
     llm_model: str | None = None
     payment_details: str | None = None
     voice_reply_mode: str | None = None  # "match" | "always" | "never"
+    # Owner notification preference: alert the owner when the bot hands a
+    # conversation off to a human. Stored in escalation_rules (no column).
+    notify_on_handoff: bool | None = None
 
     @field_validator("voice_reply_mode")
     @classmethod
@@ -78,6 +81,7 @@ class ConfigResponse(BaseModel):
     llm_model: str | None
     payment_details: str | None
     voice_reply_mode: str
+    notify_on_handoff: bool
 
 
 def _config_to_dict(row: TenantConfig) -> ConfigResponse:
@@ -95,19 +99,28 @@ def _config_to_dict(row: TenantConfig) -> ConfigResponse:
         llm_model=row.llm_model,
         payment_details=row.payment_details,
         voice_reply_mode=((row.providers or {}).get("voice") or {}).get("mode") or "match",
+        # Default on: the owner is alerted on handoff unless they opt out.
+        notify_on_handoff=(row.escalation_rules or {}).get("notify_on_handoff", True),
     )
 
 
 def _apply_config_update(row: TenantConfig, body: ConfigUpdateRequest) -> None:
     data = body.model_dump(exclude_unset=True)
-    # voice_reply_mode isn't a column — it lives in the providers JSON map (§4).
+    # These two aren't columns — they live in JSON maps. Pop before the column loop.
     voice_mode = data.pop("voice_reply_mode", None)
+    notify_on_handoff = data.pop("notify_on_handoff", None)
     for field, value in data.items():
         setattr(row, field, value)
     if voice_mode is not None:
         providers = dict(row.providers or {})
         providers["voice"] = {**(providers.get("voice") or {}), "mode": voice_mode}
         row.providers = providers  # reassign so SQLAlchemy flags the JSONB change
+    if notify_on_handoff is not None:
+        # Merge into escalation_rules AFTER the column loop, so an escalation_rules
+        # value in the same request doesn't clobber this key. Reassign for JSONB.
+        rules = dict(row.escalation_rules or {})
+        rules["notify_on_handoff"] = notify_on_handoff
+        row.escalation_rules = rules
 
 
 async def _get_or_create_config(db: AsyncSession, tenant_id: UUID) -> TenantConfig:

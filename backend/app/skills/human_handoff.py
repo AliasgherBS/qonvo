@@ -53,8 +53,13 @@ async def handle(ctx: SkillContext, args: dict[str, Any]) -> dict[str, Any]:
         )
     )
 
+    # The in-app Notification above is always recorded; the push alerts below
+    # (WhatsApp + email) are owner-configurable and can be muted (default on).
+    escalation_rules = getattr(ctx.tenant_config, "escalation_rules", None) or {}
+    notify_owner = escalation_rules.get("notify_on_handoff", True)
+
     owner_alert_number = getattr(ctx.tenant_config, "owner_alert_number", None)
-    if owner_alert_number and ctx.send_gateway is not None and ctx.session_name:
+    if notify_owner and owner_alert_number and ctx.send_gateway is not None and ctx.session_name:
         try:
             await ctx.send_gateway.send_text(
                 ctx.session_name,
@@ -65,17 +70,18 @@ async def handle(ctx: SkillContext, args: dict[str, Any]) -> dict[str, Any]:
             logger.bind(tenant_id=str(ctx.tenant_id)).warning(f"owner alert send failed: {exc}")
 
     # Best-effort email alert to the owner (transport is config-driven; §12.1).
-    try:
-        from app.services.email import email_owner
+    if notify_owner:
+        try:
+            from app.services.email import email_owner
 
-        await email_owner(
-            ctx.db,
-            ctx.tenant_id,
-            subject="A customer needs a human",
-            body=f"Your AI rep escalated a conversation.\n\nReason: {reason}",
-        )
-    except Exception as exc:  # noqa: BLE001 — email failure must not block handoff
-        logger.bind(tenant_id=str(ctx.tenant_id)).warning(f"owner email failed: {exc}")
+            await email_owner(
+                ctx.db,
+                ctx.tenant_id,
+                subject="A customer needs a human",
+                body=f"Your AI rep escalated a conversation.\n\nReason: {reason}",
+            )
+        except Exception as exc:  # noqa: BLE001 — email failure must not block handoff
+            logger.bind(tenant_id=str(ctx.tenant_id)).warning(f"owner email failed: {exc}")
 
     return {"status": "escalated", "message": "team notified"}
 

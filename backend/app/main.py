@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
+    account,
     admin,
     auth,
     billing,
@@ -18,7 +19,9 @@ from app.api import (
     health,
     knowledge,
     notifications,
+    onboarding,
     sessions,
+    team,
     webhooks,
 )
 from app.api import analytics as analytics_api
@@ -89,6 +92,9 @@ app.include_router(knowledge.router)
 app.include_router(config_api.router)
 app.include_router(billing.router)
 app.include_router(notifications.router)
+app.include_router(onboarding.router)
+app.include_router(team.router)
+app.include_router(account.router)
 app.include_router(admin.router)
 
 # --- Phase 3: agentic integrations (Google Calendar / Sheets) + analytics ---

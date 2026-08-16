@@ -60,6 +60,29 @@ class TenantUser(Base, TenantScopedMixin):
     )
 
 
+class TeamInvitation(Base, TenantScopedMixin):
+    """A pending invite for someone to join a tenant as owner/staff.
+
+    Tenant-scoped (RLS). The raw ``token`` goes in the invite link; accepting it
+    creates (or reuses) the ``User`` and a ``tenant_users`` membership. Single-use:
+    once accepted or revoked it no longer resolves.
+    """
+
+    __tablename__ = "team_invitations"
+    __table_args__ = (UniqueConstraint("token", name="uq_team_invitation_token"),)
+
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False, default="staff")
+    token: Mapped[str] = mapped_column(String(64), nullable=False)
+    # pending → accepted | revoked
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    invited_by_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        PGUUID(as_uuid=True), nullable=True
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class TenantConfig(Base, TenantScopedMixin):
     """Persona, providers, hours, rules, and plan entitlements (DESIGN.md §3, §13)."""
 
