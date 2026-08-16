@@ -113,6 +113,18 @@ Everything below is now built, tested, and live on `main`:
 | GET | `/api/billing` | Owner's plan, trial status, days left, expired flag. |
 | GET | `/api/notifications` | Owner alerts (e.g. handoff needed). |
 | POST | `/api/notifications/{id}/read` | Mark an alert read. |
+| GET | `/api/onboarding` | First-run checklist (business info, WhatsApp, knowledge, integrations). |
+
+### Team & account (owner)
+| Method | Path | What it does |
+|---|---|---|
+| GET | `/api/team` | Members + pending invitations. |
+| POST | `/api/team/invitations` | Invite a teammate (email + role); sends the invite email. |
+| DELETE | `/api/team/invitations/{id}` | Revoke a pending invite. |
+| DELETE | `/api/team/members/{user_id}` | Remove a member (never the last owner). |
+| GET | `/api/team/invitations/accept/{token}` | **Public** — preview an invite. |
+| POST | `/api/team/invitations/accept` | **Public** — accept: create user + membership. |
+| GET | `/api/account/export` | **GDPR** — full tenant data as one JSON document. |
 
 ### WhatsApp sessions (owner side)
 | Method | Path | What it does |
@@ -201,17 +213,22 @@ own** — they just happen. This is the list to know about:
 
 ## 4. Known gaps & bugs (honest list)
 
-### Missing features (backlog — not built yet)
-- **Team / staff seats** — only one owner per tenant; no way to invite staff. _(Needs DB migration.)_
-- **Data export / GDPR delete (self-serve)** — admin can delete a tenant, but a tenant can't
-  export or request deletion of their own data. _(Needs migration.)_
-- **Owner notification preferences** — alerts are on/off by code, not owner-configurable.
-- **First-run onboarding checklist** — no guided "connect WhatsApp → add knowledge → go live" flow.
-- **CRM sync** — wanted, not built (Sheets is the current stand-in).
+### Recently completed (this cycle — now built ✅)
+- **Team / staff seats** ✅ — `team_invitations` table (migration 0006), `/api/team`
+  invite/list/revoke/remove + public `/accept-invite`, owner-gated, in the dashboard.
+- **Data export (GDPR)** ✅ — `GET /api/account/export` + a dashboard download button.
+  (Self-serve *deletion* stays admin-mediated on purpose — see below.)
+- **Owner notification preferences** ✅ — `notify_on_handoff` toggle in Settings.
+- **First-run onboarding checklist** ✅ — derived `/api/onboarding` + a Settings card.
+
+### Still missing (need an external decision, not just code)
+- **Automated billing / payments** — plan/trial are tracked, but there's no payment collection;
+  upgrading to "paid" is a manual admin action. _Blocked on a payment-provider choice + keys._
+- **CRM sync** — wanted, not built (Sheets is the current stand-in). _Blocked on a CRM choice._
+- **Self-serve account deletion** — intentionally admin-only (`DELETE /api/admin/tenants/{id}`)
+  so an irreversible purge always goes through an operator, not one owner click.
 - **Impersonation UI** — the endpoint exists, but "log in as tenant" has no dashboard button yet
   (needs an Auth.js session-swap).
-- **Automated billing / payments** — plan/trial are tracked, but there's no payment collection;
-  upgrading to "paid" is a manual admin action.
 
 ### Known bugs / rough edges
 - **Token undercount (~25–35%).** We count tokens from the provider's usage field; Gemini
