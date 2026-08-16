@@ -59,6 +59,8 @@ ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic
 
 [tool.ruff.lint.per-file-ignores]
 "app/alembic/versions/*" = ["E501"]
+# Email HTML: long inline-styled lines are the norm (email clients need inline CSS).
+"app/services/email_templates.py" = ["E501"]
 "tests/*" = ["B008"]
 
 [tool.pytest.ini_options]

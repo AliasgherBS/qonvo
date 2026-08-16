@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import smtplib
+import ssl
+import time
 import uuid
 from email.message import EmailMessage
 
@@ -21,16 +23,22 @@ from app.core.config import settings
 from app.core.logging import logger
 from app.models.enums import UserRole
 from app.models.tenant import TenantUser, User
+from app.services import email_templates as templates
 
 
-async def send_email(to: str, subject: str, body: str) -> bool:
-    """Send one email via the configured transport. Returns True on success."""
+async def send_email(to: str, subject: str, body: str, html: str | None = None) -> bool:
+    """Send one email via the configured transport. Returns True on success.
+
+    ``body`` is the plain-text part (always sent); ``html`` is an optional branded
+    HTML alternative (multipart/alternative). Clients that can render HTML show it;
+    the rest fall back to the text.
+    """
     provider = (settings.email_provider or "log").lower()
     try:
         if provider == "resend" and settings.email_resend_api_key:
-            return await _send_resend(to, subject, body)
+            return await _send_resend(to, subject, body, html)
         if provider == "smtp" and settings.email_smtp_host:
-            return await asyncio.to_thread(_send_smtp, to, subject, body)
+            return await asyncio.to_thread(_send_smtp, to, subject, body, html)
         # Default/dev: log transport — proves the wiring without external creds.
         logger.bind(to=to).info(f"[email:log] {subject}\n{body}")
         return True
@@ -39,84 +47,76 @@ async def send_email(to: str, subject: str, body: str) -> bool:
         return False
 
 
-async def _send_resend(to: str, subject: str, body: str) -> bool:
+async def _send_resend(to: str, subject: str, body: str, html: str | None = None) -> bool:
+    payload: dict = {"from": settings.email_from, "to": [to], "subject": subject, "text": body}
+    if html:
+        payload["html"] = html
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(
             "https://api.resend.com/emails",
             headers={"Authorization": f"Bearer {settings.email_resend_api_key}"},
-            json={"from": settings.email_from, "to": [to], "subject": subject, "text": body},
+            json=payload,
         )
         resp.raise_for_status()
     return True
 
 
-def _send_smtp(to: str, subject: str, body: str) -> bool:
+def _send_smtp(to: str, subject: str, body: str, html: str | None = None) -> bool:
     msg = EmailMessage()
     msg["From"] = settings.email_from
     msg["To"] = to
     msg["Subject"] = subject
     msg.set_content(body)
+    if html:
+        msg.add_alternative(html, subtype="html")
     host, port = settings.email_smtp_host, settings.email_smtp_port
-    # Port 465 = implicit SSL (SMTPS): the whole connection is TLS from the start.
-    # Prefer it where a network intercepts STARTTLS on 587 (the handshake stalls) —
-    # verified live on this VPS/WSL host. Other ports use SMTP + optional STARTTLS.
-    if port == 465:
-        server = smtplib.SMTP_SSL(host, port, timeout=30)
-    else:
-        server = smtplib.SMTP(host, port, timeout=30)
-    with server:
-        if port != 465 and settings.email_smtp_starttls:
-            server.starttls()
-        if settings.email_smtp_user:
-            server.login(settings.email_smtp_user, settings.email_smtp_password or "")
-        server.send_message(msg)
-    return True
+
+    def _once() -> None:
+        # Port 465 = implicit SSL (SMTPS): the whole connection is TLS from the start.
+        # Prefer it where a network intercepts STARTTLS on 587 (the handshake stalls) —
+        # verified live on this VPS/WSL host. Other ports use SMTP + optional STARTTLS.
+        server = (
+            smtplib.SMTP_SSL(host, port, timeout=30)
+            if port == 465
+            else smtplib.SMTP(host, port, timeout=30)
+        )
+        with server:
+            if port != 465 and settings.email_smtp_starttls:
+                server.starttls()
+            if settings.email_smtp_user:
+                server.login(settings.email_smtp_user, settings.email_smtp_password or "")
+            server.send_message(msg)
+
+    # The TLS handshake to Gmail intermittently times out on this network; a single
+    # retry clears the transient case (observed live). Last failure re-raises.
+    last: Exception | None = None
+    for attempt in range(3):
+        try:
+            _once()
+            return True
+        except (smtplib.SMTPServerDisconnected, OSError, TimeoutError, ssl.SSLError) as exc:
+            last = exc
+            logger.bind(to=to).info(f"smtp attempt {attempt + 1} failed, retrying: {exc}")
+            time.sleep(1.5 * (attempt + 1))
+    raise last if last else RuntimeError("smtp send failed")
 
 
 async def send_welcome_email(to: str, name: str | None, business: str) -> bool:
     """Onboarding welcome email sent right after signup."""
-    hello = f"Hi {name}," if name else "Hi there,"
-    body = (
-        f"{hello}\n\n"
-        f"Welcome to Qonvo — your AI WhatsApp rep for {business} is ready to set up.\n\n"
-        "Next steps:\n"
-        "  1. Connect your WhatsApp number (scan the QR).\n"
-        "  2. Add what your rep should know (hours, prices, policies).\n"
-        "  3. Message the number to see it reply.\n\n"
-        f"Open your dashboard: {settings.dashboard_base_url}\n\n"
-        "You're on a 14-day free trial. Reply to this email if you need a hand.\n\n"
-        "— The Qonvo team"
-    )
-    return await send_email(to, "Welcome to Qonvo 👋", body)
+    subject, text, html = templates.welcome(name, business, settings.dashboard_base_url)
+    return await send_email(to, subject, text, html=html)
 
 
 async def send_password_reset_email(to: str, name: str | None, reset_url: str) -> bool:
     """Password-reset link email (link expires in 30 minutes)."""
-    hello = f"Hi {name}," if name else "Hi there,"
-    body = (
-        f"{hello}\n\n"
-        "We received a request to reset your Qonvo password. Click the link below "
-        "to choose a new one — it expires in 30 minutes:\n\n"
-        f"{reset_url}\n\n"
-        "If you didn't request this, you can safely ignore this email; your "
-        "password won't change.\n\n"
-        "— The Qonvo team"
-    )
-    return await send_email(to, "Reset your Qonvo password", body)
+    subject, text, html = templates.password_reset(name, reset_url)
+    return await send_email(to, subject, text, html=html)
 
 
 async def send_team_invite_email(to: str, business: str, role: str, accept_url: str) -> bool:
     """Invite email with the accept link (link expires in 7 days)."""
-    body = (
-        "Hi there,\n\n"
-        f"You've been invited to join {business} on Qonvo as {role}. "
-        "Qonvo is the AI WhatsApp rep that answers customers for the business.\n\n"
-        "Accept your invitation and set up your account here (expires in 7 days):\n\n"
-        f"{accept_url}\n\n"
-        "If you weren't expecting this, you can ignore this email.\n\n"
-        "— The Qonvo team"
-    )
-    return await send_email(to, f"You're invited to {business} on Qonvo", body)
+    subject, text, html = templates.team_invite(business, role, accept_url)
+    return await send_email(to, subject, text, html=html)
 
 
 async def email_owner(db: AsyncSession, tenant_id: uuid.UUID, subject: str, body: str) -> bool:
@@ -131,7 +131,7 @@ async def email_owner(db: AsyncSession, tenant_id: uuid.UUID, subject: str, body
     ).scalar_one_or_none()
     if not email:
         return False
-    return await send_email(email, subject, body)
+    return await send_email(email, subject, body, html=templates.owner_alert(subject, body))
 
 
 __all__ = [
