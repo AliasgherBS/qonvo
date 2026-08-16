@@ -56,8 +56,16 @@ def _send_smtp(to: str, subject: str, body: str) -> bool:
     msg["To"] = to
     msg["Subject"] = subject
     msg.set_content(body)
-    with smtplib.SMTP(settings.email_smtp_host, settings.email_smtp_port, timeout=15) as server:
-        if settings.email_smtp_starttls:
+    host, port = settings.email_smtp_host, settings.email_smtp_port
+    # Port 465 = implicit SSL (SMTPS): the whole connection is TLS from the start.
+    # Prefer it where a network intercepts STARTTLS on 587 (the handshake stalls) —
+    # verified live on this VPS/WSL host. Other ports use SMTP + optional STARTTLS.
+    if port == 465:
+        server = smtplib.SMTP_SSL(host, port, timeout=30)
+    else:
+        server = smtplib.SMTP(host, port, timeout=30)
+    with server:
+        if port != 465 and settings.email_smtp_starttls:
             server.starttls()
         if settings.email_smtp_user:
             server.login(settings.email_smtp_user, settings.email_smtp_password or "")
