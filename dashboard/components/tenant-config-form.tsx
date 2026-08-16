@@ -266,6 +266,20 @@ export function TenantConfigForm({
               placeholder="+92 3XX XXXXXXX"
             />
           </div>
+          <label className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2.5">
+            <span className="text-sm">
+              <span className="font-semibold">Notify me on handoff</span>
+              <span className="block text-xs text-muted-foreground">
+                Send a WhatsApp + email alert when the bot hands a chat to a human. The in-app
+                notification is always kept.
+              </span>
+            </span>
+            <Switch
+              checked={form.notifyOnHandoff}
+              onCheckedChange={(on) => setForm({ ...form, notifyOnHandoff: on })}
+              label="Notify me on handoff"
+            />
+          </label>
         </CardContent>
       </Card>
 

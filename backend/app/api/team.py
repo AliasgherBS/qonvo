@@ -165,7 +165,7 @@ async def create_invitation(
     business = (
         await db.execute(select(Tenant.name).where(Tenant.id == tenant_id))
     ).scalar_one_or_none() or "the team"
-    accept_url = f"{settings.dashboard_base_url}/team/accept?token={token}"
+    accept_url = f"{settings.dashboard_base_url}/accept-invite?token={token}"
     await send_team_invite_email(email, business, body.role, accept_url)
 
     return InvitationResponse(

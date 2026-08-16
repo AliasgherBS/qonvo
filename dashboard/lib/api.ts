@@ -643,6 +643,7 @@ interface TenantConfigDto {
   llm_model: string | null;
   payment_details: string | null;
   voice_reply_mode: VoiceReplyMode | null;
+  notify_on_handoff: boolean;
 }
 
 export type VoiceReplyMode = "match" | "always" | "never";
@@ -662,6 +663,7 @@ export interface TenantConfig {
   llmModel: string;
   paymentDetails: string;
   voiceReplyMode: VoiceReplyMode;
+  notifyOnHandoff: boolean;
 }
 
 function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
@@ -681,6 +683,7 @@ function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
     llmModel: dto.llm_model ?? "",
     paymentDetails: dto.payment_details ?? "",
     voiceReplyMode: dto.voice_reply_mode ?? "match",
+    notifyOnHandoff: dto.notify_on_handoff ?? true,
   };
 }
 
@@ -702,6 +705,7 @@ function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
     llm_model: cfg.llmModel,
     payment_details: cfg.paymentDetails || null,
     voice_reply_mode: cfg.voiceReplyMode,
+    notify_on_handoff: cfg.notifyOnHandoff,
   };
 }
 
@@ -712,6 +716,116 @@ export const config = {
     apiFetch<TenantConfigDto>("/api/config", { method: "PUT", body: toTenantConfigDto(payload), ...opts }).then(
       mapTenantConfig,
     ),
+};
+
+// ---------------------------------------------------------------------------
+// Onboarding checklist (first-run "get to live")
+// ---------------------------------------------------------------------------
+
+export interface OnboardingStep {
+  key: string;
+  label: string;
+  description: string;
+  done: boolean;
+  required: boolean;
+}
+
+export interface OnboardingStatus {
+  steps: OnboardingStep[];
+  complete: boolean;
+}
+
+export const onboarding = {
+  get: (opts: CallOpts = {}) => apiFetch<OnboardingStatus>("/api/onboarding", opts),
+};
+
+// ---------------------------------------------------------------------------
+// Team seats (invite staff / co-owners)
+// ---------------------------------------------------------------------------
+
+export interface TeamMember {
+  userId: string;
+  email: string;
+  fullName: string | null;
+  role: string;
+  isActive: boolean;
+}
+
+export interface TeamInvitation {
+  id: string;
+  email: string;
+  role: string;
+  status: string;
+  expiresAt: string;
+}
+
+export interface TeamData {
+  members: TeamMember[];
+  invitations: TeamInvitation[];
+}
+
+interface TeamDto {
+  members: { user_id: string; email: string; full_name: string | null; role: string; is_active: boolean }[];
+  invitations: { id: string; email: string; role: string; status: string; expires_at: string }[];
+}
+
+export const team = {
+  get: (opts: CallOpts = {}) =>
+    apiFetch<TeamDto>("/api/team", opts).then(
+      (dto): TeamData => ({
+        members: dto.members.map((m) => ({
+          userId: m.user_id,
+          email: m.email,
+          fullName: m.full_name,
+          role: m.role,
+          isActive: m.is_active,
+        })),
+        invitations: dto.invitations.map((i) => ({
+          id: i.id,
+          email: i.email,
+          role: i.role,
+          status: i.status,
+          expiresAt: i.expires_at,
+        })),
+      }),
+    ),
+
+  invite: (payload: { email: string; role: string }, opts: CallOpts = {}) =>
+    apiFetch<unknown>("/api/team/invitations", { method: "POST", body: payload, ...opts }),
+
+  revokeInvitation: (id: string, opts: CallOpts = {}) =>
+    apiFetch<void>(`/api/team/invitations/${id}`, { method: "DELETE", ...opts }),
+
+  removeMember: (userId: string, opts: CallOpts = {}) =>
+    apiFetch<void>(`/api/team/members/${userId}`, { method: "DELETE", ...opts }),
+
+  // Public (no auth): invite-acceptance flow.
+  previewInvite: (token: string, opts: CallOpts = {}) =>
+    apiFetch<{
+      valid: boolean;
+      email: string | null;
+      role: string | null;
+      business_name: string | null;
+      needs_password: boolean;
+      reason: string | null;
+    }>(`/api/team/invitations/accept/${encodeURIComponent(token)}`, opts),
+
+  acceptInvite: (
+    payload: { token: string; password?: string; full_name?: string },
+    opts: CallOpts = {},
+  ) =>
+    apiFetch<{ access_token: string; tenant_id: string; email: string; role: string }>(
+      "/api/team/invitations/accept",
+      { method: "POST", body: payload, ...opts },
+    ),
+};
+
+// ---------------------------------------------------------------------------
+// Account data export (GDPR)
+// ---------------------------------------------------------------------------
+
+export const account = {
+  export: (opts: CallOpts = {}) => apiFetch<Record<string, unknown>>("/api/account/export", opts),
 };
 
 // ---------------------------------------------------------------------------

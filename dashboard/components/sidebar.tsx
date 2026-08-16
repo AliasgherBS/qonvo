@@ -10,6 +10,7 @@ import {
   Radio,
   Settings,
   Smartphone,
+  Users,
 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -24,6 +25,7 @@ const NAV_ITEMS = [
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
   { href: "/integrations", label: "Integrations", icon: Plug },
   { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/team", label: "Team", icon: Users },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
 ];
 

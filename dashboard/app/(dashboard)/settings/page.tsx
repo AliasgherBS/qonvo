@@ -1,6 +1,7 @@
 "use client";
 
 import { ChangePasswordCard } from "@/components/change-password-card";
+import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { TenantConfigForm } from "@/components/tenant-config-form";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,6 +21,8 @@ export default function SettingsPage() {
           Persona, languages, hours, and escalation — how your AI rep shows up for customers.
         </p>
       </div>
+
+      <OnboardingChecklist />
 
       {loading ? (
         <SettingsSkeleton />

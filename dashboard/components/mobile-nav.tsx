@@ -1,17 +1,32 @@
 "use client";
 
-import { BarChart3, BookOpen, Building2, Gauge, Inbox, Radio, Settings, Smartphone } from "lucide-react";
+import {
+  BarChart3,
+  BookOpen,
+  Building2,
+  Gauge,
+  Inbox,
+  Plug,
+  Radio,
+  Settings,
+  Smartphone,
+  Users,
+} from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import type { Role } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
+// Keep in step with the sidebar's NAV_ITEMS — /integrations was previously
+// missing here, so on mobile the page was only reachable by typing the URL.
 const OWNER_ITEMS = [
   { href: "/inbox", label: "Inbox", icon: Inbox },
   { href: "/onboarding/connect", label: "WhatsApp", icon: Smartphone },
   { href: "/knowledge", label: "Knowledge", icon: BookOpen },
+  { href: "/integrations", label: "Apps", icon: Plug },
   { href: "/settings", label: "Settings", icon: Settings },
+  { href: "/team", label: "Team", icon: Users },
   { href: "/analytics", label: "Analytics", icon: BarChart3 },
 ];
 
