@@ -15,11 +15,15 @@ cd backend && uv run pytest -q && uv run ruff check
 #   → 219 passed, 7 skipped
 
 # Integration tests (marked @pytest.mark.postgres) — need a live, MIGRATED Postgres.
-#   Best run INSIDE the docker network (so `redis:6379` / async worker resolve):
-docker compose exec api uv run pytest -m postgres -q
-#   Running from the HOST works for DB-only tests but 5 knowledge tests fail
-#   (they reach the docker-internal `redis:6379` + expect the ingest worker) —
-#   that's an environment limitation, not a code defect (see §4).
+#   Run from the host with the two test DSNs pointed at the exposed DB (port 5433):
+QONVO_TEST_DATABASE_URL=postgresql+asyncpg://qonvo_app:<pass>@localhost:5433/qonvo \
+QONVO_TEST_SYSTEM_DATABASE_URL=postgresql+asyncpg://qonvo_system:<pass>@localhost:5433/qonvo \
+  uv run pytest -m postgres -q
+#   36/41 pass. The 5 that fail are all in test_knowledge_api.py — they call
+#   get_redis() directly (default host `redis:6379`, unresolvable from the host)
+#   and expect the async ingest worker to flip a source to `ready`. That's an
+#   environment limitation, not a code defect (see §4), and they aren't in the
+#   docker image, so `docker compose exec` can't run them either.
 
 # Frontend typecheck + build
 cd dashboard && npx tsc --noEmit && npm run build
@@ -28,8 +32,8 @@ cd dashboard && npx tsc --noEmit && npm run build
 ```
 
 **Current status:** ✅ 219 unit tests pass · ✅ ruff clean · ✅ dashboard builds ·
-✅ team/admin/auth/takeover/RLS integration tests pass · ⚠️ 5 knowledge integration
-tests need the docker network (§4).
+✅ 36/41 integration tests pass (team/admin/auth/takeover/RLS) · ⚠️ 5 knowledge
+integration tests are host-environment-broken, not defects (§4).
 
 ---
 
@@ -135,11 +139,12 @@ Legend: **A** = automated (pytest) · **M** = manual check needed · **A+M** = b
 
 ## 4. Known test gaps / flakes (honest list)
 
-- **5 `test_knowledge_api.py` failures from the host.** They enqueue ingestion to
-  arq (`redis:6379`, the docker-internal hostname) and expect the async worker to
-  flip a source to `ready`. From host-run pytest, `redis:6379` doesn't resolve and
-  no worker runs in-process → 5 fail. **Not a code defect** — run them inside the
-  network: `docker compose exec api uv run pytest -m postgres tests/test_knowledge_api.py`.
+- **5 `test_knowledge_api.py` failures from the host.** They call `get_redis()`
+  directly (default host `redis:6379`, which the host can't resolve — the host
+  talks to Redis on `localhost:6380`) and expect the async ingest worker to flip a
+  source from `pending_ingest` to `ready`, which needs a running worker. **Not a
+  code defect.** Fixing them properly means overriding `get_redis` in the fixture
+  and mocking/awaiting ingestion — a test-harness fix, tracked separately.
 - **No automated end-to-end WhatsApp test.** The full "real phone → WAHA → bot →
   reply" loop is manual (§5) — WAHA + a linked number can't run in CI yet.
 - **Voice minutes are estimated** from byte size, so metering assertions check
@@ -198,7 +203,7 @@ done   # expect all 200
 ## 6. Regression checklist before any release
 
 - [ ] `uv run pytest -q` → 219 passed, ruff clean.
-- [ ] `docker compose exec api uv run pytest -m postgres -q` → all green in-network.
+- [ ] `uv run pytest -m postgres -q` (with the two test DSNs) → 36/41 (only the 5 §4 knowledge tests fail).
 - [ ] `cd dashboard && npx tsc --noEmit && npm run build` → clean.
 - [ ] §5.A live API smoke → all 200.
 - [ ] §5.B steps 1, 2, 6 (text, handoff, rate-limit) at minimum.
