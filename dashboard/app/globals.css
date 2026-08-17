@@ -79,6 +79,20 @@
   --danger-foreground: #ffffff;
   --warning: #b45309;
   --warning-foreground: #ffffff;
+
+  /* Documented z-index scale. Nothing may use an ad-hoc z value. */
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-overlay: 20;
+  --z-modal: 30;
+  --z-toast: 40;
+
+  /* Shadows tinted toward Ink rather than pure black, so elevation reads as
+     part of the palette instead of a grey wash. */
+  --elevation-sm: 0 1px 2px 0 rgb(8 19 14 / 0.06);
+  --elevation-md: 0 4px 12px -2px rgb(8 19 14 / 0.1);
+  --elevation-lg: 0 18px 40px -12px rgb(8 19 14 / 0.22);
+  --elevation-xl: 0 28px 64px -16px rgb(8 19 14 / 0.28);
 }
 
 .dark {
@@ -99,9 +113,22 @@
   --danger-foreground: var(--color-brand-surface-950);
   --warning: #f5b556;
   --warning-foreground: var(--color-brand-surface-950);
+
+  /* Dark ground needs more depth for elevation to register at all. */
+  --elevation-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+  --elevation-md: 0 4px 12px -2px rgb(0 0 0 / 0.4);
+  --elevation-lg: 0 18px 40px -12px rgb(0 0 0 / 0.55);
+  --elevation-xl: 0 28px 64px -16px rgb(0 0 0 / 0.65);
 }
 
 @theme inline {
+  /* Tinted elevation, overriding Tailwind's default black shadows. Source
+     variables are named --elevation-* so this mapping is not self-referential. */
+  --shadow-sm: var(--elevation-sm);
+  --shadow-md: var(--elevation-md);
+  --shadow-lg: var(--elevation-lg);
+  --shadow-xl: var(--elevation-xl);
+
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-surface: var(--surface);
