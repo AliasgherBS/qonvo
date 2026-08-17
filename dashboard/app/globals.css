@@ -1,46 +1,53 @@
 @import "tailwindcss";
 
 /*
- * Qonvo Brand Kit — design tokens.
+ * Qonvo Brand Kit design tokens.
  *
- * Values below are close approximations of `Branding+Marketing/Qonvo Brand
- * Kit.pdf` (spring/emerald green primary, lime/chartreuse accent, near-black
- * dark-green surface, off-white paper). Swap the hex values in this block
- * once exact brand-kit values are extracted — everything downstream reads
- * from these variables, nothing is hardcoded elsewhere.
+ * Values extracted from `Branding+Marketing/Qonvo Brand Kit.pdf` section 02.
+ * The five named brand colors are exact. The tint ramps around each are
+ * derived, since the kit specifies only the five. Everything downstream reads
+ * from these variables and nothing hardcodes a hex, which
+ * `npm run verify:brand` enforces.
  */
 @theme {
-  /* Brand palette */
-  --color-brand-primary-50: #e6fbef;
-  --color-brand-primary-100: #c1f5d7;
-  --color-brand-primary-300: #5fe6a3;
-  --color-brand-primary-400: #22dd82;
-  --color-brand-primary-500: #00d26a;
-  --color-brand-primary-600: #00ab57;
-  --color-brand-primary-700: #018548;
-  --color-brand-primary-900: #044a2c;
+  /* Signal Green #00C776, primary. Actions and highlights. */
+  --color-brand-primary-50: #e6f9f1;
+  --color-brand-primary-100: #c0f0dc;
+  --color-brand-primary-300: #5ce0ac;
+  --color-brand-primary-400: #1fd28c;
+  --color-brand-primary-500: #00c776;
+  --color-brand-primary-600: #00a161;
+  --color-brand-primary-700: #007c4b;
+  --color-brand-primary-900: #04412a;
 
-  --color-brand-accent-200: #edfcae;
-  --color-brand-accent-300: #dcf87f;
-  --color-brand-accent-400: #c6f432;
-  --color-brand-accent-500: #aee01c;
-  --color-brand-accent-600: #8fbb12;
+  /* Volt #C6FF3D, accent. A spotlight, not a background. Exact at -400,
+     which is what the semantic `--accent` below resolves to. */
+  --color-brand-accent-200: #eeffbe;
+  --color-brand-accent-300: #ddff8b;
+  --color-brand-accent-400: #c6ff3d;
+  --color-brand-accent-500: #b0ee1c;
+  --color-brand-accent-600: #92c714;
 
-  --color-brand-surface-50: #f1f7f4;
-  --color-brand-surface-100: #dbe8e1;
-  --color-brand-surface-700: #163325;
-  --color-brand-surface-800: #10281c;
-  --color-brand-surface-900: #0b1f17;
-  --color-brand-surface-950: #071410;
+  /* Deep Forest #0B3B2B surface, Ink #08130E text and dark ground. */
+  --color-brand-surface-50: #f0f5f2;
+  --color-brand-surface-100: #d9e6df;
+  --color-brand-surface-700: #0b3b2b;
+  --color-brand-surface-800: #092a1e;
+  --color-brand-surface-900: #08130e;
+  --color-brand-surface-950: #050d09;
 
-  --color-brand-paper: #f7f5f0;
-  --color-brand-paper-dim: #ece8de;
+  /* Paper #F3EFE6, light ground. */
+  --color-brand-paper: #f3efe6;
+  --color-brand-paper-dim: #e7e1d4;
 
-  /* Font */
-  --font-sans: var(--font-geist-sans);
+  /* Font. The `--font-bricolage` and `--font-manrope` variables are injected
+     on <html> by next/font in app/layout.tsx. They are named for the face,
+     not the role, so that mapping role to face happens here and only here. */
+  --font-sans: var(--font-manrope);
+  --font-display: var(--font-bricolage);
   --font-mono: var(--font-geist-mono);
 
-  /* Radii — pill buttons, soft-rounded cards */
+  /* Radii: pill buttons, soft-rounded cards */
   --radius-card: 1.25rem;
   --radius-pill: 999px;
 }
