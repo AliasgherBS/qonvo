@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "verify:brand": "node scripts/verify-brand.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.23.0",
