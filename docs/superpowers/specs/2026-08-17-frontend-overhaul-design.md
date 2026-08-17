@@ -351,12 +351,22 @@ section moving or the surrounding rhythm changing.
 | Email | `alihuzezzy@gmail.com` | Secondary, a quieter `mailto:` text link below |
 
 WhatsApp leads because a product selling a WhatsApp AI rep should be reachable
-on WhatsApp. Two caveats recorded so they are not forgotten. First, if this
-number is the demo line bound to session `dev-tenant-main`, contacts land in a
-bot-answered chat rather than reaching a person, and it should be swapped for a
-human-answered number. Second, both values are personal rather than
-company-owned and will be scraped once public, which is why they are isolated in
-one file.
+on WhatsApp.
+
+**The WhatsApp number is answered by Qonvo itself, deliberately.** The number
+runs the product, configured with Qonvo's own knowledge base so it answers
+questions about the system and points people to the trial. That makes the
+contact button a live demo rather than a support channel, and the copy should
+say so instead of hiding it. Suggested treatment, to be finalised during the
+landing build:
+
+> **Message us on WhatsApp.** You will be talking to Qonvo. That is the point.
+
+Email remains the human-answered fallback for anyone who wants one, which is
+the second reason to keep both channels.
+
+One caveat still stands: both values are personal rather than company-owned and
+will be scraped once public, which is why they are isolated in one file.
 
 ### 7.4 FAQ
 
