@@ -81,7 +81,15 @@ export default auth((req) => {
 });
 
 export const config = {
-  // Exclude /backend/* — it's the API reverse-proxy (the backend does its own
-  // JWT auth); middleware must not gate or redirect it.
-  matcher: ["/((?!backend|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)"],
+  // Exclude /backend/*: it's the API reverse-proxy (the backend does its own
+  // JWT auth), so middleware must not gate or redirect it.
+  //
+  // The static-file extension list must cover every public asset type, not
+  // just images. Caught live: /hero.mp4 and /hero.webm fell through to the
+  // auth check and 307'd to /login, so the landing hero played nothing for
+  // logged-out visitors. txt and xml are listed ahead of need, for the
+  // robots, sitemap and llms.txt routes.
+  matcher: [
+    "/((?!backend|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|mp4|webm|woff2?|txt|xml)$).*)",
+  ],
 };
