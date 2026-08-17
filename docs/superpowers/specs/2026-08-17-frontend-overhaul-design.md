@@ -83,9 +83,18 @@ surfaces share one token layer.
 - **Icons stay `lucide-react`.** Both skills discourage Lucide as a default and
   both allow it when the project already depends on it. Swapping 60+ call sites
   buys nothing.
-- **Pricing ships with placeholder numbers, priced high.** Pricing is not
-  decided. Values live in one file, `lib/pricing.ts`, each marked
-  `UNCONFIRMED`, so settling them later is a one-file edit.
+- **Pricing ships with no numbers at all.** Pricing is not decided and the
+  earlier placeholder figures were unrealistically high. The section stays, so
+  visitors understand this is a paid product with a free trial, but it carries
+  no figures. See 7.3.
+- **CRM sync is cut from the feature grid and answered in the FAQ.** It is
+  planned, not shipped. A "coming soon" badge in the main feature bento
+  advertises incompleteness at the moment the page is trying to convince, so it
+  costs conversions. Saying nothing loses the buyer who needs CRM sync. The FAQ
+  is where that buyer looks and is the right register for a roadmap answer.
+- **Contact details live in one file.** `lib/contact.ts` holds the WhatsApp
+  number and the email address. Nothing else references them, so moving to a
+  domain address later is a one-file edit.
 - **No social proof section.** There are no customers or quotes yet. Fabricating
   a testimonial is both an AI tell and a real trust problem. The section is
   omitted rather than faked. The brand kit's testimonial template with
@@ -272,7 +281,7 @@ uses 1, and no three consecutive split layouts.
 | 5 | Voice | Full-width dark media | Waveform on play |
 | 6 | Languages | Kinetic marquee | Continuous, the page's only marquee |
 | 7 | How it works | Sticky-stack, 3 steps | Pin and scrub |
-| 8 | Pricing | Tier comparison | Hover elevation only |
+| 8 | Pricing | Single card, no tiers | Hover elevation only |
 | 9 | FAQ | Two-column list | None |
 | 10 | Closing CTA plus footer | Centered statement | CTA hover |
 
@@ -293,28 +302,61 @@ tagline under the CTAs.
 Top padding capped at `pt-24`. Headline scale `text-5xl md:text-6xl lg:text-7xl`
 given the short headline.
 
-### 7.2 Section 4 and the CRM correction
+### 7.2 Section 4 and the CRM claim
 
 Section 4 lists what Qonvo does. The promo video's equivalent frame reads "Logs
-the lead to your CRM", which is **not true today**: per `CLAUDE.md`, CRM sync is
-remaining Phase 3 work and leads go to a Google Sheet. The landing copy says
-"Logs every lead to a Google Sheet" instead. The video needs a re-render before
-that frame can be shown standalone, and until then the hero loop is cut to the
-booking segment, which avoids the frame entirely.
+the lead to your CRM", which is **not supported yet**: per `CLAUDE.md`, CRM sync
+is remaining Phase 3 work and leads go to a Google Sheet. It is planned, so the
+claim is premature rather than untrue.
+
+The feature grid says "Logs every lead to a Google Sheet you control" and makes
+no CRM claim. This is not a downgrade to hide behind: for many small businesses
+a Google Sheet is the CRM, so the copy states the capability plainly rather than
+apologetically.
+
+The roadmap answer lives in the FAQ, per 7.4. The hero loop is cut to the
+booking segment, which avoids the CRM frame entirely, and the video itself needs
+a re-render before that frame can be shown standalone anywhere, including the
+brand kit's social posts.
 
 ### 7.3 Pricing
 
-Three tiers, placeholder values priced high, defined in `lib/pricing.ts` with an
-`UNCONFIRMED` comment block:
+Prices are not decided, so the section carries none. It exists to answer one
+question, "is this paid?", and to route buyers who want a number to a human.
 
-| Tier | Monthly | Positioning |
+A single card, not a three-tier comparison. Three tiers with no figures reads as
+broken, and the three-tower pricing table is a flagged generic pattern
+regardless.
+
+Contents:
+
+- Headline establishing that it is paid and starts free.
+- A plain list of what a subscription includes, drawn from shipped features
+  only, so no CRM and no team seats until those land.
+- The trial stated as 14 days, no card required. The 300-message cap is not
+  shown here, it is answered in the FAQ, per 7.4.
+- Primary CTA "Start free trial", matching the hero label exactly, since one
+  label per intent applies across the page.
+- Secondary "Contact us for pricing", a distinct intent from signup and
+  therefore not a duplicate CTA.
+
+When prices are settled this card expands into tiers in place, without the
+section moving or the surrounding rhythm changing.
+
+**Contact targets.** Both resolve from `lib/contact.ts`:
+
+| Channel | Value | Treatment |
 |---|---|---|
-| Starter | $49 | One WhatsApp number, text replies, knowledge base |
-| Growth | $149 | Voice replies, calendar booking, sheet logging |
-| Scale | $399 | Team seats, priority support, higher volume |
+| WhatsApp | `+92 319 4505305` | Primary, a `wa.me` link with a prefilled message |
+| Email | `alihuzezzy@gmail.com` | Secondary, a quieter `mailto:` text link below |
 
-Annual billing shown at 20% off. The recommended tier is marked with color and
-emphasis, not extra height.
+WhatsApp leads because a product selling a WhatsApp AI rep should be reachable
+on WhatsApp. Two caveats recorded so they are not forgotten. First, if this
+number is the demo line bound to session `dev-tenant-main`, contacts land in a
+bot-answered chat rather than reaching a person, and it should be swapped for a
+human-answered number. Second, both values are personal rather than
+company-owned and will be scraped once public, which is why they are isolated in
+one file.
 
 ### 7.4 FAQ
 
@@ -324,10 +366,26 @@ LLM crawlers can actually read. Content is answer-shaped for citation: each
 answer opens with a direct one-sentence response before elaborating. This
 section is the source for FAQPage structured data.
 
-Questions cover: whether it uses your own WhatsApp number, whether a customer
-can tell it is AI, what happens when it does not know something, how handoff
-works, which languages it handles, whether it can book into an existing
-calendar, what happens to data, and how long setup takes.
+Ten questions, covering: whether it uses your own WhatsApp number, whether a
+customer can tell it is AI, what happens when it does not know something, how
+handoff works, which languages it handles, whether it can book into an existing
+calendar, what happens to your data, how long setup takes, plus the two below
+which carry information deliberately kept off the rest of the page.
+
+**CRM**, per 7.2:
+
+> **Does Qonvo sync to my CRM?**
+> Not yet. Today Qonvo logs every lead to a Google Sheet you control, which you
+> can import or connect to most CRMs. Direct sync is on the roadmap.
+
+**Trial cap.** The hero and pricing section state 14 days free, no card
+required, and both are true. The 300-message cap from `TRIAL_MESSAGE_QUOTA` in
+`backend/app/services/auth.py` is disclosed here rather than in the headline, so
+it stays discoverable without complicating the top of the page:
+
+> **What are the limits during the free trial?**
+> The trial runs 14 days or 300 customer messages, whichever comes first. No
+> card required to start.
 
 ## 8. Copy
 
@@ -361,8 +419,9 @@ list. Dashboard routes are excluded, and `middleware.ts` already gates them.
 **Structured data.** JSON-LD injected server-side:
 
 - `SoftwareApplication` on the landing page, with `applicationCategory` set to
-  BusinessApplication and `offers` fed from `lib/pricing.ts` so the placeholder
-  prices stay in one place.
+  BusinessApplication. **No `offers` block**, because prices are undecided and
+  emitting a fabricated or zero price is worse than emitting none. When pricing
+  is settled, `offers` is added at the same time as the visible tiers.
 - `Organization` in the root layout.
 - `FAQPage` on the landing page, generated from the same array that renders the
   FAQ section, so markup and visible text can never drift.
@@ -404,6 +463,9 @@ relies on the checks the repo already uses plus explicit manual verification.
 - No `—` or `–` in any file under `dashboard/app/` or `dashboard/components/`.
 - No hardcoded `qonvo.ai` or `qonvo.org` outside `.env` files.
 - No hex color literal in any component file. All color flows from tokens.
+- No phone number or email address outside `lib/contact.ts`.
+- No currency symbol or price figure anywhere in `dashboard/app/`, guarding
+  against a placeholder price reappearing.
 
 ## 11. Sequencing
 
@@ -426,6 +488,8 @@ Each stage ends green on build and lint before the next begins.
   current IA.
 - Re-rendering the promo video to fix the CRM claim and the baked-in domain.
   Flagged, not done here.
-- Real pricing, real testimonials, and the final domain. All three are
-  single-file changes once decided.
+- Real pricing, real testimonials, the final domain, and a company-owned
+  contact address. Each is a single-file change once decided, landing in
+  `lib/pricing.ts`, the FAQ array, `NEXT_PUBLIC_SITE_URL`, and `lib/contact.ts`
+  respectively.
 - CRM sync itself, which remains Phase 3 work.
