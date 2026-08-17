@@ -133,15 +133,26 @@
   body {
     background: var(--color-background);
     color: var(--color-foreground);
-    font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+    /* Manrope is Latin-only. The Noto families cover the Arabic, Urdu and
+       Devanagari strings the marketing pages render, and resolve from the
+       system on every target platform, so they cost no extra download. */
+    font-family: var(--font-sans), "Noto Sans Arabic", "Noto Sans Devanagari",
+      ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
 
   h1,
   h2,
   h3,
   h4 {
-    font-weight: 700;
+    font-family: var(--font-display), var(--font-sans), ui-sans-serif, sans-serif;
+    font-weight: 800;
     letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
   }
 }
 
