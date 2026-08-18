@@ -11,6 +11,8 @@ import { Providers } from "@/components/providers";
 import { ThemeScript } from "@/components/theme-script";
 import { auth } from "@/auth";
 import { LEGAL } from "@/lib/legal";
+import { SITE } from "@/lib/site";
+import { OrganizationData } from "@/components/marketing/structured-data";
 
 import "./globals.css";
 
@@ -52,8 +54,27 @@ const notoDevanagari = Noto_Sans_Devanagari({
 });
 
 export const metadata: Metadata = {
-  title: "Qonvo: never miss a customer",
-  description: "The AI representative that lives on your WhatsApp number.",
+  // Resolves every relative URL below, plus the opengraph-image route, against
+  // the real origin. Without it Next warns and emits localhost into OG tags.
+  metadataBase: new URL(SITE.url),
+  title: {
+    default: `${SITE.name}: never miss a customer`,
+    template: `%s | ${SITE.name}`,
+  },
+  description: SITE.description,
+  applicationName: SITE.name,
+  openGraph: {
+    type: "website",
+    siteName: SITE.name,
+    title: `${SITE.name}: never miss a customer`,
+    description: SITE.description,
+    url: SITE.url,
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: `${SITE.name}: never miss a customer`,
+    description: SITE.description,
+  },
   // Emits <meta name="google-site-verification" ...> into <head>. Search Console
   // ownership is a prerequisite for Google OAuth app verification.
   verification: { google: LEGAL.googleSiteVerification },
@@ -70,6 +91,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     >
       <head>
         <ThemeScript />
+        <OrganizationData />
       </head>
       <body className="min-h-screen antialiased">
         <Providers session={session}>{children}</Providers>

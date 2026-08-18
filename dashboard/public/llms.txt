@@ -1,0 +1,59 @@
+# Qonvo
+
+> An AI customer representative that runs on a business's own WhatsApp number.
+> It answers customer questions in seconds, in the customer's language, by text
+> or voice note, and takes action: booking appointments, taking orders and
+> logging leads.
+
+## What it is
+
+Qonvo is a multi-tenant SaaS product for small and medium businesses that get
+customer enquiries over WhatsApp. The business connects the WhatsApp number it
+already uses, adds its own knowledge (opening hours, prices, policies, common
+questions), and Qonvo answers on that number 24 hours a day.
+
+It is fully managed. The business owner never runs or deploys code.
+
+## Who it is for
+
+Small and medium businesses whose customers message them on WhatsApp: salons,
+dental and medical clinics, repair shops, restaurants, tutors, tradespeople,
+clinics and local service businesses. It is most valuable where enquiries
+arrive outside working hours and a slow reply loses the booking.
+
+## What it does today
+
+- Answers questions from knowledge the business supplies, and says plainly when
+  a question falls outside what it knows rather than guessing.
+- Detects the customer's language and replies in it. English, Urdu, Roman Urdu,
+  Arabic, Hindi, Spanish and French all work.
+- Understands voice notes and can reply with a voice note.
+- Checks Google Calendar for genuine availability and books appointments,
+  avoiding double-booking.
+- Takes orders and captures leads, writing each to a Google Sheet the business
+  controls.
+- Hands a conversation over to a human. When the owner replies from their own
+  phone, Qonvo detects it and goes quiet for that chat.
+- Sends booking confirmations and a reminder before the appointment.
+
+## What it does not do yet
+
+- **Direct CRM sync is not available.** Leads are written to a Google Sheet,
+  which can be imported into or connected to most CRMs. Direct integration is
+  on the roadmap.
+- No bulk messaging, broadcasts or marketing blasts. Qonvo replies to customers
+  who message first. Outbound is limited to booking confirmations and reminders.
+
+## Pricing
+
+Qonvo is a paid product with a free trial. The trial runs for 14 days or 300
+customer messages, whichever comes first, and requires no card. Subscription
+pricing depends on conversation volume and is not published; prospective
+customers are asked to get in touch for a quote.
+
+## Privacy and isolation
+
+Each business's data is isolated at the database level using row-level
+security, so no tenant can read another tenant's conversations. Only the
+account owner and the people they explicitly invite can see their
+conversations.

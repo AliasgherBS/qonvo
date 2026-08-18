@@ -16,6 +16,12 @@ const PUBLIC_PREFIXES = [
   "/api/auth",
   "/terms",
   "/privacy",
+  // Next's file-convention metadata routes have no file extension, so the
+  // matcher's extension exclusion below does not cover them. Social crawlers
+  // fetch these anonymously; gating them means a login redirect instead of a
+  // preview image, and every share renders blank. Caught live.
+  "/opengraph-image",
+  "/twitter-image",
 ];
 
 // Matched exactly, not by prefix — "/" as a prefix would make the whole app public.
