@@ -73,8 +73,9 @@ Everything below is now built, tested, and live on `main`:
 ### Public / infra
 | Method | Path | What it does |
 |---|---|---|
-| GET | `/healthz` | Liveness check. |
-| GET | `/metrics` | Prometheus metrics (requests + pipeline). |
+| GET | `/healthz` | Liveness — process is up (dependency-free). |
+| GET | `/readyz` | Readiness — deep-checks Postgres + Redis + WAHA (503 if any down). |
+| GET | `/metrics` | Prometheus metrics — HTTP **and** business/pipeline (messages, latency, cost, gate hits, errors), rendered from the api + worker via Redis. |
 | POST | `/webhooks/waha` | **Main ingress** — every inbound WhatsApp message arrives here. |
 
 ### Auth & account
@@ -160,6 +161,7 @@ Everything below is now built, tested, and live on `main`:
 | PATCH | `/api/admin/tenants/{id}` | **Lifecycle** — name, status (suspend/reactivate), plan, trial end. |
 | DELETE | `/api/admin/tenants/{id}` | **Delete tenant** — purges all its data + WAHA sessions. |
 | PUT | `/api/admin/tenants/{id}/config` | Edit a tenant's settings. |
+| GET | `/api/admin/health` | **System health** — dependency readiness + live metric rollup (powers the /admin/health page). |
 | GET | `/api/admin/fleet` | All WhatsApp sessions + live status. |
 | POST | `/api/admin/fleet/{session}/{action}` | **Session control** — start / stop / restart / logout. |
 | POST | `/api/admin/tenants/{id}/reset-password` | **Recover** a locked-out owner (one-time password). |
@@ -208,6 +210,25 @@ own** — they just happen. This is the list to know about:
 | **Row-Level Security (RLS)** | everywhere | DB-enforced tenant isolation; no tenant can ever see another's data. |
 | **Transactional email** | services | Welcome + password-reset emails (log / Resend / SMTP). |
 | **Config-driven AI providers** | providers | LLM/embeddings/STT/TTS swappable per tenant (OpenAI / Gemini / Groq / custom). |
+
+---
+
+## 3b. Observability (self-hosted, no third party)
+
+- **Metrics.** `/metrics` renders HTTP + business/pipeline metrics. The worker has no
+  HTTP server, so it writes metrics to **Redis** and the api renders them — one scrape
+  target, no extra processes. Counters: messages, replies, cost, tokens, voice, gate
+  hits, skill invocations, provider/send/job failures, webhook 401s; plus a latency
+  histogram.
+- **Readiness.** `/readyz` deep-checks Postgres + Redis + WAHA (503 if any down).
+- **In-app glance.** `/admin/health` page: readiness badges + live metric tiles, no
+  Grafana needed.
+- **Full stack (opt-in).** `docker-compose.monitoring.yml` (`--profile monitoring`) adds
+  **Prometheus + Grafana + Alertmanager + node-exporter** — all self-hosted, bound to
+  `127.0.0.1`, 15-day retention, mem-limited for a small VPS. A pre-built "Qonvo — System
+  Health" Grafana dashboard + 7 alert rules (API down, 5xx spike, job/provider/WhatsApp
+  failures, disk<10%, mem>90%). Email alerts via your own Gmail are opt-in. See
+  [`monitoring/`](../monitoring/) and [`docker-compose.monitoring.yml`](../docker-compose.monitoring.yml).
 
 ---
 

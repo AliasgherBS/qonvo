@@ -167,9 +167,19 @@ TOKEN=$(curl -s -X POST $API/api/auth/login -H 'Content-Type: application/json' 
 H="Authorization: Bearer $TOKEN"
 for ep in /api/me /api/billing /api/onboarding /api/config /api/conversations \
   /api/knowledge/sources /api/sessions /api/integrations /api/analytics/summary \
-  /api/notifications /api/team /api/account/export /metrics /healthz; do
+  /api/notifications /api/team /api/account/export /metrics /healthz /readyz; do
   printf "%-26s %s\n" "$ep" "$(curl -s -o /dev/null -w '%{http_code}' "$API$ep" -H "$H")"
 done   # expect all 200
+```
+
+### A2. Observability
+```bash
+curl -s localhost:8000/readyz            # {"status":"ok","checks":{db,redis,waha: ok}}
+curl -s localhost:8000/metrics | grep qonvo_   # HTTP + business metrics render
+# In-app: log in as admin → /admin/health → readiness + live tiles.
+# Full stack (optional): bring up the monitoring profile, then:
+curl -s 'http://127.0.0.1:9090/api/v1/query?query=up'   # api, node, prometheus all up=1
+#   Grafana http://127.0.0.1:3003 (admin/…) → "Qonvo — System Health" dashboard.
 ```
 
 ### B. WhatsApp conversation (needs the phone)
