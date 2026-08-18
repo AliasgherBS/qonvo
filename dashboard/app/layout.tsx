@@ -1,5 +1,11 @@
 import type { Metadata } from "next";
-import { Bricolage_Grotesque, Manrope, Geist_Mono } from "next/font/google";
+import {
+  Bricolage_Grotesque,
+  Manrope,
+  Geist_Mono,
+  Noto_Sans_Arabic,
+  Noto_Sans_Devanagari,
+} from "next/font/google";
 
 import { Providers } from "@/components/providers";
 import { ThemeScript } from "@/components/theme-script";
@@ -29,6 +35,22 @@ const geistMono = Geist_Mono({
   display: "swap",
 });
 
+// Manrope has no Arabic or Devanagari glyphs, and relying on a system fallback
+// is not safe: verified in a clean browser that Devanagari rendered as tofu
+// boxes with only the fallback named. These two are loaded explicitly so the
+// greetings on the landing page render everywhere, on any machine.
+const notoArabic = Noto_Sans_Arabic({
+  variable: "--font-noto-arabic",
+  subsets: ["arabic"],
+  display: "swap",
+});
+
+const notoDevanagari = Noto_Sans_Devanagari({
+  variable: "--font-noto-devanagari",
+  subsets: ["devanagari"],
+  display: "swap",
+});
+
 export const metadata: Metadata = {
   title: "Qonvo: never miss a customer",
   description: "The AI representative that lives on your WhatsApp number.",
@@ -44,7 +66,7 @@ export default async function RootLayout({ children }: Readonly<{ children: Reac
     <html
       lang="en"
       suppressHydrationWarning
-      className={`${bricolage.variable} ${manrope.variable} ${geistMono.variable}`}
+      className={`${bricolage.variable} ${manrope.variable} ${geistMono.variable} ${notoArabic.variable} ${notoDevanagari.variable}`}
     >
       <head>
         <ThemeScript />

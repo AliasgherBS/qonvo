@@ -160,11 +160,11 @@
   body {
     background: var(--color-background);
     color: var(--color-foreground);
-    /* Manrope is Latin-only. The Noto families cover the Arabic, Urdu and
-       Devanagari strings the marketing pages render, and resolve from the
-       system on every target platform, so they cost no extra download. */
-    font-family: var(--font-sans), "Noto Sans Arabic", "Noto Sans Devanagari",
-      ui-sans-serif, system-ui, sans-serif;
+    /* Manrope is Latin-only. The two Noto faces are loaded explicitly in
+       layout.tsx rather than left to a system fallback: verified in a clean
+       browser that Devanagari renders as tofu boxes when only named here. */
+    font-family: var(--font-sans), var(--font-noto-arabic),
+      var(--font-noto-devanagari), ui-sans-serif, system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
   }
 
