@@ -102,6 +102,40 @@ async def _audit(
     )
 
 
+@router.get("/health")
+async def system_health(
+    claims: TokenClaims = Depends(require_admin),
+    db: AsyncSession = Depends(get_system_db),
+    waha: WahaClient = Depends(get_waha),
+) -> dict:
+    """Live system health for the ops console: dependency readiness + the
+    Redis-backed business/pipeline metric rollup (same numbers Prometheus scrapes,
+    without needing to open Grafana)."""
+    from sqlalchemy import text
+
+    from app.core import obs
+    from app.core.redis import get_redis
+
+    checks: dict[str, str] = {}
+    try:
+        await db.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        checks["database"] = f"fail: {type(exc).__name__}"
+    try:
+        await get_redis().ping()
+        checks["redis"] = "ok"
+    except Exception as exc:  # noqa: BLE001
+        checks["redis"] = f"fail: {type(exc).__name__}"
+    checks["waha"] = "ok" if await waha.ping() else "fail: unreachable"
+
+    return {
+        "ready": all(v == "ok" for v in checks.values()),
+        "checks": checks,
+        "metrics": await obs.snapshot(),
+    }
+
+
 @router.get("/overview")
 async def overview(
     claims: TokenClaims = Depends(require_admin),

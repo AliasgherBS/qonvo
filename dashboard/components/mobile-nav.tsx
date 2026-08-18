@@ -1,10 +1,10 @@
 "use client";
 
 import {
+  Activity,
   BarChart3,
   BookOpen,
   Building2,
-  Gauge,
   Inbox,
   Plug,
   Radio,
@@ -35,7 +35,7 @@ const OWNER_ITEMS = [
 const ADMIN_ITEMS = [
   { href: "/admin/tenants", label: "Tenants", icon: Building2 },
   { href: "/admin/fleet", label: "Fleet", icon: Radio },
-  { href: "/admin/usage", label: "Usage", icon: Gauge },
+  { href: "/admin/health", label: "Health", icon: Activity },
 ];
 
 export function MobileNav({ role }: { role: Role }) {

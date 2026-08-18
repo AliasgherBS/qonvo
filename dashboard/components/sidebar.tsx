@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Activity,
   BarChart3,
   BookOpen,
   Building2,
@@ -64,6 +65,7 @@ const NAV_GROUPS: { label?: string; items: { href: string; label: string; icon: 
 const ADMIN_NAV_ITEMS = [
   { href: "/admin/tenants", label: "Tenants", icon: Building2 },
   { href: "/admin/fleet", label: "Fleet Health", icon: Radio },
+  { href: "/admin/health", label: "System Health", icon: Activity },
   { href: "/admin/usage", label: "Usage", icon: Gauge },
 ];
 

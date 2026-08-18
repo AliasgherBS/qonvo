@@ -1218,6 +1218,19 @@ export interface AdminOverview {
   cost30d: number;
 }
 
+export interface SystemHealth {
+  ready: boolean;
+  checks: Record<string, string>;
+  metrics: {
+    counters: Record<string, Record<string, number>>;
+    histograms: Record<string, { count: number; avg: number }>;
+  };
+}
+
+export const adminHealth = {
+  get: (opts: CallOpts = {}) => apiFetch<SystemHealth>("/api/admin/health", opts),
+};
+
 export const adminOverview = {
   get: (opts: CallOpts = {}) =>
     apiFetch<AdminOverviewDto>("/api/admin/overview", opts).then(
