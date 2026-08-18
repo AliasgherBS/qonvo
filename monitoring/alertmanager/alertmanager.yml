@@ -1,0 +1,30 @@
+# Alertmanager routing. By default alerts are grouped and visible in the
+# Alertmanager UI (http://127.0.0.1:9093) and Grafana — no email until you opt in.
+#
+# To get email alerts via YOUR OWN Gmail (no third party):
+#   1. cp monitoring/alertmanager/smtp_password.example monitoring/alertmanager/smtp_password
+#      and paste your Gmail App Password into it (the file is gitignored).
+#   2. Fill smtp_from / smtp_auth_username / the receiver `to:` below with your address.
+#   3. Uncomment the `global:` block and the `email_configs:` under `default`, then restart.
+#   NOTE: this VPS intercepts STARTTLS on 587 (same issue the app hit) — port 465
+#   (implicit TLS) is used here. If mail doesn't arrive, check `docker logs qonvo-alertmanager`.
+
+# global:
+#   smtp_smarthost: "smtp.gmail.com:465"
+#   smtp_from: "you@gmail.com"
+#   smtp_auth_username: "you@gmail.com"
+#   smtp_auth_password_file: "/etc/alertmanager/smtp_password"
+#   smtp_require_tls: false
+
+route:
+  receiver: default
+  group_by: ["alertname"]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 3h
+
+receivers:
+  - name: default
+    # email_configs:
+    #   - to: "you@gmail.com"
+    #     send_resolved: true

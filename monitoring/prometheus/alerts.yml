@@ -1,0 +1,67 @@
+groups:
+  - name: qonvo-availability
+    rules:
+      - alert: QonvoApiDown
+        expr: up{job="qonvo-api"} == 0
+        for: 2m
+        labels: { severity: critical }
+        annotations:
+          summary: "Qonvo API is down"
+          description: "Prometheus can't scrape api:8000 for 2m — the API or the whole stack may be down."
+
+      - alert: QonvoApiHighErrorRate
+        expr: |
+          sum(rate(qonvo_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(qonvo_http_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Qonvo API 5xx error rate > 5%"
+          description: "More than 5% of API responses are 5xx over the last 10 minutes."
+
+  - name: qonvo-pipeline
+    rules:
+      - alert: QonvoJobFailures
+        expr: increase(qonvo_job_failures_total[15m]) > 0
+        for: 1m
+        labels: { severity: warning }
+        annotations:
+          summary: "Worker jobs are failing"
+          description: "{{ $value }} pipeline job(s) exhausted retries in the last 15m (dead-lettered)."
+
+      - alert: QonvoProviderErrors
+        expr: increase(qonvo_provider_errors_total[15m]) > 5
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "LLM/voice provider errors climbing"
+          description: "{{ $value }} provider call failures in 15m — check the AI provider key/quota."
+
+      - alert: QonvoWhatsappSendFailures
+        expr: increase(qonvo_whatsapp_send_failures_total[15m]) > 3
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "WhatsApp sends are failing"
+          description: "{{ $value }} outbound WhatsApp sends failed in 15m — WAHA session may be down."
+
+  - name: qonvo-host
+    rules:
+      - alert: QonvoHostDiskLow
+        expr: |
+          (node_filesystem_avail_bytes{mountpoint="/host"}
+            / node_filesystem_size_bytes{mountpoint="/host"}) < 0.10
+        for: 10m
+        labels: { severity: critical }
+        annotations:
+          summary: "VPS disk < 10% free"
+          description: "Root filesystem is nearly full — Postgres/Prometheus/MinIO could stall."
+
+      - alert: QonvoHostMemoryHigh
+        expr: |
+          (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) > 0.90
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "VPS memory > 90% used"
+          description: "Sustained high memory — consider stopping the monitoring profile or scaling up."

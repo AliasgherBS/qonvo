@@ -1,0 +1,91 @@
+# Self-hosted observability stack — Prometheus + Grafana + Alertmanager + node-exporter.
+# OPT-IN so it never burdens the VPS unless you ask for it. Joins the same `qonvo`
+# project network, so Prometheus scrapes the API by service name (api:8000).
+#
+# Name the four services explicitly so compose starts ONLY them (a bare
+# `--profile monitoring up` also spins up any dormant app service like the dev
+# dashboard/caddy). In dev, include the auto-merged override too — explicit -f
+# flags drop it and would recreate `api` without its dev config.
+#
+#   Up (dev):
+#     docker compose -f docker-compose.yml -f docker-compose.override.yml -f docker-compose.monitoring.yml \
+#       --profile monitoring up -d prometheus grafana alertmanager node-exporter
+#   Up (prod, no override):
+#     docker compose -f docker-compose.yml -f docker-compose.monitoring.yml \
+#       --profile monitoring up -d prometheus grafana alertmanager node-exporter
+#   Down: same flags → `stop prometheus grafana alertmanager node-exporter`
+#   Grafana: http://127.0.0.1:3003   (admin / ${GRAFANA_ADMIN_PASSWORD:-admin})
+#
+# Resource-conscious for a small VPS: 15-day / 1 GB Prometheus retention, 30s scrape.
+
+services:
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    container_name: qonvo-prometheus
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--storage.tsdb.retention.size=1GB"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./monitoring/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    mem_limit: 400m
+
+  alertmanager:
+    image: prom/alertmanager:v0.28.0
+    container_name: qonvo-alertmanager
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+    volumes:
+      - ./monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      # Gmail app password for email alerts (gitignored). Create it to enable email:
+      #   cp monitoring/alertmanager/smtp_password.example monitoring/alertmanager/smtp_password
+      - ./monitoring/alertmanager/smtp_password:/etc/alertmanager/smtp_password:ro
+    ports:
+      - "127.0.0.1:9093:9093"
+    mem_limit: 128m
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    container_name: qonvo-grafana
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3003:3000"
+    mem_limit: 256m
+
+  node-exporter:
+    image: prom/node-exporter:v1.8.2
+    container_name: qonvo-node-exporter
+    profiles: ["monitoring"]
+    restart: unless-stopped
+    command:
+      - "--path.rootfs=/host"
+    pid: host
+    volumes:
+      # `:ro` (not `ro,rslave`) — rslave propagation needs `/` to be a shared
+      # mount, which WSL2 isn't; plain ro works on both WSL2 and a real VPS.
+      - /:/host:ro
+    mem_limit: 64m
+
+volumes:
+  prometheus_data:
+  grafana_data:
