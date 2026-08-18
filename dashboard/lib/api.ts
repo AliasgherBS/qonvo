@@ -3,7 +3,7 @@
  *
  * Route shapes follow the Phase 1C backend contract (DESIGN.md §5 pipeline,
  * §8 auth, §9 ops console, §10 owner dashboard, §11 data model). The backend
- * returns snake_case JSON — the `*Dto` interfaces below mirror the wire
+ * returns snake_case JSON - the `*Dto` interfaces below mirror the wire
  * shape exactly; every exported function maps that into a camelCase shape
  * for the rest of the app to consume.
  */
@@ -11,7 +11,7 @@
 // Server-side code (Auth.js authorize, SSR) talks to the backend directly over
 // the internal network; the browser uses NEXT_PUBLIC_API_URL, which in a public
 // (tunnelled) deploy is a relative path like "/backend" that a Next.js rewrite
-// proxies to the API — so we never have to bake the public URL into the bundle.
+// proxies to the API - so we never have to bake the public URL into the bundle.
 const API_BASE_URL =
   typeof window === "undefined"
     ? process.env.INTERNAL_API_URL ?? process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
@@ -29,22 +29,22 @@ export class ApiError extends Error {
 
 /**
  * Turn any thrown value from a request into an honest, human-readable message
- * that reflects the ACTUAL failure — never a "backend isn't connected"
+ * that reflects the ACTUAL failure - never a "backend isn't connected"
  * placeholder. Prefers the backend's error detail for client errors, and a
  * clear generic for network/server failures.
  */
 export function describeError(err: unknown, fallback = "Something went wrong. Please try again."): string {
   if (err instanceof ApiError) {
-    if (err.status === 401) return "Your session expired — please sign in again.";
+    if (err.status === 401) return "Your session expired. Please sign in again.";
     if (err.status === 403) return err.message || "You don't have permission to do that.";
     if (err.status === 404) return err.message || "Not found.";
-    if (err.status === 429) return err.message || "Too many requests — please wait a moment.";
-    if (err.status >= 500) return `Server error (${err.status}) — please try again in a moment.`;
-    // 400 / 409 / 422 etc. — the backend's detail is the real, useful message.
+    if (err.status === 429) return err.message || "Too many requests. Please wait a moment.";
+    if (err.status >= 500) return `Server error (${err.status}). Please try again in a moment.`;
+    // 400 / 409 / 422 etc. - the backend's detail is the real, useful message.
     return err.message || fallback;
   }
-  // fetch() itself rejected (no response) — DNS, offline, CORS, tunnel down.
-  if (err instanceof TypeError) return "Couldn't reach the server — check your connection and try again.";
+  // fetch() itself rejected (no response) - DNS, offline, CORS, tunnel down.
+  if (err instanceof TypeError) return "Could not reach the server. Check your connection and try again.";
   return err instanceof Error && err.message ? err.message : fallback;
 }
 
@@ -71,7 +71,7 @@ async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promise<T> {
   if (!res.ok) {
     const raw = await res.text().catch(() => "");
     let message = raw || res.statusText;
-    // FastAPI errors are {"detail": "..."} or a validation array — extract the
+    // FastAPI errors are {"detail": "..."} or a validation array - extract the
     // real detail so callers can show what actually went wrong.
     try {
       const parsed = JSON.parse(raw) as { detail?: unknown };
@@ -81,7 +81,7 @@ async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promise<T> {
         if (first?.msg) message = first.msg;
       }
     } catch {
-      /* body isn't JSON — keep the raw text / status text */
+      /* body isn't JSON - keep the raw text / status text */
     }
     throw new ApiError(message, res.status);
   }
@@ -102,14 +102,14 @@ function buildQuery(params: Record<string, string | number | boolean | undefined
   return qs ? `?${qs}` : "";
 }
 
-/** Shared per-call options — every endpoint accepts an optional bearer token. */
+/** Shared per-call options - every endpoint accepts an optional bearer token. */
 export interface CallOpts {
   token?: string;
   signal?: AbortSignal;
 }
 
 // ---------------------------------------------------------------------------
-// Auth (§8) — POST /api/auth/login, GET /api/me
+// Auth (§8) - POST /api/auth/login, GET /api/me
 // ---------------------------------------------------------------------------
 
 export type Role = "owner" | "staff" | "qonvo_admin";
@@ -190,7 +190,7 @@ export const auth = {
 
   /**
    * Exchange a Google id_token for a Qonvo JWT, provisioning a tenant if this
-   * Google account is new. Identity only — Calendar/Sheets consent is requested
+   * Google account is new. Identity only - Calendar/Sheets consent is requested
    * separately from the Integrations page (incremental authorization).
    */
   google: (idToken: string, businessName?: string, opts: CallOpts = {}) =>
@@ -236,7 +236,7 @@ export const auth = {
 };
 
 // ---------------------------------------------------------------------------
-// WhatsApp sessions — already live (§1, §10 onboarding QR flow)
+// WhatsApp sessions - already live (§1, §10 onboarding QR flow)
 // ---------------------------------------------------------------------------
 
 export type SessionStatus = "STOPPED" | "STARTING" | "SCAN_QR_CODE" | "WORKING" | "FAILED";
@@ -272,14 +272,14 @@ export const sessions = {
       (dto): WhatsappSessionStatus => ({ name: dto.session_name, status: dto.status }),
     ),
 
-  /** This tenant's sessions with last-known status — powers the connect banner. */
+  /** This tenant's sessions with last-known status - powers the connect banner. */
   list: (opts: CallOpts = {}) =>
     apiFetch<SessionStatusDto[]>("/api/sessions", opts).then((rows) =>
       rows.map((dto): WhatsappSessionStatus => ({ name: dto.session_name, status: dto.status })),
     ),
 
   /**
-   * GET /api/sessions/{name}/qr — the QR PNG. The endpoint requires auth, and an
+   * GET /api/sessions/{name}/qr - the QR PNG. The endpoint requires auth, and an
    * <img> tag can't send a bearer header (it would 401 and the QR never renders),
    * so fetch it as an authenticated blob and let the caller wrap it in an object
    * URL (revoking the previous one to avoid leaks).
@@ -547,7 +547,7 @@ export interface Notification {
   type: NotificationType;
   title: string;
   body: string | null;
-  // Convenience one-liner for compact UIs (the bell) — title, then body.
+  // Convenience one-liner for compact UIs (the bell) - title, then body.
   message: string;
   read: boolean;
   createdAt: string;
@@ -559,7 +559,7 @@ function mapNotification(dto: NotificationDto): Notification {
     type: dto.type,
     title: dto.title,
     body: dto.body,
-    message: [dto.title, dto.body].filter(Boolean).join(" — "),
+    message: [dto.title, dto.body].filter(Boolean).join(". "),
     read: dto.read,
     createdAt: dto.created_at,
   };
@@ -631,7 +631,7 @@ function configFromDays(
 interface TenantConfigDto {
   // The backend leaves every optional field null until it's set (a freshly
   // created tenant_config is all-null), so mirror that here and coerce to
-  // safe defaults in mapTenantConfig — the form assumes strings.
+  // safe defaults in mapTenantConfig - the form assumes strings.
   persona: string | null;
   business_name: string | null;
   primary_language: string | null;
@@ -907,7 +907,7 @@ export const analytics = {
 };
 
 // ---------------------------------------------------------------------------
-// Integrations — Google Calendar / Sheets (§7 agentic skills)
+// Integrations - Google Calendar / Sheets (§7 agentic skills)
 // ---------------------------------------------------------------------------
 
 export type IntegrationProvider = "google_calendar" | "google_sheets";
@@ -1021,7 +1021,7 @@ export const integrations = {
     ),
 
   /**
-   * Start the Google consent flow. Returns a URL for the caller to navigate to —
+   * Start the Google consent flow. Returns a URL for the caller to navigate to - 
    * it can't be a server-side redirect because a top-level navigation carries no
    * Authorization header.
    */
@@ -1061,7 +1061,7 @@ export const integrations = {
 };
 
 // ---------------------------------------------------------------------------
-// Ops console — qonvo_admin only (§9)
+// Ops console - qonvo_admin only (§9)
 // ---------------------------------------------------------------------------
 
 export type TenantStatus = "onboarding" | "active" | "suspended";
@@ -1140,7 +1140,7 @@ export const adminTenants = {
       ...opts,
     }).then((dto): CreateTenantResult => ({ ...mapAdminTenant(dto), tempPassword: dto.temp_password })),
 
-  // Config is embedded in GET /tenants/{id} — there is no /config GET route.
+  // Config is embedded in GET /tenants/{id} - there is no /config GET route.
   getConfig: (id: string, opts: CallOpts = {}) =>
     apiFetch<AdminTenantDto & { config: TenantConfigDto | null }>(
       `/api/admin/tenants/${id}`,

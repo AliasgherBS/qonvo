@@ -14,7 +14,7 @@ export default function LoginPage() {
           </div>
           <h1 className="text-2xl font-extrabold tracking-tight">Welcome back</h1>
           <p className="text-sm text-muted-foreground">
-            Never miss a customer — sign in to your Qonvo dashboard.
+            Sign in to your Qonvo dashboard.
           </p>
         </div>
 

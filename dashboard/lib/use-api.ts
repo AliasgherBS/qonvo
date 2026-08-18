@@ -12,7 +12,7 @@ interface UseApiState<T> {
 }
 
 /**
- * A 401 means the access token expired or was revoked — bounce to /login.
+ * A 401 means the access token expired or was revoked - bounce to /login.
  *
  * Guard on the *presence of a token*: during the brief window before the
  * session hydrates, `useAuthToken()` is undefined and requests go out
@@ -26,7 +26,7 @@ function handleUnauthorized(err: unknown, token: string | undefined) {
   }
 }
 
-/** Minimal fetch-on-mount hook — deliberately no cache/dedupe library. */
+/** Minimal fetch-on-mount hook - deliberately no cache/dedupe library. */
 export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
   const [state, setState] = useState<UseApiState<T>>({ data: null, loading: true, error: null });
   const fetcherRef = useRef(fetcher);
@@ -68,13 +68,13 @@ export function useApi<T>(fetcher: () => Promise<T>, deps: unknown[] = []) {
   return { ...state, refetch };
 }
 
-/** Same as useApi, but re-runs on an interval — used for the QR/inbox/notification polls. */
+/** Same as useApi, but re-runs on an interval - used for the QR/inbox/notification polls. */
 export function usePolling<T>(fetcher: () => Promise<T>, intervalMs: number, deps: unknown[] = []) {
   const [state, setState] = useState<UseApiState<T>>({ data: null, loading: true, error: null });
   const fetcherRef = useRef(fetcher);
   fetcherRef.current = fetcher;
   const runRef = useRef<() => void>(() => {});
-  // See useApi — snapshot the request-time token for the 401 guard.
+  // See useApi - snapshot the request-time token for the 401 guard.
   const token = useAuthToken();
 
   useEffect(() => {

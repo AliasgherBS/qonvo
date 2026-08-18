@@ -3,6 +3,7 @@
 import { signIn } from "next-auth/react";
 import { useState, type FormEvent } from "react";
 
+import { GoogleSignInButton } from "@/components/google-sign-in-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,7 +28,7 @@ export function SignupForm() {
       setLoading(false);
       setError(
         err instanceof ApiError && err.status === 409
-          ? "An account with this email already exists — try signing in instead."
+          ? "An account with this email already exists. Try signing in instead."
           : "Couldn't create your account. Please try again.",
       );
       return;
@@ -43,7 +44,7 @@ export function SignupForm() {
     setLoading(false);
 
     if (!result || result.error) {
-      setError("Account created — please sign in to continue.");
+      setError("Account created. Please sign in to continue.");
       return;
     }
     window.location.href = "/onboarding/connect";
@@ -51,6 +52,8 @@ export function SignupForm() {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4 rounded-2xl border border-border bg-surface p-6">
+      <GoogleSignInButton label="Sign up with Google" />
+
       <div className="space-y-1.5">
         <Label htmlFor="business">Business name</Label>
         <Input

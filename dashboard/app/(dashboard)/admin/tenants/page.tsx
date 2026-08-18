@@ -40,7 +40,7 @@ export default function AdminTenantsPage() {
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight">Tenants</h1>
           <p className="text-sm text-muted-foreground">
-            Every business on Qonvo — create tenants, invite owners, manage lifecycle.
+            Every business on Qonvo. Create tenants, invite owners and manage lifecycle.
           </p>
         </div>
         <Button onClick={() => setCreateOpen(true)}>New tenant</Button>
@@ -121,7 +121,7 @@ function OverviewTiles() {
           {loading ? (
             <Skeleton className="mt-2 h-7 w-14" />
           ) : (
-            <p className="mt-1 text-2xl font-extrabold tracking-tight">{t.value ?? "—"}</p>
+            <p className="mt-1 text-2xl font-extrabold tracking-tight">{t.value ?? "-"}</p>
           )}
           <p className="mt-1 text-xs text-muted-foreground">{t.hint}</p>
         </div>
@@ -255,7 +255,7 @@ function TempPasswordDialog({ result, onClose }: { result: CreateTenantResult | 
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch {
-      // Clipboard access denied — the password is still selectable/visible.
+      // Clipboard access denied - the password is still selectable/visible.
     }
   }
 
@@ -264,7 +264,7 @@ function TempPasswordDialog({ result, onClose }: { result: CreateTenantResult | 
       open={result != null}
       onClose={onClose}
       title="Tenant created"
-      description={result ? `${result.name} is ready — share this temporary password with ${result.ownerEmail} now.` : undefined}
+      description={result ? `${result.name} is ready. Share this temporary password with ${result.ownerEmail} now.` : undefined}
     >
       {result ? (
         <div className="space-y-4">
@@ -273,7 +273,7 @@ function TempPasswordDialog({ result, onClose }: { result: CreateTenantResult | 
             <p className="mt-1 break-all font-mono text-sm font-bold">{result.tempPassword}</p>
           </div>
           <p className="text-xs text-danger">
-            This is shown once and can&apos;t be retrieved again — copy it now.
+            This is shown once and cannot be retrieved again. Copy it now.
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={handleCopy}>

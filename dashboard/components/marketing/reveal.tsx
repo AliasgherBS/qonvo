@@ -75,9 +75,13 @@ export function RevealItem({
 
 /**
  * Continuous horizontal scroll. Renders its children twice so the loop has no
- * visible seam. Under reduced motion it collapses to a single static row,
- * because an endlessly moving strip is precisely what that setting exists to
- * stop.
+ * visible seam.
+ *
+ * Under reduced motion the strip simply stops moving. It deliberately keeps
+ * the identical DOM either way: useReducedMotion() returns false during SSR
+ * and true on a client that prefers reduced motion, so branching on it to
+ * render a different tree throws a hydration mismatch. Caught live as React
+ * error #418. Only the animation is conditional, never the markup.
  */
 export function Marquee({
   children,
@@ -88,18 +92,18 @@ export function Marquee({
 }) {
   const reduce = useReducedMotion();
 
-  if (reduce) {
-    return <div className="flex flex-wrap justify-center gap-3">{children}</div>;
-  }
-
   return (
     <div className="relative flex overflow-hidden [mask-image:linear-gradient(to_right,transparent,black_12%,black_88%,transparent)]">
       {[0, 1].map((copy) => (
         <motion.div
           key={copy}
           className="flex shrink-0 items-center gap-3 pr-3"
-          animate={{ x: ["0%", "-100%"] }}
-          transition={{ duration: speed, ease: "linear", repeat: Infinity }}
+          animate={reduce ? undefined : { x: ["0%", "-100%"] }}
+          transition={
+            reduce
+              ? undefined
+              : { duration: speed, ease: "linear", repeat: Infinity }
+          }
           aria-hidden={copy === 1}
         >
           {children}

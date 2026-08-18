@@ -42,7 +42,7 @@ function toggleTone(current: string, option: string): string {
 }
 // Value is the ISO code the backend stores ("en"); label is what the owner sees.
 // (Previously the option value was the display name, so picking "English"
-// persisted "english" — an invalid language code.)
+// persisted "english" - an invalid language code.)
 const LANGUAGE_OPTIONS: { value: string; label: string }[] = [
   { value: "en", label: "English" },
   { value: "ur", label: "Urdu" },
@@ -161,7 +161,7 @@ export function TenantConfigForm({
                   );
                 })}
               </div>
-              <p className="text-xs text-muted-foreground">Pick any that fit — they combine.</p>
+              <p className="text-xs text-muted-foreground">Pick any that fit. They combine.</p>
             </div>
           </div>
           <div className="space-y-1.5">
@@ -215,7 +215,7 @@ export function TenantConfigForm({
         <CardContent className="space-y-2">
           {!form.businessHoursEnabled ? (
             <p className="rounded-xl bg-surface-muted px-3 py-2 text-xs text-muted-foreground">
-              Off — your AI rep replies around the clock. Turn on to set open hours below.
+              Off. Your AI rep replies around the clock. Turn on to set open hours below.
             </p>
           ) : null}
           {businessHours.map((row) => (
@@ -289,7 +289,7 @@ export function TenantConfigForm({
             <CardTitle>Payments</CardTitle>
             <CardDescription>
               Your own receiving account details. The AI shares these verbatim when a customer wants to
-              pay — never card data, just how to send you money.
+              pay. Never card data, just how to send you money.
             </CardDescription>
           </div>
         </CardHeader>
@@ -304,7 +304,7 @@ export function TenantConfigForm({
               placeholder={"Bank: HBL\nTitle: Glow Salon\nAccount / IBAN: PK..\nJazzCash/Easypaisa: 03XX-XXXXXXX"}
             />
             <p className="text-xs text-muted-foreground">
-              Leave blank to keep the payment option off — the bot only offers it when this is set.
+              Leave blank to keep the payment option off. The bot only offers it when this is set.
             </p>
           </div>
         </CardContent>
@@ -316,7 +316,7 @@ export function TenantConfigForm({
             <CardTitle>Voice</CardTitle>
             <CardDescription>
               Whether your AI rep replies with a voice note. Requires a voice (STT/TTS) provider key
-              in your plan — otherwise it always replies in text.
+              in your plan. Otherwise it always replies in text.
             </CardDescription>
           </div>
         </CardHeader>

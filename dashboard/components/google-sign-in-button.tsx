@@ -6,7 +6,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 
 /**
- * "Continue with Google" — identity only.
+ * "Continue with Google" - identity only.
  *
  * Renders nothing unless NEXT_PUBLIC_GOOGLE_AUTH_ENABLED is set, so a deployment
  * without Google credentials shows a working password form rather than a button

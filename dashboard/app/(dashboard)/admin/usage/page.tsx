@@ -20,7 +20,7 @@ export default function AdminUsagePage() {
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">Usage</h1>
         <p className="text-sm text-muted-foreground">
-          Per-tenant messages, tokens, and cost — the basis for manual invoicing.
+          Per-tenant messages, tokens and cost. The basis for manual invoicing.
         </p>
       </div>
 

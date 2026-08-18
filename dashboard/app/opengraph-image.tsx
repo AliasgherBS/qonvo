@@ -15,6 +15,10 @@ export const contentType = "image/png";
  * mark is inlined as a data URI from public/ and the type falls back to the
  * system sans. That is a deliberate trade: a correct mark and correct colours
  * matter far more on a 1200x630 card than the exact display face.
+ *
+ * Satori also cannot resolve CSS custom properties, so Ink, Paper and Signal
+ * Green have to be literals here. They are the same values globals.css
+ * defines; if the brand palette ever changes, change it here too.
  */
 export default async function Image() {
   const mark = await readFile(join(process.cwd(), "public/logo-mark.png"));
@@ -30,6 +34,7 @@ export default async function Image() {
           flexDirection: "column",
           justifyContent: "center",
           padding: "0 90px",
+          // brand-ok: no-raw-hex
           background: "#08130E",
         }}
       >
@@ -41,17 +46,20 @@ export default async function Image() {
             fontWeight: 800,
             letterSpacing: "-0.03em",
             lineHeight: 1.05,
+            // brand-ok: no-raw-hex
             color: "#F3EFE6",
             display: "flex",
           }}
         >
           Never miss a customer
+          {/* brand-ok: no-raw-hex */}
           <span style={{ color: "#00C776" }}>&nbsp;again.</span>
         </div>
         <div
           style={{
             marginTop: 28,
             fontSize: 32,
+            // brand-ok: no-raw-hex
             color: "#F3EFE6",
             opacity: 0.66,
             display: "flex",

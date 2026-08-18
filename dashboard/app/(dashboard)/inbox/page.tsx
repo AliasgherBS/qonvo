@@ -66,7 +66,7 @@ export default function InboxPage() {
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">Inbox</h1>
         <p className="text-sm text-muted-foreground">
-          Every conversation your number has, live — take over any time.
+          Every conversation your number has, live. Take over any time.
         </p>
       </div>
 
@@ -298,7 +298,7 @@ function Transcript({
       await conversations.takeover(conversationId2, { token });
       onChanged();
     } catch {
-      // Backend not wired yet — action is inert until it lands.
+      // Backend not wired yet - action is inert until it lands.
     } finally {
       setPending(false);
     }
@@ -310,7 +310,7 @@ function Transcript({
       await conversations.release(conversationId2, { token });
       onChanged();
     } catch {
-      // Backend not wired yet — action is inert until it lands.
+      // Backend not wired yet - action is inert until it lands.
     } finally {
       setPending(false);
     }

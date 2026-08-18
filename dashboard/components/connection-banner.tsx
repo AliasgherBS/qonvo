@@ -8,7 +8,7 @@ import { useAuthToken, usePolling } from "@/lib/use-api";
 
 /**
  * Owner-facing connection watchdog. Polls the tenant's sessions and, when none
- * is WORKING, shows a persistent banner linking to the connect flow — so a
+ * is WORKING, shows a persistent banner linking to the connect flow - so a
  * dropped number (or a never-connected one) is impossible to miss. Renders
  * nothing while healthy or still loading, so it never flashes.
  */
@@ -35,7 +35,7 @@ export function ConnectionBanner() {
       </span>
       <span>
         {hasSession
-          ? "Your WhatsApp number looks disconnected — reconnect so the bot keeps replying."
+          ? "Your WhatsApp number looks disconnected. Reconnect so the bot keeps replying."
           : "Connect your WhatsApp number to start receiving messages."}
         <span className="ml-1 underline">Open connect →</span>
       </span>

@@ -13,7 +13,7 @@ export default function SignupPage() {
           </div>
           <h1 className="text-2xl font-extrabold tracking-tight">Start your free trial</h1>
           <p className="text-sm text-muted-foreground">
-            Put an AI rep on your WhatsApp in minutes — 14 days free, no card required.
+            Put an AI rep on your WhatsApp. 14 days free, no card required.
           </p>
         </div>
 

@@ -27,7 +27,7 @@ export function OnboardingChecklist() {
           <div>
             <CardTitle>Finish setting up</CardTitle>
             <CardDescription>
-              {doneCount} of {data.steps.length} done — complete these to go live.
+              {doneCount} of {data.steps.length} done. Complete these to go live.
             </CardDescription>
           </div>
         </div>

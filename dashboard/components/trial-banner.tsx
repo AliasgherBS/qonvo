@@ -8,7 +8,7 @@ import { useAuthToken, usePolling } from "@/lib/use-api";
 /**
  * Owner-facing plan/trial indicator. Shows days left during a trial, and a
  * clear "your bot is paused" banner once the trial ends or the tenant is
- * suspended — so trial expiry is never silent. Hidden for paid, active tenants.
+ * suspended - so trial expiry is never silent. Hidden for paid, active tenants.
  */
 export function TrialBanner() {
   const token = useAuthToken();
@@ -21,8 +21,8 @@ export function TrialBanner() {
   if (data.status === "suspended" || data.expired) {
     const msg =
       data.status === "suspended"
-        ? "Your account is suspended — your AI rep isn't replying. Contact your Qonvo rep to reactivate."
-        : "Your free trial has ended — your AI rep has paused replying. Contact your Qonvo rep to go paid.";
+        ? "Your account is suspended. Your AI rep is not replying. Contact your Qonvo rep to reactivate."
+        : "Your free trial has ended. Your AI rep has paused replying. Contact your Qonvo rep to go paid.";
     return (
       <div className="mb-4 flex items-center gap-3 rounded-2xl border border-danger/40 bg-danger/10 px-4 py-3 text-sm font-semibold text-foreground">
         <AlertTriangle className="h-4 w-4 shrink-0 text-danger" />

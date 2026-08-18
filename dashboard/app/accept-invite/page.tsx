@@ -120,7 +120,7 @@ function AcceptInviteForm() {
         </>
       ) : (
         <p className="rounded-xl bg-surface-muted px-3 py-2 text-xs text-muted-foreground">
-          You already have a Qonvo account — accepting adds this workspace to it.
+          You already have a Qonvo account. Accepting adds this workspace to it.
         </p>
       )}
       {error ? (

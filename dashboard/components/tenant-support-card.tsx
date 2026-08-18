@@ -41,7 +41,7 @@ export function TenantSupportCard({ tenant }: { tenant: AdminTenant }) {
           <div className="text-sm">
             <span className="font-semibold">Owner password</span>
             <p className="text-xs text-muted-foreground">
-              Generates a one-time password for {tenant.ownerEmail ?? "the owner"}. Relay it securely —
+              Generates a one-time password for {tenant.ownerEmail ?? "the owner"}. Relay it securely.
               it&apos;s shown only once.
             </p>
           </div>

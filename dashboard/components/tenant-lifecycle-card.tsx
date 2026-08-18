@@ -65,7 +65,7 @@ export function TenantLifecycleCard({ tenant, onChanged }: { tenant: AdminTenant
         </div>
         {suspended ? (
           <p className="rounded-xl bg-warning/10 px-3 py-2 text-xs text-muted-foreground">
-            Suspended — the bot is silent for this tenant until reactivated.
+            Suspended. The bot is silent for this tenant until reactivated.
           </p>
         ) : null}
 

@@ -17,7 +17,7 @@ const STATUS_COPY: Record<SessionStatus, { title: string; description: string }>
   },
   STARTING: {
     title: "Starting up…",
-    description: "Spinning up your WhatsApp session — this only takes a moment.",
+    description: "Spinning up your WhatsApp session. This only takes a moment.",
   },
   SCAN_QR_CODE: {
     title: "Scan to connect",
@@ -25,7 +25,7 @@ const STATUS_COPY: Record<SessionStatus, { title: string; description: string }>
   },
   WORKING: {
     title: "Connected",
-    description: "This number is live — Qonvo is watching for new messages.",
+    description: "This number is live. Qonvo is watching for new messages.",
   },
   FAILED: {
     title: "Connection failed",
@@ -67,7 +67,7 @@ export default function ConnectPage() {
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">Connect your WhatsApp number</h1>
         <p className="text-sm text-muted-foreground">
-          Never miss a customer — link the business number Qonvo should watch.
+          Link the business number Qonvo should watch.
         </p>
       </div>
 
@@ -129,7 +129,7 @@ function QrFlow({ sessionName, onRetry }: { sessionName: string; onRetry: () => 
         objectUrl = URL.createObjectURL(blob);
         setQrUrl(objectUrl);
       } catch {
-        // Transient (token not hydrated yet, QR rotating) — retry next tick.
+        // Transient (token not hydrated yet, QR rotating) - retry next tick.
       }
     };
 
@@ -188,7 +188,7 @@ function QrFlow({ sessionName, onRetry }: { sessionName: string; onRetry: () => 
 
         {error ? (
           <p className="text-xs text-muted-foreground">
-            Waiting on the sessions API — status will update automatically once it&apos;s reachable.
+            Waiting on the sessions API. Status updates automatically once it is reachable.
           </p>
         ) : null}
       </CardContent>

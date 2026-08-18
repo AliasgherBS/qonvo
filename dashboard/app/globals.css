@@ -53,7 +53,7 @@
 }
 
 /*
- * Runtime theme variables — the semantic layer every component consumes
+ * Runtime theme variables - the semantic layer every component consumes
  * (bg-background, text-foreground, etc via the @theme inline block below).
  * Light values are the default; `.dark` overrides them. Tailwind's `dark:`
  * variant is remapped to a class selector so we can toggle manually while

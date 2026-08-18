@@ -45,7 +45,7 @@ export function Sidebar({ role }: { role: Role }) {
       </div>
 
       <nav className="mt-8 flex flex-1 flex-col gap-1">
-        {/* A qonvo_admin has no tenant, so the owner pages 403 for them — show
+        {/* A qonvo_admin has no tenant, so the owner pages 403 for them. Show
             only the cross-tenant admin console. Owners get the owner nav. */}
         {role === "qonvo_admin"
           ? ADMIN_NAV_ITEMS.map((item) => (

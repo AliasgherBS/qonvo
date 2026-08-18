@@ -1,7 +1,15 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
+import Google from "next-auth/providers/google";
 
 import { ApiError, auth as apiAuth } from "@/lib/api";
+
+// Google SSO is optional — without a client id configured, only the email +
+// password provider is offered, so a deployment that hasn't set up Google still
+// has a working login rather than a broken button.
+const googleEnabled = Boolean(
+  process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET,
+);
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   // Behind our own reverse proxy (Caddy) or on localhost — the Host header is
@@ -43,9 +51,44 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         }
       },
     }),
+    ...(googleEnabled
+      ? [
+          Google({
+            clientId: process.env.AUTH_GOOGLE_ID,
+            clientSecret: process.env.AUTH_GOOGLE_SECRET,
+            // Identity only. Calendar/Sheets scopes are requested later, from the
+            // Integrations page — asking for them here would put a scary
+            // permissions screen in front of every signup.
+            authorization: { params: { scope: "openid email profile" } },
+          }),
+        ]
+      : []),
   ],
   callbacks: {
-    jwt({ token, user }) {
+    async jwt({ token, user, account }) {
+      // Google sign-in: trade the id_token for a Qonvo JWT. The backend verifies
+      // it against Google's JWKS and provisions a tenant if the account is new.
+      if (account?.provider === "google" && account.id_token) {
+        try {
+          const login = await apiAuth.google(account.id_token);
+          const me = await apiAuth.me({ token: login.accessToken });
+          token.tenantId = login.tenantId;
+          token.tenantName = me.tenantName;
+          token.role = login.role;
+          token.accessToken = login.accessToken;
+          token.email = me.email;
+          if (login.name) token.name = login.name;
+          return token;
+        } catch {
+          // No Qonvo token means no usable session; blank the access token so
+          // middleware bounces the user back to /login instead of landing them
+          // on an inbox that 401s on every request. Empty rather than deleted so
+          // the JWT shape stays typed, and it's falsy either way.
+          token.accessToken = "";
+          return token;
+        }
+      }
+
       if (user) {
         token.tenantId = user.tenantId;
         token.tenantName = user.tenantName;

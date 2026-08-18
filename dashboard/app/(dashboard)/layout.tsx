@@ -11,7 +11,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
   const session = await auth();
 
   // Middleware already redirects unauthenticated requests, but a server
-  // layout should never trust that alone — fail closed if it's missing.
+  // layout should never trust that alone - fail closed if it's missing.
   if (!session?.user) {
     redirect("/login");
   }

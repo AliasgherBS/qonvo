@@ -20,7 +20,7 @@ export default function AnalyticsPage() {
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">Analytics</h1>
         <p className="text-sm text-muted-foreground">
-          Volume, speed, and outcomes over the last 30 days — proof your AI rep is pulling its weight.
+          Volume, speed and outcomes over the last 30 days.
         </p>
       </div>
 
@@ -79,7 +79,7 @@ function AnalyticsContent({ data }: { data: AnalyticsSummary }) {
         <CardContent className="pt-5">
           <p className="text-sm font-bold">Top questions the bot couldn&apos;t answer</p>
           {data.topGaps.length === 0 ? (
-            <p className="mt-3 text-sm text-muted-foreground">No knowledge gaps yet — nice.</p>
+            <p className="mt-3 text-sm text-muted-foreground">No knowledge gaps yet.</p>
           ) : (
             <ul className="mt-3 space-y-2">
               {data.topGaps.map((g) => (

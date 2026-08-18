@@ -73,7 +73,7 @@ export default function KnowledgePage() {
         <div>
           <h1 className="text-2xl font-extrabold tracking-tight">Knowledge</h1>
           <p className="text-sm text-muted-foreground">
-            What your AI representative knows — upload docs, write entries by hand, or review the gaps.
+            What your AI representative knows. Upload docs, write entries by hand, or review the gaps.
           </p>
         </div>
         <div className="flex gap-2">
@@ -232,7 +232,7 @@ function ViewEditSourceDialog({
       open={source !== null}
       onClose={onClose}
       title={editable ? "Edit entry" : "View source"}
-      description={editable ? "Update the title or content — saving re-indexes it." : "Extracted content (read-only)."}
+      description={editable ? "Update the title or content. Saving re-indexes it." : "Extracted content (read-only)."}
     >
       <div className="space-y-4">
         <div className="space-y-1.5">
@@ -465,7 +465,7 @@ function UploadDropzone({ onUploaded }: { onUploaded: () => void }) {
       </p>
       <p className="text-xs text-muted-foreground">or click to browse</p>
       {status === "error" ? (
-        <p className="text-xs text-danger">Upload failed — please try again.</p>
+        <p className="text-xs text-danger">Upload failed. Please try again.</p>
       ) : null}
     </div>
   );
@@ -545,7 +545,7 @@ function SourcesTable({
               <Badge tone={statusTone(source.status)}>{statusLabel(source.status)}</Badge>
             </td>
             <td className="px-5 py-3 text-muted-foreground">
-              {source.createdAt ? new Date(source.createdAt).toLocaleDateString() : "—"}
+              {source.createdAt ? new Date(source.createdAt).toLocaleDateString() : "-"}
             </td>
             <td className="px-5 py-3">
               <div className="flex items-center justify-end gap-1">

@@ -42,7 +42,7 @@ export default function AdminFleetPage() {
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">Fleet health</h1>
         <p className="text-sm text-muted-foreground">
-          Every WAHA session across every tenant — live status, at a glance.
+          Live status for every WAHA session, across every tenant.
         </p>
       </div>
 

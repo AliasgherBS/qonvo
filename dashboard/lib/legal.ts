@@ -6,7 +6,7 @@ import { CONTACT } from "@/lib/contact";
  * ⚠️ FILL THESE IN before submitting the OAuth client to Google, and before any
  * real customer signs up. Google's reviewers check that the privacy policy names
  * a real, reachable operator; placeholder values are a common rejection reason.
- * These documents are a good-faith starting point, not legal advice — have them
+ * These documents are a good-faith starting point, not legal advice - have them
  * reviewed against the jurisdiction you actually operate in.
  */
 export const LEGAL = {
@@ -14,7 +14,7 @@ export const LEGAL = {
   companyName: "Qonvo",
   /** Registered legal entity, if different from the trading name. */
   legalEntity: "Qonvo",
-  /** Where you are established — governs the Terms and data-protection claims. */
+  /** Where you are established - governs the Terms and data-protection claims. */
   jurisdiction: "Pakistan",
   /** Must be a monitored address; Google emails this during verification. */
   contactEmail: CONTACT.email,
@@ -27,7 +27,7 @@ export const LEGAL = {
   /**
    * Google Search Console HTML-tag verification token. Rendered into <head> on
    * every page via the root layout's metadata. Google re-checks periodically, so
-   * leave it in place after verification succeeds — removing it un-verifies the
+   * leave it in place after verification succeeds - removing it un-verifies the
    * property, which in turn blocks OAuth app verification.
    */
   googleSiteVerification: "teVyxdgaBnnvMQen7MFi2_OMHrXElkl1ubjK4f5dWl8",
@@ -35,7 +35,7 @@ export const LEGAL = {
 
 /**
  * Google requires this statement, close to verbatim, from any app using its APIs.
- * Reviewers look for it explicitly — don't paraphrase it away.
+ * Reviewers look for it explicitly - don't paraphrase it away.
  */
 export const GOOGLE_LIMITED_USE =
   "Qonvo's use and transfer of information received from Google APIs to any other app " +

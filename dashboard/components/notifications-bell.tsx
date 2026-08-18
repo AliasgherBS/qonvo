@@ -41,7 +41,7 @@ export function NotificationsBell() {
       await notifications.markRead(id, { token });
       refetch();
     } catch {
-      // Backend not wired yet — the bell stays inert until it lands.
+      // Backend not wired yet - the bell stays inert until it lands.
     }
   }
 
