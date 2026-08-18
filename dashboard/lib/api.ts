@@ -700,7 +700,12 @@ function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
       cfg.businessHoursTimezone,
       cfg.businessHoursClosedMessage,
     ),
-    owner_alert_number: cfg.ownerAlertNumber,
+    // `|| null` matters: the API validator rejects an empty string for this
+    // field ("must be digits with an optional leading +") but accepts null.
+    // Sending "" made every save 422 whenever the owner had not set an alert
+    // number, which is the default. llm_provider and payment_details already
+    // guarded this way; this one was missed.
+    owner_alert_number: cfg.ownerAlertNumber || null,
     llm_provider: cfg.llmProvider || null,
     llm_model: cfg.llmModel,
     payment_details: cfg.paymentDetails || null,
@@ -709,13 +714,32 @@ function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
   };
 }
 
+/** Wire-level field names, for pages that own only part of the config. */
+export type ConfigField = keyof TenantConfigDto;
+
 export const config = {
   get: (opts: CallOpts = {}) => apiFetch<TenantConfigDto>("/api/config", opts).then(mapTenantConfig),
 
-  update: (payload: TenantConfig, opts: CallOpts = {}) =>
-    apiFetch<TenantConfigDto>("/api/config", { method: "PUT", body: toTenantConfigDto(payload), ...opts }).then(
+  /**
+   * `only` restricts the payload to the named fields. The API applies
+   * `exclude_unset`, so an omitted field is left untouched rather than
+   * cleared.
+   *
+   * This is what lets Behavior, Skills and Business each save independently:
+   * without it every page PUTs the whole config, so a page can fail validation
+   * on a field it does not show, and two pages can clobber each other.
+   */
+  update: (payload: TenantConfig, opts: CallOpts = {}, only?: ConfigField[]) => {
+    const full = toTenantConfigDto(payload);
+    const body = only
+      ? (Object.fromEntries(
+          only.filter((k) => k in full).map((k) => [k, full[k]]),
+        ) as Partial<TenantConfigDto>)
+      : full;
+    return apiFetch<TenantConfigDto>("/api/config", { method: "PUT", body, ...opts }).then(
       mapTenantConfig,
-    ),
+    );
+  },
 };
 
 // ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ import { ArrowLeft, Building2 } from "lucide-react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 
-import { TenantConfigForm } from "@/components/tenant-config-form";
+import { AllConfigSections } from "@/components/settings/tenant-config";
 import { TenantLifecycleCard } from "@/components/tenant-lifecycle-card";
 import { TenantSupportCard } from "@/components/tenant-support-card";
 import { Badge } from "@/components/ui/badge";
@@ -100,7 +100,7 @@ export default function AdminTenantDetailPage() {
             </CardContent>
           </Card>
         ) : (
-          <TenantConfigForm
+          <AllConfigSections
             config={config}
             onSave={(next) => adminTenants.updateConfig(tenantId, next, { token }).then(() => undefined)}
           />

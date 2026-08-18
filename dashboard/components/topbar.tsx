@@ -1,8 +1,5 @@
-import { LogOut } from "lucide-react";
-
+import { AccountMenu } from "@/components/account-menu";
 import { NotificationsBell } from "@/components/notifications-bell";
-import { SignOutButton } from "@/components/sign-out-button";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { Badge } from "@/components/ui/badge";
 import type { Role } from "@/lib/api";
 
@@ -15,10 +12,12 @@ const ROLE_LABEL: Record<Role, string> = {
 export function Topbar({
   tenantName,
   userName,
+  email,
   role,
 }: {
   tenantName: string;
   userName: string;
+  email?: string | null;
   role: Role;
 }) {
   return (
@@ -29,14 +28,12 @@ export function Topbar({
       </div>
 
       <div className="flex items-center gap-3">
-        <span className="hidden text-sm text-muted-foreground sm:inline">{userName}</span>
         {/* Notifications are tenant-scoped; a cross-tenant admin has no tenant,
             so the poll would 403. Only owners/staff get the bell. */}
         {role === "qonvo_admin" ? null : <NotificationsBell />}
-        <ThemeToggle />
-        <SignOutButton>
-          <LogOut className="h-4 w-4" />
-        </SignOutButton>
+        {/* Theme and sign-out moved inside the account menu: they are settings
+            about the person, not about the workspace. */}
+        <AccountMenu userName={userName} email={email} />
       </div>
     </header>
   );

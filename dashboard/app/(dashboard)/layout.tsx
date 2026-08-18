@@ -24,6 +24,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         <Topbar
           tenantName={session.user.tenantName}
           userName={session.user.name ?? session.user.email ?? "You"}
+          email={session.user.email}
           role={session.user.role}
         />
 

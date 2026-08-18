@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { conversations, describeError, type Conversation, type ConversationState, type Message } from "@/lib/api";
 import { useAuthToken, usePolling } from "@/lib/use-api";
+import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { cn, formatRelativeTime } from "@/lib/utils";
 
 const STATE_LABEL: Record<ConversationState, string> = {
@@ -69,6 +70,10 @@ export default function InboxPage() {
           Every conversation your number has, live. Take over any time.
         </p>
       </div>
+
+      {/* Moved here from Settings: it is a first-run aid, not a setting, and
+          the inbox is the first place a new owner lands. */}
+      <OnboardingChecklist />
 
       <div className="flex gap-2">
         {TABS.map((t) => (
