@@ -1,10 +1,13 @@
 """Third-party integrations: Google Calendar + Sheets (DESIGN.md §7).
 
-Credentials are Google *service-account* keys. A tenant shares their Calendar or
-Sheet with the service-account email, so there is no per-user OAuth flow — which
-keeps the product "fully-managed, owner never runs code". Per-tenant keys live
-(Fernet-encrypted) in the ``integrations`` table and override the system-default
-key in settings.
+Credentials are per-tenant Google *user* OAuth grants: the owner clicks Connect,
+consents, and Qonvo stores the resulting refresh token Fernet-encrypted in the
+``integrations`` table. Nothing to copy, paste, or share by hand — which is what
+keeps the product "fully-managed, owner never runs code".
+
+Scope choice keeps every provider off Google's sensitive-scope review path (see
+``scopes``): Sheets uses per-file ``drive.file`` (the file the owner picks), and
+Calendar writes to a secondary calendar Qonvo creates in the owner's account.
 """
 
 from __future__ import annotations

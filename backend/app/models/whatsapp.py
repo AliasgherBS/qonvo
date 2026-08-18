@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from sqlalchemy import Enum, Integer, String, UniqueConstraint
+from datetime import datetime
+
+from sqlalchemy import DateTime, Enum, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base, TenantScopedMixin
@@ -31,3 +33,9 @@ class WhatsAppSession(Base, TenantScopedMixin):
     daily_cap: Mapped[int] = mapped_column(Integer, nullable=False, default=500)
     # Warm-up stage for a new number (DESIGN.md §5.6): 1 → 50/day, 2 → 150/day, 0 → normal.
     warmup_stage: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Auto-recovery bookkeeping (§12.1). Bounds how hard the health poller
+    # tries to restart a FAILED session; both reset once it is WORKING again.
+    recovery_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_recovery_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

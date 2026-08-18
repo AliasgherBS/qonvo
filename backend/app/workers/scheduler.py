@@ -22,7 +22,7 @@ from app.waha.session_health import poll_session_health
 async def session_health_job(ctx: dict[str, Any]) -> None:
     waha: WahaClient = ctx["waha"]
     failed = await poll_session_health(waha)
-    logger.bind(newly_failed=failed).info("session-health poll complete")
+    logger.bind(gave_up=failed).info("session-health poll complete")
 
 
 async def booking_reminders_job(ctx: dict[str, Any]) -> None:

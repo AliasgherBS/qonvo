@@ -12,6 +12,8 @@ class SheetsClient(Protocol):
 
     async def read_rows(self) -> list[list[str]]: ...
 
+    async def list_tabs(self) -> list[str]: ...
+
     async def ping(self) -> None: ...
 
 
@@ -70,19 +72,32 @@ class GoogleSheetsClient:
         )
         return resp.get("values", [])
 
-    async def ping(self) -> None:
-        """Confirm the key reaches the spreadsheet AND the target tab exists.
+    async def list_tabs(self) -> list[str]:
+        """Tab titles in this spreadsheet. Metadata-only (no grid data).
 
-        Metadata-only (no grid data). Validating the tab here means a wrong tab
-        name surfaces at Test time with the list of real tabs, instead of a
-        cryptic "Unable to parse range" at the first append.
+        Doubles as the ``drive.file`` access check: under per-file scope this call
+        only succeeds for a spreadsheet the owner actually picked, so it is what
+        the dashboard uses to populate the tab dropdown after a Picker selection.
         """
         meta = await asyncio.to_thread(
             lambda: self._service.spreadsheets()
-            .get(spreadsheetId=self._spreadsheet_id, includeGridData=False)
+            .get(
+                spreadsheetId=self._spreadsheet_id,
+                includeGridData=False,
+                fields="properties.title,sheets.properties.title",
+            )
             .execute()
         )
-        titles = [s["properties"]["title"] for s in meta.get("sheets", [])]
+        return [s["properties"]["title"] for s in meta.get("sheets", [])]
+
+    async def ping(self) -> None:
+        """Confirm the grant reaches the spreadsheet AND the target tab exists.
+
+        Validating the tab here means a wrong tab name surfaces at Test time with
+        the list of real tabs, instead of a cryptic "Unable to parse range" at the
+        first append.
+        """
+        titles = await self.list_tabs()
         # A range may be a bare tab ("Leads") or "Tab!A1:D" — the tab is the part
         # before "!". An empty range targets the first tab, which always exists.
         tab = self._sheet_range.split("!", 1)[0].strip().strip("'")

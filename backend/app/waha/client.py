@@ -7,6 +7,7 @@ directly (DESIGN.md §5.6).
 
 from __future__ import annotations
 
+import contextlib
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -222,6 +223,19 @@ class WahaClient:
 
     async def stop_session(self, name: str) -> dict[str, Any]:
         return await self._request("POST", f"/api/sessions/{name}/stop")
+
+    async def restart_session(self, name: str) -> dict[str, Any]:
+        """Stop then start.
+
+        A bare ``start`` on a FAILED session is a no-op: WAHA still considers
+        it running and answers ``Session is already running``, which is why
+        clicking Start in the Fleet console never revived a dead session. The
+        stop is best-effort because a session WAHA has already torn down
+        returns an error that must not block the start.
+        """
+        with contextlib.suppress(WahaError):
+            await self.stop_session(name)
+        return await self.start_session(name)
 
     async def logout_session(self, name: str) -> dict[str, Any]:
         return await self._request("POST", f"/api/sessions/{name}/logout")
