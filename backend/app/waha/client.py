@@ -218,6 +218,14 @@ class WahaClient:
     async def get_session(self, name: str) -> dict[str, Any]:
         return await self._request("GET", f"/api/sessions/{name}")
 
+    async def ping(self) -> bool:
+        """Lightweight liveness probe for readiness checks."""
+        try:
+            await self._request("GET", "/ping")
+            return True
+        except WahaError:
+            return False
+
     async def start_session(self, name: str) -> dict[str, Any]:
         return await self._request("POST", f"/api/sessions/{name}/start")
 

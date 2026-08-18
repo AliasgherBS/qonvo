@@ -149,6 +149,9 @@ async def _write_failed_job(
                 attempts=attempts,
             )
         )
+    from app.core import obs
+
+    await obs.incr("qonvo_job_failures_total", {"function": "process_conversation"})
 
 
 # --------------------------------------------------------------------------- #

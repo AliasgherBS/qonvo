@@ -11,6 +11,7 @@ logic is unit-testable without Postgres.
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -21,6 +22,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import obs
 from app.core.config import settings
 from app.core.logging import logger
 from app.core.tenancy import tenant_session
@@ -555,6 +557,42 @@ async def run_pipeline(
     catch_up: bool = False,
     waha: Any = None,
 ) -> PipelineResult:
+    """Time the turn and record cross-process metrics, then delegate.
+
+    Latency, throughput, and gate counters are captured here uniformly for every
+    path (gated or full reply); success-only metrics (cost/tokens/voice) are
+    recorded inside. Metrics failures never affect the reply.
+    """
+    start = time.perf_counter()
+    result = await _run_pipeline_inner(
+        fragments,
+        session=session,
+        chat_id=chat_id,
+        tenant_id=tenant_id,
+        send_gateway=send_gateway,
+        catch_up=catch_up,
+        waha=waha,
+    )
+    await obs.observe("qonvo_pipeline_duration_seconds", time.perf_counter() - start)
+    await obs.incr("qonvo_messages_processed_total", {"direction": "inbound"}, len(fragments))
+    if result.reply_text:
+        await obs.incr("qonvo_replies_sent_total")
+    gate = result.meta.get("gate")
+    if gate:
+        await obs.incr("qonvo_pipeline_gate_total", {"gate": str(gate)})
+    return result
+
+
+async def _run_pipeline_inner(
+    fragments: list[InboundFragment],
+    *,
+    session: str,
+    chat_id: str,
+    tenant_id: str,
+    send_gateway: SendGateway,
+    catch_up: bool = False,
+    waha: Any = None,
+) -> PipelineResult:
     """Produce (and send) a grounded reply for the coalesced fragments.
 
     Owns the full turn: gates → RAG → tool loop → persistence → send. Runs
@@ -821,12 +859,24 @@ async def run_pipeline(
                 chat_id=chat_id,
             )
             try:
-                return await execute_skill(ctx, call.name, call.arguments)
+                out = await execute_skill(ctx, call.name, call.arguments)
+                await obs.incr(
+                    "qonvo_skill_invocations_total",
+                    {"skill": call.name, "outcome": str(out.get("status", "ok"))},
+                )
+                return out
             except Exception as exc:  # noqa: BLE001 — surfaced to the model, not raised
                 bound.warning(f"skill {call.name} failed: {exc}")
+                await obs.incr(
+                    "qonvo_skill_invocations_total", {"skill": call.name, "outcome": "error"}
+                )
                 return {"status": "error", "message": str(exc)}
 
-        loop_result = await run_tool_loop(llm, llm_messages, tools, dispatch)
+        try:
+            loop_result = await run_tool_loop(llm, llm_messages, tools, dispatch)
+        except Exception:
+            await obs.incr("qonvo_provider_errors_total", {"kind": "llm"})
+            raise
         # .strip() so a whitespace-only model output (seen when an untranscribed
         # voice note yields an empty user turn) falls back instead of sending a
         # blank WhatsApp message.
@@ -887,6 +937,13 @@ async def run_pipeline(
             cost=cost,
             voice_seconds=voice_seconds,
         )
+        # Cross-process metrics (Prometheus): success-path spend + throughput.
+        if cost:
+            await obs.incr("qonvo_llm_cost_usd_total", value=float(cost))
+        if total_tokens:
+            await obs.incr("qonvo_llm_tokens_total", value=float(total_tokens))
+        if voice_seconds:
+            await obs.incr("qonvo_voice_seconds_total", value=float(voice_seconds))
 
         prior_bot_turns = sum(1 for m in history_rows if m.author == MessageAuthor.bot)
         turn_number = prior_bot_turns + 1
@@ -938,6 +995,9 @@ async def _send(bound: Any, gateway: SendGateway, session: str, chat_id: str, te
         await gateway.send_text(session, chat_id, text, pacing=SessionPacing())
     except DailyCapExceeded:
         bound.warning("daily cap reached — reply suppressed")
+    except Exception:
+        await obs.incr("qonvo_whatsapp_send_failures_total")
+        raise
 
 
 async def _synthesize_reply(text: str, tenant_config: Any, bound: Any) -> str | None:

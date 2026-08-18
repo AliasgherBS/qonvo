@@ -14,6 +14,7 @@ from sqlalchemy import select
 
 from app.agent.debounce import add_fragment, is_duplicate, is_rate_limited
 from app.api.deps import get_arq
+from app.core import obs
 from app.core.config import settings
 from app.core.logging import logger
 from app.core.redis import get_redis
@@ -84,6 +85,7 @@ async def waha_webhook(
     # --- HMAC verify against the raw body (§5.1) ---
     secret = session_row.hmac_secret or settings.waha_hmac_secret
     if not verify_waha_hmac(raw, x_webhook_hmac, secret):
+        await obs.incr("qonvo_webhook_unauthorized_total")
         response.status_code = status.HTTP_401_UNAUTHORIZED
         return {"status": "unauthorized", "detail": "HMAC verification failed"}
 
@@ -156,6 +158,7 @@ async def waha_webhook(
         limit=settings.inbound_rate_limit,
         window_seconds=settings.inbound_rate_window_seconds,
     ):
+        await obs.incr("qonvo_pipeline_gate_total", {"gate": "rate_limited"})
         bound.info(f"rate limited: {chat_id}")
         return {"status": "ignored", "reason": "rate_limited"}
 
