@@ -19,20 +19,33 @@ branch_labels = None
 depends_on = None
 
 
+def _existing_columns(table: str) -> set[str]:
+    return {c["name"] for c in sa.inspect(op.get_bind()).get_columns(table)}
+
+
 def upgrade() -> None:
-    op.add_column(
-        "whatsapp_sessions",
-        sa.Column(
-            "recovery_attempts",
-            sa.Integer(),
-            server_default="0",
-            nullable=False,
-        ),
-    )
-    op.add_column(
-        "whatsapp_sessions",
-        sa.Column("last_recovery_at", sa.DateTime(timezone=True), nullable=True),
-    )
+    # 0001 builds the schema with ``create_all`` from the *current* models, so on
+    # a fresh database these columns already exist by the time this migration
+    # runs and a bare add_column aborts the whole upgrade. Guarding here keeps
+    # ``alembic upgrade head`` working on both an existing box and a new one
+    # (which is the only way a first deploy ever succeeds).
+    present = _existing_columns("whatsapp_sessions")
+
+    if "recovery_attempts" not in present:
+        op.add_column(
+            "whatsapp_sessions",
+            sa.Column(
+                "recovery_attempts",
+                sa.Integer(),
+                server_default="0",
+                nullable=False,
+            ),
+        )
+    if "last_recovery_at" not in present:
+        op.add_column(
+            "whatsapp_sessions",
+            sa.Column("last_recovery_at", sa.DateTime(timezone=True), nullable=True),
+        )
 
     # A table altered by the migration owner does not hand new privileges to
     # the app roles automatically, and DEFAULT PRIVILEGES do not apply to a

@@ -6,8 +6,11 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from app.core.logging import logger
 from app.models.enums import ConversationState
 from app.providers.base import ChatMessage, LLMResult, ToolCall
+from app.waha.send_gateway import SessionPacing
+from app.workers import pipeline
 from app.workers.pipeline import (
     build_system_prompt,
     business_hours_closed_reply,
@@ -228,3 +231,43 @@ async def test_tool_loop_returns_immediately_with_no_tool_calls():
     assert result.text == "just an answer"
     assert result.iterations == 1
     assert called is False
+
+
+# --------------------------------------------------------------------------- #
+# Send pacing (DESIGN.md §5.6)
+# --------------------------------------------------------------------------- #
+class _CapturingGateway:
+    """Records the pacing each send was given."""
+
+    def __init__(self) -> None:
+        self.pacing: SessionPacing | None = None
+
+    async def send_text(self, _session, _chat_id, _text, *, pacing):
+        self.pacing = pacing
+        return {}
+
+    async def send_voice(self, _session, _chat_id, *, data, pacing):
+        self.pacing = pacing
+        return {}
+
+
+@pytest.mark.asyncio
+async def test_bot_text_reply_is_sent_with_the_session_pacing():
+    """A bot reply must be paced by the session it is sent from, not by defaults."""
+    gateway = _CapturingGateway()
+    pacing = SessionPacing(daily_cap=40, warmup_stage=2)
+
+    await pipeline._send(logger, gateway, "s1", "1@c.us", "hi", pacing)
+
+    assert gateway.pacing == pacing
+
+
+@pytest.mark.asyncio
+async def test_bot_voice_reply_is_sent_with_the_session_pacing():
+    """Voice replies count against the same cap as text ones."""
+    gateway = _CapturingGateway()
+    pacing = SessionPacing(daily_cap=40, warmup_stage=2)
+
+    await pipeline._send_voice(logger, gateway, "s1", "1@c.us", "YWJj", pacing)
+
+    assert gateway.pacing == pacing

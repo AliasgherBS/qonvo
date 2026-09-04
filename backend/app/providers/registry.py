@@ -45,8 +45,12 @@ def _resolve_base_url(provider_name: str, override: str | None) -> str | None:
     return PROVIDER_PRESETS.get(provider_name)
 
 
-def resolve_llm(tenant_config: TenantConfigLike | None = None) -> OpenAICompatProvider:
-    """Build an LLM provider for a tenant, falling back to system defaults.
+def resolve_llm_identity(tenant_config: TenantConfigLike | None = None) -> tuple[str, str]:
+    """Return the ``(provider, model)`` an LLM call for this tenant will use.
+
+    Split out from :func:`resolve_llm` so that pricing and logging name the same
+    model that actually answered. Reading the flat columns separately drifts the
+    moment a tenant is configured through the nested ``providers`` map.
 
     Lookup order per field: ``tenant_config.providers["llm"]`` entry, then the
     flat ``tenant_config.llm_provider``/``llm_model`` columns, then
@@ -63,6 +67,13 @@ def resolve_llm(tenant_config: TenantConfigLike | None = None) -> OpenAICompatPr
         or (tenant_config.llm_model if tenant_config is not None else None)
         or settings.llm_model
     )
+    return provider_name, model
+
+
+def resolve_llm(tenant_config: TenantConfigLike | None = None) -> OpenAICompatProvider:
+    """Build an LLM provider for a tenant, falling back to system defaults."""
+    llm_cfg = _capability_config(tenant_config, "llm")
+    provider_name, model = resolve_llm_identity(tenant_config)
     base_url = _resolve_base_url(provider_name, llm_cfg.get("base_url") or settings.llm_base_url)
     api_key = llm_cfg.get("api_key") or settings.llm_api_key
 
