@@ -1,13 +1,26 @@
 # Qonvo edge reverse proxy (DESIGN.md §2).
 # Automatic HTTPS via Let's Encrypt. {$DOMAIN} comes from the environment.
 #
-#   app.<DOMAIN>  → dashboard (Next.js)
-#   api.<DOMAIN>  → api (FastAPI)
+#   PRODUCTION            STAGING
+#   app.<DOMAIN>          dev.app.<DOMAIN>     dashboard
+#   api.<DOMAIN>          dev.api.<DOMAIN>     api
+#
+# The staging hosts are commented out until a real domain exists — Caddy fails
+# to start if it cannot get a certificate, so an unused host block would take
+# production down with it. Uncomment both together with the staging stack.
+#
+# Certificates: `dev.app.<DOMAIN>` is a second-level subdomain, so a wildcard
+# `*.<DOMAIN>` certificate does NOT cover it. Either let Caddy issue a separate
+# certificate per host (the default, and fine), or use `dev-app.<DOMAIN>` style
+# single-level names if you ever move to a wildcard.
 
 {
 	# email admin@{$DOMAIN}   # uncomment and set for ACME registration
 }
 
+# --------------------------------------------------------------------------- #
+# Production
+# --------------------------------------------------------------------------- #
 app.{$DOMAIN} {
 	encode zstd gzip
 	reverse_proxy dashboard:3000
@@ -17,3 +30,29 @@ api.{$DOMAIN} {
 	encode zstd gzip
 	reverse_proxy api:8000
 }
+
+# --------------------------------------------------------------------------- #
+# Staging — same box, the qonvo-staging compose project (./qonvo-staging.sh)
+# --------------------------------------------------------------------------- #
+# Reachable from Caddy by container name because the staging project runs its
+# own network; join it explicitly, or address the host ports as below.
+#
+# dev.app.{$DOMAIN} {
+# 	encode zstd gzip
+# 	# The staging dashboard is a host process on 3012, not a compose service.
+# 	reverse_proxy host.docker.internal:3012
+#
+# 	# Staging must never be indexed, and must never be mistaken for the real
+# 	# product by anything crawling or archiving it.
+# 	header {
+# 		X-Robots-Tag "noindex, nofollow"
+# 	}
+# }
+#
+# dev.api.{$DOMAIN} {
+# 	encode zstd gzip
+# 	reverse_proxy host.docker.internal:8010
+# 	header {
+# 		X-Robots-Tag "noindex, nofollow"
+# 	}
+# }

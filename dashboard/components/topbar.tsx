@@ -1,4 +1,5 @@
 import { AccountMenu } from "@/components/account-menu";
+import { EnvBadge } from "@/components/env-badge";
 import { NotificationsBell } from "@/components/notifications-bell";
 import { Badge } from "@/components/ui/badge";
 import type { Role } from "@/lib/api";
@@ -25,6 +26,8 @@ export function Topbar({
       <div className="flex items-center gap-3">
         <p className="text-sm font-bold tracking-tight">{tenantName}</p>
         <Badge tone={role === "qonvo_admin" ? "info" : "default"}>{ROLE_LABEL[role]}</Badge>
+        {/* Renders nothing in production; shouts on staging and local. */}
+        <EnvBadge />
       </div>
 
       <div className="flex items-center gap-3">
