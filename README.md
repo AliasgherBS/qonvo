@@ -100,9 +100,17 @@ inline docs: [`.env.example`](.env.example). Dashboard config: [`dashboard/.env.
 - `QONVO_WAHA_API_KEY` / `QONVO_WAHA_HMAC_SECRET`, MinIO creds.
 
 **Optional feature keys** (features cleanly disable if unset):
-- **Integrations** (Calendar/Sheets): a Google **service-account** JSON in
-  `QONVO_GOOGLE_SERVICE_ACCOUNT_JSON`, or per-tenant in the dashboard → the tenant shares their
-  Calendar/Sheet with the service-account email (no OAuth).
+- **Billing**: `QONVO_BILLING_PROVIDER` (default `manual` — no gateway, plans recorded by an
+  operator). Prices live with the payment provider, never in this repo; the catalogue in
+  `backend/app/billing/plans.py` carries entitlements only.
+- **Integrations** (Calendar/Sheets) **and Sign in with Google**: one platform-wide OAuth client —
+  `QONVO_GOOGLE_OAUTH_CLIENT_ID` / `_SECRET` / `_REDIRECT_BASE` (plus `AUTH_GOOGLE_ID` /
+  `AUTH_GOOGLE_SECRET` in `dashboard/.env.local` for SSO). The owner clicks **Connect Google**;
+  Qonvo creates a "Qonvo Bookings" calendar and takes the spreadsheet from the Google Picker, so
+  there is nothing to paste or share. All scopes are non-sensitive (`calendar.app.created`,
+  `calendar.freebusy`, `drive.file`), so **no Google verification is required**.
+  Optional: `QONVO_GOOGLE_PICKER_API_KEY` / `_APP_ID` for the sheet chooser — without them the
+  owner can still use "Make one for me".
 - **Voice**: `QONVO_STT_API_KEY` (Groq Whisper works; Gemini has no audio endpoints) for voice-in;
   `QONVO_TTS_API_KEY` (OpenAI/Uplift — **Groq has no TTS**) for voice-out. Without TTS the bot replies
   in text. Toggle per tenant in Settings → Voice.

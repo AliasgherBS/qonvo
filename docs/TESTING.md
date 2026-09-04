@@ -12,14 +12,17 @@ product does) — this file is **how we prove it works.**_
 ```bash
 # Unit tests — no external services. This is the everyday gate. (~2s)
 cd backend && uv run pytest -q && uv run ruff check
-#   → 219 passed, 7 skipped
+#   → 286 passed, 8 skipped
 
 # Integration tests (marked @pytest.mark.postgres) — need a live, MIGRATED Postgres.
-#   Run from the host with the two test DSNs pointed at the exposed DB (port 5433):
-QONVO_TEST_DATABASE_URL=postgresql+asyncpg://qonvo_app:<pass>@localhost:5433/qonvo \
-QONVO_TEST_SYSTEM_DATABASE_URL=postgresql+asyncpg://qonvo_system:<pass>@localhost:5433/qonvo \
+#   Point them at STAGING (port 5443), not production. They create and delete
+#   real tenants, so running them against 5433 writes to live data:
+#     ./qonvo-staging.sh up && ./qonvo-staging.sh migrate
+#   then use the staging passwords from .env.staging:
+QONVO_TEST_DATABASE_URL=postgresql+asyncpg://qonvo_app:<staging-pass>@localhost:5443/qonvo \
+QONVO_TEST_SYSTEM_DATABASE_URL=postgresql+asyncpg://qonvo_system:<staging-pass>@localhost:5443/qonvo \
   uv run pytest -m postgres -q
-#   36/41 pass. The 5 that fail are all in test_knowledge_api.py — they call
+#   51/56 pass. The 5 that fail (3 in test_knowledge_api.py, 2 in test_takeover.py) call
 #   get_redis() directly (default host `redis:6379`, unresolvable from the host)
 #   and expect the async ingest worker to flip a source to `ready`. That's an
 #   environment limitation, not a code defect (see §4), and they aren't in the
@@ -31,9 +34,9 @@ cd dashboard && npx tsc --noEmit && npm run build
 # One end-to-end smoke of the live API (see script in §5).
 ```
 
-**Current status:** ✅ 219 unit tests pass · ✅ ruff clean · ✅ dashboard builds ·
-✅ 36/41 integration tests pass (team/admin/auth/takeover/RLS) · ⚠️ 5 knowledge
-integration tests are host-environment-broken, not defects (§4).
+**Current status:** ✅ 286 unit tests pass · ✅ ruff clean · ✅ dashboard builds ·
+✅ 51/56 integration tests pass (team/admin/auth/takeover/RLS/billing) · ⚠️ 5 are
+host-environment-broken, not defects (§4).
 
 ---
 
@@ -139,7 +142,20 @@ Legend: **A** = automated (pytest) · **M** = manual check needed · **A+M** = b
 
 ## 4. Known test gaps / flakes (honest list)
 
-- **5 `test_knowledge_api.py` failures from the host.** They call `get_redis()`
+- **The pg modules pollute each other.** Every module builds its own engines but
+  they all share one FastAPI `app`, and each `client` fixture calls
+  `app.dependency_overrides.clear()` on teardown. Results therefore depend on
+  collection order: tests that pass individually can fail in a full run (seen with
+  `test_admin`'s config test and one billing test). **Always re-run a failure in
+  isolation before believing it.** The fix is a shared conftest fixture that
+  overrides and restores rather than clearing; tracked, not done.
+- **3 `test_knowledge_api.py` failures need a running worker.** They expect the
+  async ingest job to flip a source from `pending_ingest` to `ready`, which needs a
+  worker consuming the queue. Not a code defect.
+- **`get_redis()` defaults to the `redis` hostname**, which the host cannot resolve
+  (the host talks to Redis on `localhost:6380`, staging on `6390`). Set
+  `QONVO_REDIS_URL` when running from the host. Superseded detail below.
+- **The old note (kept for context).** They call `get_redis()`
   directly (default host `redis:6379`, which the host can't resolve — the host
   talks to Redis on `localhost:6380`) and expect the async ingest worker to flip a
   source from `pending_ingest` to `ready`, which needs a running worker. **Not a
@@ -212,11 +228,11 @@ curl -s 'http://127.0.0.1:9090/api/v1/query?query=up'   # api, node, prometheus 
 
 ## 6. Regression checklist before any release
 
-- [ ] `uv run pytest -q` → 219 passed, ruff clean.
-- [ ] `uv run pytest -m postgres -q` (with the two test DSNs) → 36/41 (only the 5 §4 knowledge tests fail).
+- [ ] `uv run pytest -q` → 286 passed, ruff clean.
+- [ ] `uv run pytest -m postgres -q` (staging DSNs) → 51/56 (only the 5 §4 host-Redis tests fail).
 - [ ] `cd dashboard && npx tsc --noEmit && npm run build` → clean.
 - [ ] §5.A live API smoke → all 200.
 - [ ] §5.B steps 1, 2, 6 (text, handoff, rate-limit) at minimum.
 - [ ] `/metrics` and `/healthz` return 200.
 
-_Last updated: 2026-08-16._
+_Last updated: 2026-09-04._

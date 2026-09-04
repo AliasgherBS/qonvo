@@ -41,3 +41,6 @@ next-env.d.ts
 
 # Monitoring: Gmail app password for Alertmanager email (never commit)
 monitoring/alertmanager/smtp_password
+
+# Windows "downloaded from the internet" markers, created by WSL/Explorer.
+*:Zone.Identifier

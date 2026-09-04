@@ -111,7 +111,11 @@ Everything below is now built, tested, and live on `main`:
 | Method | Path | What it does |
 |---|---|---|
 | GET/PUT | `/api/config` | Read / update tenant settings (persona, tone, hours, voice mode, payment details…). |
-| GET | `/api/billing` | Owner's plan, trial status, days left, expired flag. |
+| GET | `/api/billing` | Owner's plan, subscription, entitlements, days left, blocked reason. |
+| GET | `/api/billing/plans` | The plan catalogue (entitlements, no prices). |
+| POST | `/api/billing/checkout` | Start an upgrade → provider URL, or instructions if none. |
+| POST | `/webhooks/billing/{provider}` | Provider events, signature-verified + idempotent. |
+| PUT | `/api/admin/tenants/{id}/subscription` | Record a plan by hand (the manual adapter). |
 | GET | `/api/notifications` | Owner alerts (e.g. handoff needed). |
 | POST | `/api/notifications/{id}/read` | Mark an alert read. |
 | GET | `/api/onboarding` | First-run checklist (business info, WhatsApp, knowledge, integrations). |
@@ -190,6 +194,10 @@ own** — they just happen. This is the list to know about:
 | Feature | Where it runs | What it does |
 |---|---|---|
 | **Trial hard quota** | pipeline gate | Trial tenant capped at 300 messages/month; over → polite "team will reach out". |
+| **Service entitlement gate** | pipeline gate | Suspended / expired trial / unpaid past grace / cancelled past period → bot silent. |
+| **Payment grace window** | billing state | A failed payment keeps answering for 7 days while the provider retries. |
+| **Seat entitlement** | team invite | Invites refused past the plan's seat count (pending invites count). |
+| **New-number warm-up** | scheduler | Week 1 capped at 50 sends/day, week 2 at 150, then normal. |
 | **Per-conversation rate limit** | webhook | Drops >20 msgs/60s from one chat (Redis). Stops flood/abuse. |
 | **Real cost recording** | pipeline | Logs true $ per reply from a per-model price table; warns (not $0) on a price miss. |
 | **Voice metering** | pipeline | Records voice seconds (in + out) for billing/visibility. |
@@ -243,8 +251,11 @@ own** — they just happen. This is the list to know about:
 - **First-run onboarding checklist** ✅ — derived `/api/onboarding` + a Settings card.
 
 ### Still missing (need an external decision, not just code)
-- **Automated billing / payments** — plan/trial are tracked, but there's no payment collection;
-  upgrading to "paid" is a manual admin action. _Blocked on a payment-provider choice + keys._
+- **A connected payment gateway** — the billing subsystem is built and provider-agnostic
+  (plans, subscriptions, entitlements, grace/cancellation states, an idempotent webhook route),
+  and ships with the **manual adapter**: owners are told to contact us, and an operator records
+  the plan. _Blocked only on a merchant-of-record account (Paddle/Polar); the adapter is one
+  file plus a price-id map._ See [the billing design](superpowers/specs/2026-09-04-billing-design.md).
 - **CRM sync** — wanted, not built (Sheets is the current stand-in). _Blocked on a CRM choice._
 - **Self-serve account deletion** — intentionally admin-only (`DELETE /api/admin/tenants/{id}`)
   so an irreversible purge always goes through an operator, not one owner click.
@@ -266,10 +277,17 @@ own** — they just happen. This is the list to know about:
 - **Prompt caching not used.** Provider prompt-caching (cheaper repeated system prompts) is off.
 
 ### Coordination note (current)
-A parallel "Qonvo Personal" (individual users, not just businesses) effort lives on branch
-`qonvo-personal-milestone-a` with its own DB migration (`0005`). To avoid a migration-number
-clash, **no new migrations have been added to `main`** — so the migration-dependent backlog items
-above (team seats, self-serve data export) are deferred until that branch merges.
+"Qonvo Personal" (individuals rather than businesses) lives unmerged on branch
+`qonvo-personal-milestone-a`. It is now a **separate major offering** on a shared backend, not a
+variant of this product, so it is sequenced after the current commercialisation work.
+
+Two things that branch will need at merge time:
+
+1. **The alembic chain forks.** Its `0005` and `main`'s `0006` both declare
+   `down_revision = "0004_billing"`, so a naive merge leaves two heads and
+   `alembic upgrade head` fails. Re-point `0005` at the then-current head (`0008_billing`).
+2. **It carries two fixes that already landed on `main` separately** — the send-pacing default
+   and the LLM cost-model resolution — so expect conflicts in `pipeline.py`.
 
 ---
 
