@@ -1,7 +1,7 @@
 /**
  * Which environment am I looking at?
  *
- * Production renders nothing — the absence of a badge is what "this is real"
+ * Production renders nothing: the absence of a badge is what "this is real"
  * looks like, and a permanent banner on the live product would be noise. Any
  * other environment says so loudly, because the expensive mistake is doing
  * something destructive while believing you are on staging.
