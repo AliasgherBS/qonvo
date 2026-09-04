@@ -856,12 +856,31 @@ export const account = {
 // Billing / trial status (§9)
 // ---------------------------------------------------------------------------
 
+interface SubscriptionDto {
+  plan_key: string;
+  status: string;
+  provider: string;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+}
+
 interface BillingStatusDto {
   plan: string;
   status: string;
   trial_ends_at: string | null;
   days_left: number | null;
   expired: boolean;
+  blocked_reason: string | null;
+  subscription: SubscriptionDto | null;
+  entitlements: Record<string, number>;
+}
+
+export interface Subscription {
+  planKey: string;
+  status: string;
+  provider: string;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
 }
 
 export interface BillingStatus {
@@ -870,6 +889,20 @@ export interface BillingStatus {
   trialEndsAt: string | null;
   daysLeft: number | null;
   expired: boolean;
+  blockedReason: string | null;
+  subscription: Subscription | null;
+  entitlements: Record<string, number>;
+}
+
+export interface PlanInfo {
+  key: string;
+  name: string;
+  entitlements: Record<string, number>;
+}
+
+export interface Checkout {
+  url: string | null;
+  instructions: string | null;
 }
 
 export const billing = {
@@ -881,8 +914,28 @@ export const billing = {
         trialEndsAt: d.trial_ends_at,
         daysLeft: d.days_left,
         expired: d.expired,
+        blockedReason: d.blocked_reason,
+        subscription: d.subscription
+          ? {
+              planKey: d.subscription.plan_key,
+              status: d.subscription.status,
+              provider: d.subscription.provider,
+              currentPeriodEnd: d.subscription.current_period_end,
+              cancelAtPeriodEnd: d.subscription.cancel_at_period_end,
+            }
+          : null,
+        entitlements: d.entitlements ?? {},
       }),
     ),
+
+  plans: (opts: CallOpts = {}) => apiFetch<PlanInfo[]>("/api/billing/plans", opts),
+
+  checkout: (planKey: string, opts: CallOpts = {}) =>
+    apiFetch<Checkout>("/api/billing/checkout", {
+      ...opts,
+      method: "POST",
+      body: { plan_key: planKey },
+    }),
 };
 
 // ---------------------------------------------------------------------------

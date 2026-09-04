@@ -11,6 +11,7 @@ from app.waha.send_gateway import (
     SendGateway,
     SessionPacing,
     effective_daily_cap,
+    pacing_for_session,
     token_bucket_wait,
     typing_delay_seconds,
 )
@@ -79,7 +80,7 @@ def _gateway(fake_redis):
 
 async def test_send_text_sequence(fake_redis):
     gw, waha, slept = _gateway(fake_redis)
-    await gw.send_text("s1", "1@c.us", "hello")
+    await gw.send_text("s1", "1@c.us", "hello", pacing=SessionPacing())
 
     # Human-like sequence: seen → startTyping → (delay) → sendText → stopTyping.
     waha.send_seen.assert_awaited_once_with("s1", "1@c.us")
@@ -111,3 +112,23 @@ async def test_burst_then_throttle(fake_redis):
     # 4th send finds an empty bucket and must wait ~one refill interval (jitter mid = 5).
     await gw.send_text("s1", "1@c.us", "x", pacing=pacing)
     assert any(s == pytest.approx(5.0) for s in slept)
+
+
+# --- pacing from the session row ------------------------------------------- #
+def test_pacing_for_session_uses_the_row_not_defaults():
+    """The tenant's configured cap and warm-up stage must reach the limiter.
+
+    Bot replies used to construct a bare ``SessionPacing()``, so every automated
+    reply was paced at the dataclass defaults (500/day, no warm-up) regardless of
+    what the session was configured for. Manual replies and reminders always
+    built pacing from the row; only the bot -- the bulk of the traffic -- did not.
+    """
+
+    class _Row:
+        daily_cap = 40
+        warmup_stage = 2
+
+    pacing = pacing_for_session(_Row())
+
+    assert pacing.daily_cap == 40
+    assert pacing.warmup_stage == 2

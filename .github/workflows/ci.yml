@@ -1,0 +1,146 @@
+name: CI
+
+# Runs on everything heading for dev or main, so a release can never be cut from
+# a red branch. See CONTRIBUTING.md.
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (unit + lint)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+      - name: Lint
+        run: uv run ruff check
+      - name: Unit tests
+        run: uv run pytest -q
+
+  migrations:
+    name: Migrations on a fresh database
+    runs-on: ubuntu-latest
+    # This job exists because of a real failure: 0001 builds the schema from the
+    # current models, so a later unguarded add_column collides with columns that
+    # already exist. It only shows up on a database that has never been migrated,
+    # which is to say on every new deployment. Never delete this job.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: qonvo
+          POSTGRES_PASSWORD: ci-postgres
+          POSTGRES_DB: qonvo
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U qonvo -d qonvo"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --frozen
+
+      - name: Create the app and system roles
+        # Mirrors scripts/postgres-init/01-app-role.sh, which only runs on a
+        # container's first init and so does not apply to a CI service container.
+        env:
+          PGPASSWORD: ci-postgres
+        run: |
+          psql -h localhost -U qonvo -d qonvo -v ON_ERROR_STOP=1 <<'SQL'
+          CREATE ROLE qonvo_app  LOGIN PASSWORD 'ci-app'    NOSUPERUSER NOBYPASSRLS;
+          CREATE ROLE qonvo_system LOGIN PASSWORD 'ci-system' NOSUPERUSER BYPASSRLS;
+          GRANT USAGE, CREATE ON SCHEMA public TO qonvo_app, qonvo_system;
+          SQL
+
+      - name: alembic upgrade head
+        env:
+          QONVO_MIGRATIONS_DATABASE_URL: postgresql+asyncpg://qonvo:ci-postgres@localhost:5432/qonvo
+          QONVO_DATABASE_URL: postgresql+asyncpg://qonvo_app:ci-app@localhost:5432/qonvo
+          QONVO_SYSTEM_DATABASE_URL: postgresql+asyncpg://qonvo_system:ci-system@localhost:5432/qonvo
+          QONVO_JWT_SECRET: ci-jwt-secret-at-least-32-bytes-long-000
+          QONVO_FERNET_KEY: dGVzdC1rZXktMzItYnl0ZXMtYmFzZTY0LWVuY29kZWQ9
+        run: uv run alembic upgrade head
+
+      - name: Integration tests
+        env:
+          QONVO_TEST_DATABASE_URL: postgresql+asyncpg://qonvo_app:ci-app@localhost:5432/qonvo
+          QONVO_TEST_SYSTEM_DATABASE_URL: postgresql+asyncpg://qonvo_system:ci-system@localhost:5432/qonvo
+          QONVO_JWT_SECRET: ci-jwt-secret-at-least-32-bytes-long-000
+          QONVO_FERNET_KEY: dGVzdC1rZXktMzItYnl0ZXMtYmFzZTY0LWVuY29kZWQ9
+          QONVO_REDIS_URL: redis://localhost:6379/0
+        # Informational, not a gate, for two known reasons in docs/TESTING.md §4:
+        # the knowledge tests wait on an async worker that is not running here,
+        # and the pg modules pollute each other (they share one FastAPI app and
+        # each clears every dependency override on teardown), so results vary
+        # with ordering. The migration step above IS the gate in this job.
+        continue-on-error: true
+        run: uv run pytest -m postgres -q
+
+  dashboard:
+    name: Dashboard (typecheck, lint, brand, build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/package-lock.json
+      - run: npm ci
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Lint
+        run: npm run lint
+      - name: Brand gates
+        # Palette, typefaces, em dashes, hardcoded contact details and stray
+        # price figures. Cheap to run, and the reason the copy sweep stays swept.
+        run: npm run verify:brand
+      - name: Build
+        env:
+          # Baked in at build time; a real value is only needed at runtime.
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+        run: npm run build
+
+  compose:
+    name: Compose config is valid
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate production and staging composition
+        run: |
+          cp .env.example .env
+          docker compose config >/dev/null
+          echo "✓ production compose valid"
+          cp .env .env.staging && cat .env.staging.example >> .env.staging
+          QONVO_ENV_FILE=.env.staging docker compose \
+            -p qonvo-staging --env-file .env.staging config >/dev/null
+          echo "✓ staging compose valid"

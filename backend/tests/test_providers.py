@@ -9,7 +9,12 @@ import pytest
 from app.core.config import settings
 from app.providers.base import ChatMessage
 from app.providers.openai_compat import OpenAICompatProvider, ProviderError, ProviderTimeout
-from app.providers.registry import PROVIDER_PRESETS, resolve_embedding, resolve_llm
+from app.providers.registry import (
+    PROVIDER_PRESETS,
+    resolve_embedding,
+    resolve_llm,
+    resolve_llm_identity,
+)
 
 
 def _provider(handler, **kwargs) -> OpenAICompatProvider:
@@ -225,3 +230,36 @@ def test_resolve_embedding_falls_back_to_settings():
     provider = resolve_embedding(None)
     assert provider._model == settings.embedding_model  # noqa: SLF001
     assert provider._base_url == PROVIDER_PRESETS["openai"]  # noqa: SLF001
+
+
+# --- pricing identity -------------------------------------------------------- #
+def test_llm_identity_matches_the_provider_actually_used():
+    """Cost must be priced against the model that answered.
+
+    ``resolve_llm`` prefers ``providers["llm"]`` over the flat columns, but the
+    pipeline used to read the flat columns directly when pricing. A tenant
+    configured through the nested map was therefore billed against a different
+    model than the one that ran -- usually $0.00, because the wrong name misses
+    the pricing table entirely.
+    """
+
+    class FakeConfig:
+        llm_provider = "groq"
+        llm_model = "llama-3.1-8b-instant"
+        providers = {"llm": {"provider": "gemini", "model": "gemini-2.5-flash"}}
+
+    config = FakeConfig()
+    provider_name, model = resolve_llm_identity(config)
+
+    assert (provider_name, model) == ("gemini", "gemini-2.5-flash")
+    assert model == resolve_llm(config)._model  # noqa: SLF001
+
+
+def test_llm_identity_falls_back_to_flat_columns_then_settings():
+    class FlatConfig:
+        llm_provider = "groq"
+        llm_model = "llama-3.1-8b-instant"
+        providers = {}
+
+    assert resolve_llm_identity(FlatConfig()) == ("groq", "llama-3.1-8b-instant")
+    assert resolve_llm_identity(None) == (settings.llm_provider, settings.llm_model)

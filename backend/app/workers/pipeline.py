@@ -22,6 +22,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.billing.service import get_subscription
+from app.billing.state import service_state
 from app.core import obs
 from app.core.config import settings
 from app.core.logging import logger
@@ -32,10 +34,20 @@ from app.models.ops import AnalyticsEvent, UsageCounter
 from app.models.tenant import Tenant, TenantConfig
 from app.models.whatsapp import WhatsAppSession
 from app.providers.base import ChatMessage, LLMProvider, LLMResult, ToolCall
-from app.providers.registry import resolve_embedding, resolve_llm, voice_reply_mode
+from app.providers.registry import (
+    resolve_embedding,
+    resolve_llm,
+    resolve_llm_identity,
+    voice_reply_mode,
+)
 from app.skills.registry import SkillContext, execute_skill
 from app.skills.registry import enabled_tools as skill_enabled_tools
-from app.waha.send_gateway import DailyCapExceeded, SendGateway, SessionPacing
+from app.waha.send_gateway import (
+    DailyCapExceeded,
+    SendGateway,
+    SessionPacing,
+    pacing_for_session,
+)
 
 CATCH_UP_REPLY = "Sorry for the delay — how can I help?"
 QUOTA_EXCEEDED_REPLY = (
@@ -609,6 +621,10 @@ async def _run_pipeline_inner(
             bound.error("no whatsapp_sessions row for session — cannot process")
             return PipelineResult(reply_text="", meta={"gate": "unknown_session"})
 
+        # Every outbound below — gate notices, catch-up, the reply itself — is
+        # paced by this session's configured cap and warm-up stage (§5.6).
+        pacing = pacing_for_session(session_row)
+
         tenant_config = (
             await db.execute(select(TenantConfig).where(TenantConfig.tenant_id == tenant_uuid))
         ).scalar_one_or_none()
@@ -634,10 +650,10 @@ async def _run_pipeline_inner(
                 reply_text="", meta={"gate": "paused", "state": str(conversation.state)}
             )
 
-        # --- Gate: tenant suspended / trial ended (§9 billing, admin lifecycle) ---
-        # A suspended tenant (admin action) or a self-serve tenant on an expired
-        # trial goes silent — we deliberately do NOT message the customer about
-        # the business's account status.
+        # --- Gate: entitlement to service (§9 billing, admin lifecycle) ---
+        # Suspended, expired trial, unpaid past the grace window, or cancelled
+        # past the paid-for period → the bot goes silent. We deliberately do NOT
+        # message the customer about the business's account status.
         tenant_row = (
             await db.execute(
                 select(Tenant.status, Tenant.plan, Tenant.trial_ends_at).where(
@@ -645,17 +661,17 @@ async def _run_pipeline_inner(
                 )
             )
         ).one_or_none()
-        if tenant_row and tenant_row.status == "suspended":
-            bound.info("tenant suspended — bot silent")
-            return PipelineResult(reply_text="", meta={"gate": "suspended"})
-        if (
-            tenant_row
-            and tenant_row.plan == "trial"
-            and tenant_row.trial_ends_at
-            and tenant_row.trial_ends_at <= now
-        ):
-            bound.info("trial expired — bot silent (owner must upgrade)")
-            return PipelineResult(reply_text="", meta={"gate": "trial_expired"})
+        if tenant_row is not None:
+            entitlement = service_state(
+                tenant_status=tenant_row.status,
+                plan=tenant_row.plan,
+                trial_ends_at=tenant_row.trial_ends_at,
+                subscription=await get_subscription(db, tenant_uuid),
+                now=now,
+            )
+            if not entitlement.allowed:
+                bound.info(f"service blocked ({entitlement.gate}) — bot silent")
+                return PipelineResult(reply_text="", meta={"gate": entitlement.gate})
 
         # --- Gate: hard quota (§13) ---
         entitlements = tenant_config.entitlements if tenant_config else {}
@@ -682,7 +698,7 @@ async def _run_pipeline_inner(
                 cost=0.0,
                 voice_seconds=voice_seconds,
             )
-            await _send(bound, send_gateway, session, chat_id, QUOTA_EXCEEDED_REPLY)
+            await _send(bound, send_gateway, session, chat_id, QUOTA_EXCEEDED_REPLY, pacing)
             return PipelineResult(reply_text=QUOTA_EXCEEDED_REPLY, meta={"gate": "quota_exceeded"})
 
         # --- History (for both the business-hours check and the LLM context) ---
@@ -729,7 +745,7 @@ async def _run_pipeline_inner(
                     cost=0.0,
                     voice_seconds=voice_seconds,
                 )
-                await _send(bound, send_gateway, session, chat_id, reply)
+                await _send(bound, send_gateway, session, chat_id, reply, pacing)
                 return PipelineResult(reply_text=reply, meta={"gate": "business_hours"})
             conversation.last_activity_at = now
             return PipelineResult(reply_text="", meta={"gate": "business_hours_already_replied"})
@@ -757,7 +773,7 @@ async def _run_pipeline_inner(
                 cost=0.0,
                 voice_seconds=voice_seconds,
             )
-            await _send(bound, send_gateway, session, chat_id, CATCH_UP_REPLY)
+            await _send(bound, send_gateway, session, chat_id, CATCH_UP_REPLY, pacing)
             return PipelineResult(reply_text=CATCH_UP_REPLY, meta={"catch_up": True})
 
         coalesced = coalesce_fragments(fragments)
@@ -805,7 +821,7 @@ async def _run_pipeline_inner(
                 cost=0.0,
                 voice_seconds=voice_seconds,
             )
-            await _send(bound, send_gateway, session, chat_id, reply)
+            await _send(bound, send_gateway, session, chat_id, reply, pacing)
             return PipelineResult(reply_text=reply, meta={"gate": "reminder_optout"})
 
         # --- RAG retrieve (§6) ---
@@ -884,16 +900,9 @@ async def _run_pipeline_inner(
             "Sorry, I didn't catch that — could you rephrase?"
         )
 
-        provider_name = (
-            tenant_config.llm_provider
-            if tenant_config and tenant_config.llm_provider
-            else settings.llm_provider
-        )
-        model_name = (
-            tenant_config.llm_model
-            if tenant_config and tenant_config.llm_model
-            else settings.llm_model
-        )
+        # Same resolution resolve_llm used to build the provider, so the cost is
+        # priced against the model that actually answered (§13).
+        provider_name, model_name = resolve_llm_identity(tenant_config)
         total_tokens = loop_result.prompt_tokens + loop_result.completion_tokens
         cost = compute_cost(
             provider_name, model_name, loop_result.prompt_tokens, loop_result.completion_tokens
@@ -956,9 +965,9 @@ async def _run_pipeline_inner(
                 bound.warning(f"summary refresh failed: {exc}")
 
         if was_voice:
-            await _send_voice(bound, send_gateway, session, chat_id, audio_b64)
+            await _send_voice(bound, send_gateway, session, chat_id, audio_b64, pacing)
         else:
-            await _send(bound, send_gateway, session, chat_id, reply_text)
+            await _send(bound, send_gateway, session, chat_id, reply_text, pacing)
 
         return PipelineResult(
             reply_text=reply_text,
@@ -990,9 +999,16 @@ async def _refresh_summary(
     return result.text.strip() or (prior_summary or "")
 
 
-async def _send(bound: Any, gateway: SendGateway, session: str, chat_id: str, text: str) -> None:
+async def _send(
+    bound: Any,
+    gateway: SendGateway,
+    session: str,
+    chat_id: str,
+    text: str,
+    pacing: SessionPacing,
+) -> None:
     try:
-        await gateway.send_text(session, chat_id, text, pacing=SessionPacing())
+        await gateway.send_text(session, chat_id, text, pacing=pacing)
     except DailyCapExceeded:
         bound.warning("daily cap reached — reply suppressed")
     except Exception:
@@ -1022,10 +1038,15 @@ async def _synthesize_reply(text: str, tenant_config: Any, bound: Any) -> str | 
 
 
 async def _send_voice(
-    bound: Any, gateway: SendGateway, session: str, chat_id: str, data_b64: str
+    bound: Any,
+    gateway: SendGateway,
+    session: str,
+    chat_id: str,
+    data_b64: str,
+    pacing: SessionPacing,
 ) -> None:
     try:
-        await gateway.send_voice(session, chat_id, data=data_b64, pacing=SessionPacing())
+        await gateway.send_voice(session, chat_id, data=data_b64, pacing=pacing)
     except DailyCapExceeded:
         bound.warning("daily cap reached — voice reply suppressed")
 

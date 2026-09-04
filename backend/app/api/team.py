@@ -18,14 +18,15 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_system_db, require_owner, require_tenant
+from app.billing.state import seats_available
 from app.core.config import settings
 from app.core.security import hash_password
 from app.models.enums import UserRole
-from app.models.tenant import TeamInvitation, Tenant, TenantUser, User
+from app.models.tenant import TeamInvitation, Tenant, TenantConfig, TenantUser, User
 from app.services.auth import create_access_token
 from app.services.email import send_team_invite_email
 
@@ -133,6 +134,38 @@ async def create_invitation(
     ).first()
     if existing_member is not None:
         raise HTTPException(status_code=409, detail="already a team member")
+
+    # Seat entitlement (§3.1). Pending invites count as claimed seats, so a
+    # tenant cannot outrun its plan by sending invitations in a batch.
+    entitlements = (
+        await db.execute(
+            select(TenantConfig.entitlements).where(TenantConfig.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none() or {}
+    members = (
+        await db.execute(
+            select(func.count())
+            .select_from(TenantUser)
+            .where(TenantUser.tenant_id == tenant_id)
+        )
+    ).scalar_one()
+    pending = (
+        await db.execute(
+            select(func.count())
+            .select_from(TeamInvitation)
+            .where(
+                TeamInvitation.tenant_id == tenant_id,
+                TeamInvitation.status == "pending",
+                TeamInvitation.email != email,
+            )
+        )
+    ).scalar_one()
+    remaining = seats_available(entitlements, members=members, pending_invites=pending)
+    if remaining is not None and remaining < 1:
+        raise HTTPException(
+            status_code=402,
+            detail="No seats left on your plan. Upgrade to invite more teammates.",
+        )
 
     # Revoke any earlier pending invite for the same email (one live invite/email).
     for prior in (

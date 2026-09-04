@@ -37,6 +37,15 @@ async def booking_reminders_job(ctx: dict[str, Any]) -> None:
     logger.bind(**stats).info("booking-reminders scan complete")
 
 
+async def warmup_advance_job(_ctx: dict[str, Any]) -> None:
+    """Move new numbers through the warm-up schedule (§5.6)."""
+    from app.waha.session_warmup import advance_warmup_stages
+
+    moved = await advance_warmup_stages()
+    if moved:
+        logger.bind(**moved).info("warm-up stages advanced")
+
+
 async def on_startup(ctx: dict[str, Any]) -> None:
     configure_logging()
     waha = WahaClient()
@@ -58,6 +67,9 @@ class SchedulerSettings:
         cron(session_health_job, second=0, run_at_startup=True),
         # Booking reminders (§5.7): scan every 15 min + once at startup.
         cron(booking_reminders_job, minute={0, 15, 30, 45}, run_at_startup=True),
+        # Warm-up (§5.6) moves in whole days, so once a day is enough. Also at
+        # startup, so a box that was off over a stage boundary catches up.
+        cron(warmup_advance_job, hour=3, minute=0, run_at_startup=True),
     ]
     on_startup = on_startup
     on_shutdown = on_shutdown
