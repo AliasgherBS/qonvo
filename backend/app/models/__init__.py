@@ -6,6 +6,7 @@ create.
 from __future__ import annotations
 
 from app.db.base import Base
+from app.models.billing import BillingEvent, Subscription
 from app.models.business import Booking, Handoff, Lead, Order, ReminderSuppression
 from app.models.conversation import Conversation, Message
 from app.models.knowledge import KnowledgeChunk, KnowledgeSource
@@ -46,12 +47,15 @@ TENANT_SCOPED_TABLES: tuple[str, ...] = (
     "analytics_events",
     "usage_counters",
     "failed_jobs",
+    "subscriptions",
+    "billing_events",
 )
 
 __all__ = [
     "AnalyticsEvent",
     "AuditLog",
     "Base",
+    "BillingEvent",
     "Booking",
     "Conversation",
     "FailedJob",
@@ -65,6 +69,7 @@ __all__ = [
     "Order",
     "ReminderSuppression",
     "Skill",
+    "Subscription",
     "SkillExecution",
     "TENANT_SCOPED_TABLES",
     "TeamInvitation",

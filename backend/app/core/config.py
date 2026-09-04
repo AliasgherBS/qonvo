@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     # HMAC secret used to verify inbound webhook signatures (X-Webhook-Hmac).
     waha_hmac_secret: str = "change-me"
     waha_default_engine: str = "WEBJS"
+    # NOWEB store: enabled is mandatory (sends 400 without it). fullSync
+    # additionally backfills the linked number's ENTIRE WhatsApp history into
+    # WAHA's store — ~1.3 KB per historical message plus ~4 KB per contact ever
+    # seen, none of which anything reads (conversation context comes from
+    # Postgres). Off by default; flip only to debug against real history.
+    waha_full_sync: bool = False
     # URL WAHA posts webhooks to (reachable from the waha container → api service).
     webhook_url: str = "http://api:8000/webhooks/waha"
     webhook_retries: int = 3
@@ -198,6 +204,16 @@ class Settings(BaseSettings):
 
     # --- Observability ---
     # Expose GET /metrics in Prometheus text format (request + pipeline metrics).
+    # --- Billing (docs/superpowers/specs/2026-09-04-billing-design.md) ---
+    # Adapter for taking money. "manual" = admin-driven, the shipped default;
+    # a merchant-of-record adapter (paddle/polar) drops in beside it.
+    billing_provider: str = "manual"
+    billing_webhook_secret: str | None = None
+    # Provider price id → plan key. Lets a new price be sold without a deploy.
+    billing_price_map: dict[str, str] = Field(default_factory=dict)
+    # How long a past_due subscription keeps answering while the provider
+    # retries the card. A failed payment must not silence a business same-day.
+    billing_grace_days: int = 7
     metrics_enabled: bool = True
 
     # --- Agent pipeline (DESIGN.md §5.4) ---

@@ -20,6 +20,7 @@ import jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.billing.plans import TRIAL_PLAN, get_plan
 from app.core.config import settings
 from app.core.security import hash_password, verify_password
 from app.models.enums import UserRole
@@ -30,7 +31,7 @@ from app.models.tenant import Tenant, TenantConfig, TenantUser, User
 TRIAL_DAYS = 14
 # Hard message cap for a trial tenant — bounds LLM/voice spend for a free signup
 # (the date check alone left trials able to burn unlimited credits for 14 days).
-TRIAL_MESSAGE_QUOTA = 300
+TRIAL_MESSAGE_QUOTA = get_plan(TRIAL_PLAN).entitlements["monthly_message_quota"]
 
 # Password-reset links expire after this long.
 PASSWORD_RESET_TTL_MINUTES = 30
@@ -257,7 +258,9 @@ async def provision_tenant(
             business_name=business_name,
             # Trial tenants get a hard message cap so a free signup can't burn
             # unlimited LLM/voice credits (enforced by the pipeline's quota gate).
-            entitlements={"monthly_message_quota": TRIAL_MESSAGE_QUOTA},
+            # Derived from the plan catalogue so the trial's entitlements can
+            # never drift from what /api/billing/plans advertises.
+            entitlements={**get_plan(TRIAL_PLAN).entitlements},
         )
     )
 

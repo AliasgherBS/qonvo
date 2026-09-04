@@ -15,6 +15,7 @@ from app.api import (
     admin,
     auth,
     billing,
+    billing_webhooks,
     conversations,
     health,
     knowledge,
@@ -91,6 +92,7 @@ app.include_router(conversations.router)
 app.include_router(knowledge.router)
 app.include_router(config_api.router)
 app.include_router(billing.router)
+app.include_router(billing_webhooks.router)
 app.include_router(notifications.router)
 app.include_router(onboarding.router)
 app.include_router(team.router)
