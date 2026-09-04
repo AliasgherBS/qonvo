@@ -9,11 +9,8 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
-## [0.9.0] - 2026-09-04
-
-First tagged release. Everything before this point was untagged work on `main`; this
-release marks the state that has been live-verified against a real WhatsApp number,
-plus the billing and staging work that closed the last commercialisation gaps.
+Waiting on `dev`. This will be the first tagged release: everything before it was
+untagged work on `main`. Cut it with `./scripts/release.sh 0.9.0`.
 
 ### Added
 
@@ -63,5 +60,4 @@ plus the billing and staging work that closed the last commercialisation gaps.
 - Application containers read their environment from `${QONVO_ENV_FILE}`, so a second
   stack cannot silently run on production's JWT, Fernet and WAHA secrets.
 
-[Unreleased]: https://github.com/AliasgherBS/qonvo/compare/v0.9.0...dev
-[0.9.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.9.0
+[Unreleased]: https://github.com/AliasgherBS/qonvo/commits/dev
