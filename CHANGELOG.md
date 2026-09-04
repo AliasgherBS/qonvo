@@ -14,6 +14,12 @@ untagged work on `main`. Cut it with `./scripts/release.sh 0.9.0`.
 
 ### Added
 
+- **Automated end-to-end smoke test** (`./scripts/e2e-smoke.sh`): 45 checks over
+  infrastructure, auth, every owner read endpoint, the billing lifecycle, knowledge
+  ingestion and the inbound pipeline, driven by signed synthetic webhooks so no phone
+  is needed. Plus [docs/E2E-LIVE-TEST-PLAN.md](docs/E2E-LIVE-TEST-PLAN.md) for the
+  manual half and a standing record of what has actually been exercised.
+
 - **Billing subsystem**, provider-agnostic and shaped around a merchant of record,
   shipped with a manual (admin-recorded) adapter so it works before any gateway
   account exists. Plan catalogue in code with entitlements only, `subscriptions` and
