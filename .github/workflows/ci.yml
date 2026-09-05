@@ -21,7 +21,9 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      # Pinned exactly: astral-sh stopped publishing a floating major tag after
+      # v7, so `@v10` does not resolve (the workflow fails at action download).
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
       - run: uv python install 3.12
@@ -60,7 +62,9 @@ jobs:
         working-directory: backend
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      # Pinned exactly: astral-sh stopped publishing a floating major tag after
+      # v7, so `@v10` does not resolve (the workflow fails at action download).
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
       - run: uv python install 3.12
