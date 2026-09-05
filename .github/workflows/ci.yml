@@ -20,8 +20,10 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      # Pinned exactly: astral-sh stopped publishing a floating major tag after
+      # v7, so `@v10` does not resolve (the workflow fails at action download).
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
       - run: uv python install 3.12
@@ -59,8 +61,10 @@ jobs:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      - uses: actions/checkout@v7
+      # Pinned exactly: astral-sh stopped publishing a floating major tag after
+      # v7, so `@v10` does not resolve (the workflow fails at action download).
+      - uses: astral-sh/setup-uv@v10.0.1
         with:
           enable-cache: true
       - run: uv python install 3.12
@@ -109,8 +113,8 @@ jobs:
       run:
         working-directory: dashboard
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -134,7 +138,7 @@ jobs:
     name: Compose config is valid
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Validate production and staging composition
         run: |
           cp .env.example .env
