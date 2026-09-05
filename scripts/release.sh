@@ -22,10 +22,20 @@ TAG="v$VERSION"
 branch=$(git rev-parse --abbrev-ref HEAD)
 [[ "$branch" == "dev" ]] || { echo "Release from 'dev', not '$branch'." >&2; exit 1; }
 
-if [[ -n "$(git status --porcelain)" ]]; then
-  echo "Working tree is dirty. Commit or stash first:" >&2
-  git status --short >&2
+# Block on uncommitted changes to TRACKED files: those would be silently left
+# out of the release. Untracked files only warn -- a stray scratch file or an
+# asset not yet decided on should not stop a release, but you should see it.
+if [[ -n "$(git status --porcelain --untracked-files=no)" ]]; then
+  echo "Tracked files have uncommitted changes. Commit or stash first:" >&2
+  git status --short --untracked-files=no >&2
   exit 1
+fi
+
+untracked=$(git ls-files --others --exclude-standard)
+if [[ -n "$untracked" ]]; then
+  echo "Note: these untracked files will NOT be in $TAG:" >&2
+  sed 's/^/  /' <<<"$untracked" >&2
+  echo >&2
 fi
 
 if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
