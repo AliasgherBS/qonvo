@@ -454,16 +454,29 @@ function mapKnowledgeSource(dto: KnowledgeSourceDto): KnowledgeSource {
   };
 }
 
+/**
+ * Why the rep could not handle a question. The kinds are not cosmetic:
+ * a retrieval_miss is fixed by adding knowledge, an answer_miss is not:
+ * there, the knowledge exists and does not answer the question.
+ */
+export type KnowledgeGapKind = "retrieval_miss" | "answer_miss" | "escalation";
+
 interface KnowledgeGapDto {
   id: string;
   question: string;
+  kind: KnowledgeGapKind;
+  reason: string | null;
   count: number;
+  last_asked: string | null;
 }
 
 export interface KnowledgeGap {
   id: string;
   question: string;
+  kind: KnowledgeGapKind;
+  reason: string | null;
   count: number;
+  lastAsked: string | null;
 }
 
 export const knowledge = {
@@ -517,7 +530,19 @@ export const knowledge = {
   deleteSource: (id: string, opts: CallOpts = {}) =>
     apiFetch<void>(`/api/knowledge/sources/${id}`, { method: "DELETE", ...opts }),
 
-  gaps: (opts: CallOpts = {}) => apiFetch<KnowledgeGapDto[]>("/api/knowledge/gaps", opts),
+  gaps: (opts: CallOpts = {}) =>
+    apiFetch<KnowledgeGapDto[]>("/api/knowledge/gaps", opts).then((items) =>
+      items.map(
+        (d): KnowledgeGap => ({
+          id: d.id,
+          question: d.question,
+          kind: d.kind,
+          reason: d.reason,
+          count: d.count,
+          lastAsked: d.last_asked,
+        }),
+      ),
+    ),
 };
 
 // ---------------------------------------------------------------------------

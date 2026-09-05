@@ -225,32 +225,57 @@ async def knowledge_gaps(
     tenant_id: UUID = Depends(require_tenant),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    """Top unanswered/handed-off questions, aggregated by question text (§6, §7).
+    """What customers asked that the rep could not handle (§6, §7).
 
-    The pipeline logs one ``knowledge_gap`` event per miss; the dashboard wants
-    the distinct questions with how many times each was asked, most-asked first.
+    Three different failures used to live in three different places, or nowhere,
+    so an owner could only ever see part of the picture:
+
+    * **retrieval miss** — nothing relevant was found. Adding knowledge fixes it.
+    * **answer miss** — plenty was retrieved and the rep escalated anyway. More
+      knowledge will NOT fix this: what exists does not actually answer the
+      question. Recorded nowhere before.
+    * **escalation** — the rep's own words about why it gave up, which were
+      written to ``handoffs`` and shown to nobody.
+
+    They answer one question, so they are one list, tagged by kind and ordered
+    by how often each was asked.
     """
     question = AnalyticsEvent.data["question"].astext
+    reason = AnalyticsEvent.data["reason"].astext
+    had_context = AnalyticsEvent.data["had_context"].astext
+
     stmt = (
         select(
             question.label("question"),
+            AnalyticsEvent.event_type.label("event_type"),
+            func.max(had_context).label("had_context"),
+            func.max(reason).label("reason"),
             func.count().label("count"),
             func.max(AnalyticsEvent.occurred_at).label("last_asked"),
         )
         .where(
             AnalyticsEvent.tenant_id == tenant_id,
-            AnalyticsEvent.event_type == "knowledge_gap",
+            AnalyticsEvent.event_type.in_(("knowledge_gap", "escalation")),
             question.isnot(None),
         )
-        .group_by(question)
+        .group_by(question, AnalyticsEvent.event_type)
         .order_by(func.count().desc(), func.max(AnalyticsEvent.occurred_at).desc())
         .limit(limit)
     )
     rows = (await db.execute(stmt)).all()
+
     return [
         {
-            "id": r.question,  # question text is the stable identity of a gap
+            # Question text identifies a gap; the kind separates two rows that
+            # share it (asked once with no knowledge, once with the wrong kind).
+            "id": f"{r.event_type}:{r.question}",
             "question": r.question,
+            "kind": (
+                "retrieval_miss"
+                if r.event_type == "knowledge_gap"
+                else ("answer_miss" if r.had_context == "true" else "escalation")
+            ),
+            "reason": r.reason,
             "count": r.count,
             "last_asked": r.last_asked,
         }

@@ -18,6 +18,7 @@ import {
   type KnowledgeGap,
   type KnowledgeSource,
   type KnowledgeSourceStatus,
+  type KnowledgeGapKind,
 } from "@/lib/api";
 import { useApi, useAuthToken } from "@/lib/use-api";
 import { cn } from "@/lib/utils";
@@ -624,6 +625,7 @@ function GapsTable({
       <thead className="text-left text-xs font-bold uppercase tracking-wider text-muted-foreground">
         <tr>
           <th className="px-5 py-3">Question</th>
+          <th className="px-5 py-3">What happened</th>
           <th className="px-5 py-3">Times asked</th>
         </tr>
       </thead>
@@ -631,10 +633,34 @@ function GapsTable({
         {gaps.map((gap) => (
           <tr key={gap.id}>
             <td className="px-5 py-3 font-semibold">{gap.question}</td>
+            <td className="px-5 py-3">
+              <GapKind kind={gap.kind} reason={gap.reason} />
+            </td>
             <td className="px-5 py-3 text-muted-foreground">{gap.count}</td>
           </tr>
         ))}
       </tbody>
     </table>
+  );
+}
+
+/**
+ * The kind is the actionable half. "Nothing found" means write something;
+ * "answer not in your knowledge" means what you wrote does not answer this,
+ * and adding more of the same will not help.
+ */
+function GapKind({ kind, reason }: { kind: KnowledgeGapKind; reason: string | null }) {
+  const label: Record<KnowledgeGapKind, { text: string; tone: "warning" | "info" | "default" }> = {
+    retrieval_miss: { text: "Nothing found", tone: "warning" },
+    answer_miss: { text: "Answer not in your knowledge", tone: "info" },
+    escalation: { text: "Passed to a person", tone: "default" },
+  };
+  const { text, tone } = label[kind] ?? label.escalation;
+
+  return (
+    <div className="space-y-1">
+      <Badge tone={tone}>{text}</Badge>
+      {reason ? <p className="text-xs text-muted-foreground">{reason}</p> : null}
+    </div>
   );
 }

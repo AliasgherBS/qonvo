@@ -99,7 +99,13 @@ async def test_human_handoff_sets_conversation_state_and_notifies():
 
     result = await SKILL_REGISTRY["human_handoff"].handler(ctx, {"reason": "asked for manager"})
 
-    assert result == {"status": "escalated", "message": "team notified"}
+    # The reason comes back so the pipeline can record it against the question
+    # that triggered it, which is what the owner's escalation report joins on.
+    assert result == {
+        "status": "escalated",
+        "message": "team notified",
+        "reason": "asked for manager",
+    }
     assert conversation.state == ConversationState.needs_human
     handoffs = [o for o in added if type(o).__name__ == "Handoff"]
     notifications = [o for o in added if type(o).__name__ == "Notification"]

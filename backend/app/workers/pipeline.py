@@ -561,7 +561,7 @@ async def run_tool_loop(
         working.append(ChatMessage(role="assistant", content=last.text, tool_calls=last.tool_calls))
         for call in last.tool_calls:
             result = await dispatch(call)
-            tool_results.append(result)
+            tool_results.append({**result, "_tool": call.name})
             working.append(
                 ChatMessage(
                     role="tool",
@@ -580,6 +580,19 @@ async def run_tool_loop(
         iterations=max_iterations,
         tool_results=tool_results,
     )
+
+
+def escalation_from_tool_results(tool_results: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The handoff this turn raised, if it raised a new one.
+
+    ``already_escalated`` is deliberately not reported: the topic was raised on
+    an earlier turn and counting it again would make one problem look like many
+    in the owner's report.
+    """
+    for result in tool_results:
+        if result.get("_tool") == "human_handoff" and result.get("status") == "escalated":
+            return result
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -1186,6 +1199,29 @@ async def _run_pipeline_inner(
                 meta={"knowledge_gap": True} if not chunks else {},
             )
         )
+        # An escalation is the strongest signal a tenant has about what their
+        # knowledge cannot cover. Recorded with the question that triggered it
+        # and whether anything was retrieved: a miss WITH context is a different
+        # problem from a miss with none, and only one of them is fixed by adding
+        # more knowledge.
+        escalation = escalation_from_tool_results(loop_result.tool_results)
+        if escalation is not None:
+            db.add(
+                AnalyticsEvent(
+                    tenant_id=tenant_uuid,
+                    event_type="escalation",
+                    conversation_id=conversation.id,
+                    occurred_at=now,
+                    data={
+                        "question": coalesced,
+                        "reason": escalation.get("reason")
+                        or escalation.get("message")
+                        or "Escalated by the agent.",
+                        "had_context": bool(chunks),
+                    },
+                )
+            )
+
         # The query embedding is billed too, on every single message.
         embed_tokens = rag_usage.get("embedding_tokens", 0)
         if embed_tokens:
@@ -1437,6 +1473,7 @@ __all__ = [
     "business_hours_closed_reply",
     "coalesce_fragments",
     "compute_cost",
+    "escalation_from_tool_results",
     "compute_stt_cost",
     "compute_tts_cost",
     "is_hard_quota_exceeded",

@@ -113,7 +113,9 @@ async def handle(ctx: SkillContext, args: dict[str, Any]) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 — email failure must not block handoff
             logger.bind(tenant_id=str(ctx.tenant_id)).warning(f"owner email failed: {exc}")
 
-    return {"status": "escalated", "message": "team notified"}
+    # The reason travels back so the pipeline can record it against the question
+    # that triggered it — that pairing is what makes the owner's report useful.
+    return {"status": "escalated", "message": "team notified", "reason": reason}
 
 
 DEFINITION = SkillDefinition(
