@@ -9,8 +9,10 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
-Waiting on `dev`. This will be the first tagged release: everything before it was
-untagged work on `main`. Cut it with `./scripts/release.sh 0.9.0`.
+The first tagged release. Everything before it was untagged work on `main`. This
+marks the product as live-verified against a real WhatsApp number, with the
+billing, staging, CI and test-harness work that closed the last gaps before it
+could be sold.
 
 ### Added
 
