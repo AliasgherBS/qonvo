@@ -172,6 +172,18 @@ def resolve_tts(tenant_config: TenantConfigLike | None = None):
     )
 
 
+def reply_language_mode(tenant_config: TenantConfigLike | None = None) -> str:
+    """The tenant's reply-language choice: "match" or a language code.
+
+    Stored under ``providers["language"]["mode"]``, the same shape as voice, so
+    it needs no migration and no new column.
+    """
+    from app.agent.language import normalise_reply_language
+
+    cfg = _capability_config(tenant_config, "language")
+    return normalise_reply_language(cfg.get("mode"))
+
+
 def voice_reply_mode(tenant_config: TenantConfigLike | None = None) -> str:
     """"match" | "always" | "never" — per-tenant override, else system default."""
     cfg = _capability_config(tenant_config, "voice")
@@ -180,6 +192,7 @@ def voice_reply_mode(tenant_config: TenantConfigLike | None = None) -> str:
 
 __all__ = [
     "PROVIDER_PRESETS",
+    "reply_language_mode",
     "resolve_embedding",
     "resolve_llm",
     "resolve_stt",

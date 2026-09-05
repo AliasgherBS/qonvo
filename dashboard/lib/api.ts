@@ -459,6 +459,22 @@ function mapKnowledgeSource(dto: KnowledgeSourceDto): KnowledgeSource {
  * a retrieval_miss is fixed by adding knowledge, an answer_miss is not:
  * there, the knowledge exists and does not answer the question.
  */
+/**
+ * Reply-language options, mirroring app/agent/language.py. Script matters:
+ * Urdu and Roman Urdu are one language written two ways, and a model told
+ * "reply in Urdu" will always choose the Arabic script.
+ */
+export const REPLY_LANGUAGE_OPTIONS = [
+  { value: "match", label: "Match the customer" },
+  { value: "en", label: "English" },
+  { value: "ur", label: "Urdu (Urdu script)" },
+  { value: "ur-Latn", label: "Roman Urdu" },
+  { value: "pa", label: "Punjabi (Shahmukhi script)" },
+  { value: "pa-Latn", label: "Roman Punjabi" },
+  { value: "sd", label: "Sindhi" },
+  { value: "ar", label: "Arabic" },
+] as const;
+
 export type KnowledgeGapKind = "retrieval_miss" | "answer_miss" | "escalation";
 
 interface KnowledgeGapDto {
@@ -668,6 +684,7 @@ interface TenantConfigDto {
   llm_model: string | null;
   payment_details: string | null;
   voice_reply_mode: VoiceReplyMode | null;
+  reply_language_mode: string | null;
   notify_on_handoff: boolean;
 }
 
@@ -688,6 +705,8 @@ export interface TenantConfig {
   llmModel: string;
   paymentDetails: string;
   voiceReplyMode: VoiceReplyMode;
+  /** "match", or a language code. Script-aware: "ur" and "ur-Latn" differ. */
+  replyLanguageMode: string;
   notifyOnHandoff: boolean;
 }
 
@@ -708,6 +727,7 @@ function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
     llmModel: dto.llm_model ?? "",
     paymentDetails: dto.payment_details ?? "",
     voiceReplyMode: dto.voice_reply_mode ?? "match",
+    replyLanguageMode: dto.reply_language_mode ?? "match",
     notifyOnHandoff: dto.notify_on_handoff ?? true,
   };
 }
@@ -735,6 +755,7 @@ function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
     llm_model: cfg.llmModel,
     payment_details: cfg.paymentDetails || null,
     voice_reply_mode: cfg.voiceReplyMode,
+    reply_language_mode: cfg.replyLanguageMode,
     notify_on_handoff: cfg.notifyOnHandoff,
   };
 }
