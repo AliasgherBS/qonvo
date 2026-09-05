@@ -144,3 +144,34 @@ jobs:
           QONVO_ENV_FILE=.env.staging docker compose \
             -p qonvo-staging --env-file .env.staging config >/dev/null
           echo "✓ staging compose valid"
+
+  auto-merge:
+    name: Merge into dev when green
+    # The whole point of the PR flow, without the clicking: a feature PR into
+    # dev merges itself once every check above has passed.
+    #
+    # Why this job instead of GitHub's own auto-merge: branch protection and
+    # rulesets are not available on private repositories on GitHub Free, and
+    # GitHub's auto-merge button depends on them. This job needs neither -- the
+    # merge simply cannot run unless the jobs it `needs` succeeded first.
+    #
+    # Releases to main are deliberately NOT automated. Going to production stays
+    # an explicit act: ./scripts/release.sh.
+    needs: [backend, migrations, dashboard, compose]
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.base.ref == 'dev' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.user.login == github.repository_owner
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.html_url }}
+        # --merge, not --squash: CONTRIBUTING.md keeps each feature a visible
+        # unit in the history, which squashing would flatten away.
+        run: gh pr merge --merge --delete-branch "$PR"

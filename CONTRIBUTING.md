@@ -32,12 +32,27 @@ Commit subjects follow the convention already in this history:
 `type(scope): imperative summary` — e.g. `fix(billing): honour the grace window`.
 Types: `feat` `fix` `docs` `test` `chore` `perf` `refactor`.
 
-Then merge to `dev` keeping the feature visible as a unit:
+Then open a pull request into `dev`. **CI merges it for you once every check
+passes** — there is no button to click and nothing to approve:
 
 ```bash
-git switch dev
-git merge --no-ff feat/short-name
-git branch -d feat/short-name
+git push -u origin feat/short-name
+gh pr create --base dev --fill
+```
+
+The `auto-merge` job in [.github/workflows/ci.yml](.github/workflows/ci.yml)
+does the merge (`--merge`, so the feature stays a visible unit) and deletes the
+branch. If a check fails, the PR simply stays open with the failure on it.
+
+**Why a job and not GitHub's auto-merge button:** that button depends on branch
+protection, which GitHub does not offer on private repositories on the Free
+plan. This job needs no protection rule — the merge step cannot run unless the
+jobs it depends on succeeded.
+
+If `gh` is not set up, merging locally still works and skips CI:
+
+```bash
+git switch dev && git merge --no-ff feat/short-name && git branch -d feat/short-name
 ```
 
 Never commit a secret. `.env*` files are gitignored except the `*.example` templates.
