@@ -222,6 +222,43 @@ class Settings(BaseSettings):
     summary_refresh_turns: int = 10
     tool_loop_max_iterations: int = 5
     # Per-provider-per-model USD price per 1K tokens: {provider: {model: {input, output}}}.
+    # Audio is billed in different units from tokens: STT per minute of audio,
+    # TTS per million characters. Rates verified 2026-09-06. A model missing
+    # here records $0.00 for every voice turn, which is exactly how voice spend
+    # went untracked, so keep the model you actually run in this table.
+    stt_pricing: dict[str, dict[str, dict[str, float]]] = Field(
+        default_factory=lambda: {
+            "groq": {
+                "whisper-large-v3": {"per_minute": 0.00185},
+                "whisper-large-v3-turbo": {"per_minute": 0.00067},
+            },
+            "openai": {
+                "whisper-1": {"per_minute": 0.006},
+                "gpt-4o-transcribe": {"per_minute": 0.006},
+                "gpt-4o-mini-transcribe": {"per_minute": 0.003},
+                "gpt-transcribe": {"per_minute": 0.0045},
+            },
+        }
+    )
+    tts_pricing: dict[str, dict[str, dict[str, float]]] = Field(
+        default_factory=lambda: {
+            "groq": {
+                # English only — it cannot speak Urdu, which matters more than
+                # its price for this market.
+                "canopylabs/orpheus-v1-english": {"per_1m_chars": 22.0},
+                "canopylabs/orpheus-v1-arabic-saudi": {"per_1m_chars": 40.0},
+                "playai-tts": {"per_1m_chars": 50.0},
+            },
+            "openai": {
+                "tts-1": {"per_1m_chars": 15.0},
+                "tts-1-hd": {"per_1m_chars": 30.0},
+            },
+            "elevenlabs": {
+                "eleven_flash_v2_5": {"per_1m_chars": 50.0},
+                "eleven_multilingual_v2": {"per_1m_chars": 100.0},
+            },
+        }
+    )
     llm_pricing: dict[str, dict[str, dict[str, float]]] = Field(
         default_factory=lambda: {
             # $/1K tokens. "cached_input" is what a provider charges for the

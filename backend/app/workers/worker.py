@@ -196,9 +196,28 @@ async def ingest_knowledge_source(ctx: dict[str, Any], source_id: str, tenant_id
                 )
             ).scalar_one_or_none()
             embedder = resolve_embedding(tenant_config)
-            chunks = await ingest_source(db, source, text=text, embedder=embedder)
+            ingest_usage: dict[str, int] = {}
+            chunks = await ingest_source(
+                db, source, text=text, embedder=embedder, usage_out=ingest_usage
+            )
             source.status = "ready"
             bound.info(f"ingested source: {len(chunks)} chunks")
+
+            # Ingestion embeds every chunk, and that is billed. One-off per
+            # source, but a large knowledge base is not a rounding error.
+            embed_tokens = ingest_usage.get("embedding_tokens", 0)
+            if embed_tokens:
+                from app.providers.registry import resolve_embedding_identity
+                from app.workers.pipeline import compute_cost, record_billed_usage
+
+                emb_provider, emb_model = resolve_embedding_identity(tenant_config)
+                await record_billed_usage(
+                    UUID(tenant_id),
+                    messages_in=0,
+                    messages_out=0,
+                    tokens=embed_tokens,
+                    cost=compute_cost(emb_provider, emb_model, embed_tokens, 0),
+                )
         except Exception as exc:  # noqa: BLE001 — status must reflect the failure
             source.status = "error"
             source.meta = {**(source.meta or {}), "error": str(exc)}

@@ -39,6 +39,8 @@ from app.providers.registry import (
     resolve_embedding_identity,
     resolve_llm,
     resolve_llm_identity,
+    resolve_stt_identity,
+    resolve_tts_identity,
     voice_reply_mode,
 )
 from app.skills.registry import SkillContext, execute_skill
@@ -424,6 +426,57 @@ def compute_cost(
     )
 
 
+def _audio_rate(
+    table: dict[str, dict[str, dict[str, float]]],
+    provider: str,
+    model: str,
+    key: str,
+    kind: str,
+) -> float:
+    rates = (table.get(provider) or {}).get(model)
+    if not rates:
+        # Same contract as compute_cost: loud, so an unpriced model surfaces as
+        # a bug rather than as suspiciously cheap analytics.
+        logger.warning(f"no {kind} pricing for {provider}/{model} — recording $0.00")
+        return 0.0
+    return rates.get(key, 0.0)
+
+
+def compute_stt_cost(
+    provider: str,
+    model: str,
+    seconds: float,
+    *,
+    pricing: dict[str, dict[str, dict[str, float]]] | None = None,
+) -> float:
+    """USD for transcribing ``seconds`` of audio. Billed pro-rata, not rounded
+    up to whole minutes."""
+    if seconds <= 0:
+        return 0.0
+    table = pricing if pricing is not None else settings.stt_pricing
+    return (seconds / 60.0) * _audio_rate(table, provider, model, "per_minute", "STT")
+
+
+def compute_tts_cost(
+    provider: str,
+    model: str,
+    characters: int,
+    *,
+    pricing: dict[str, dict[str, dict[str, float]]] | None = None,
+) -> float:
+    """USD for synthesizing ``characters`` of speech.
+
+    For a tenant with voice replies on this is the largest single line in the
+    bill — roughly three times the language model for the same conversation.
+    """
+    if characters <= 0:
+        return 0.0
+    table = pricing if pricing is not None else settings.tts_pricing
+    return (characters / 1_000_000) * _audio_rate(
+        table, provider, model, "per_1m_chars", "TTS"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Tool loop (DESIGN.md §5.4 step 7 — max 5 iterations)
 # --------------------------------------------------------------------------- #
@@ -750,6 +803,9 @@ async def _run_pipeline_inner(
         inbound_had_voice, voice_seconds = await _transcribe_voice_fragments(
             fragments, tenant_config, waha, bound
         )
+        # Held separately: voice_seconds later accumulates the synthesized reply
+        # too, but STT is only billed for what the customer actually sent.
+        inbound_voice_seconds = voice_seconds
         await _persist_inbound(db, tenant_uuid, conversation, fragments)
 
     # --- Phase 2: gates, retrieval, the model, the reply -------------------- #
@@ -1101,6 +1157,17 @@ async def _run_pipeline_inner(
                 cost=compute_cost(emb_provider, emb_model, embed_tokens, 0),
             )
 
+        # Voice is billed in its own units — per minute transcribed, per
+        # character synthesized — and was previously recorded as nothing at all,
+        # despite TTS being the largest line in a voice tenant's bill.
+        audio_cost = 0.0
+        if inbound_voice_seconds:
+            stt_provider, stt_model = resolve_stt_identity(tenant_config)
+            audio_cost += compute_stt_cost(stt_provider, stt_model, inbound_voice_seconds)
+        if was_voice:
+            tts_provider, tts_model = resolve_tts_identity(tenant_config)
+            audio_cost += compute_tts_cost(tts_provider, tts_model, len(reply_text))
+
         # Committed separately, because the provider has already charged for
         # this call and a failure further down must not erase that fact.
         await record_billed_usage(
@@ -1108,7 +1175,7 @@ async def _run_pipeline_inner(
             messages_in=len(fragments),
             messages_out=1,
             tokens=total_tokens,
-            cost=cost,
+            cost=cost + audio_cost,
             voice_seconds=voice_seconds,
         )
         # Cross-process metrics (Prometheus): success-path spend + throughput.
@@ -1279,6 +1346,8 @@ __all__ = [
     "business_hours_closed_reply",
     "coalesce_fragments",
     "compute_cost",
+    "compute_stt_cost",
+    "compute_tts_cost",
     "is_hard_quota_exceeded",
     "CallUsage",
     "record_billed_usage",
