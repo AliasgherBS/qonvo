@@ -8,31 +8,37 @@ otherwise._
 
 ## 0. What is measured and what is not
 
-Re-verified 2026-09-05 with `./scripts/measure-usage.sh`. **Run that after any
-real usage session and update this table** — several rows below are extrapolated
-from a machine carrying 50 messages, and extrapolations age badly.
+Re-verified **2026-09-06 against a real tenant** with `./scripts/measure-usage.sh`
+— a live WhatsApp number, a 36-message conversation in Urdu and English, and an
+ingested knowledge base. **Two claims were wrong and are corrected below.** Run
+the script again after more traffic and update this table.
 
 | Claim | Basis | Status |
 |---|---|---|
-| ~1,000 tokens per reply | 24,099 tokens / 24 replies | ✅ **measured** — re-measured at 1,004 |
+| ~1,000 tokens per reply | a near-empty dev tenant | ❌ **WRONG — was 3.3x too low.** Real tenant measures **3,312** |
 | Container memory ~740 MB (app), ~1.15 GB with monitoring | `docker stats` | ✅ **measured** |
 | WAHA base 257 MB | staging with zero sessions | ✅ **measured** |
 | WAHA ~22 MB per session | (369 − 257) / 5 sessions | ⚠️ **derived from two points**, not per-session isolation |
 | Session disk 24 MB with `fullSync` on | `du` on a real session, 5,511 files | ✅ **measured** |
-| Session disk 3–4 MB with `fullSync` off | reasoning about which files stop being created | ❌ **estimate — never observed.** The first real one settles this |
+| Session disk 3–4 MB with `fullSync` off | reasoning about which files stop being created | ❌ **WRONG — measured 11 MB.** See §2.1 for why |
 | Messages ~0.5–1 KB steady state | measured 2.3 KB at 50 rows, minus amortising index overhead | ⚠️ **extrapolated** |
 | Knowledge chunk 6–8 KB | a 1536-dim float32 vector is 6.1 KB; measured 112 KB at 1 row | ⚠️ **extrapolated** |
 | MinIO unused, media not retained | `minio_data` is 4 KB | ✅ **measured** |
 | Uploaded files persist after tenant delete | **was true, fixed 2026-09-05** | ✅ **fixed and verified** |
 | WAHA `DELETE` frees the session directory | 124 KB directory, gone after the call | ✅ **measured** |
 | Postgres `DELETE` does not shrink the file | standard Postgres behaviour | ✅ **true, and worth knowing** |
-| Per-tenant ~7 MB first month, ~2 MB after | built from the rows above | ⚠️ **modelled** |
-| AI cost per tenant | current published rates × measured tokens | ⚠️ **modelled** — rates verified, volumes assumed |
+| Per-tenant ~7 MB first month | built from the rows above | ❌ **WRONG — ~13 MB**, the session dominates |
+| AI cost per tenant | rates × **measured** tokens | ⚠️ **modelled on real tokens now**; message volume still assumed |
 | Provider rates in §6 | vendor pricing pages, 2026-09-05 | ✅ **checked**, except Uplift AI (not public) |
 | Anything about concurrency | — | ❌ **never tested** |
 
-The honest summary: **resource measurements are solid, per-tenant projections are
-arithmetic on a small sample, and load behaviour is unknown.**
+The honest summary: **the two numbers that mattered most were both too optimistic,
+and both are now measured.** AI cost per tenant roughly triples; per-tenant storage
+roughly doubles. Neither changes the conclusion — the margins are still good — but
+the earlier figures came from a machine with no real knowledge base and no real
+conversation, which is the wrong shape of data to extrapolate from.
+
+Load behaviour remains untested.
 
 ---
 
@@ -75,52 +81,71 @@ Not the idle footprint. Three other things:
 
 ## 2. Storage per tenant
 
-### 2.1 WhatsApp session files, measured per session
+### 2.1 WhatsApp session files — measured on a real session
 
-| Session | Files | Disk | What it is |
-|---|---:|---:|---|
-| `ali-toys` | 5,511 | **24 MB** | 4,678 lid-mapping files + 810 pre-keys |
-| `test_001` | 926 | 4.2 MB | active, smaller address book |
-| `try-…` | 817 | 3.4 MB | |
-| never-linked | 1 | 124 KB | |
+Both configurations are now observed on live sessions:
 
-The dominant cost is **not** message history, it is thousands of tiny JSON files
-each occupying a 4 KB filesystem block. 4,678 lid-mapping files hold maybe 200
-bytes apiece and consume ~19 MB.
+| | `fullSync` **on** (old) | `fullSync` **off** (current) |
+|---|---:|---:|
+| Total | **24 MB** | **11 MB** |
+| Files | 5,511 | 1,758 |
+| `store.sqlite3` | 1.2 MB (27 MB on a busier number) | **4 KB** |
+| lid-mapping files | 4,678 | 926 |
+| pre-key files | 810 | 811 |
 
-**`fullSync` is now off by default**, which is what created those mappings by
-walking the whole address book on connect. New sessions should settle at roughly
-**3–4 MB** (creds, ~810 pre-keys, a small store) **plus ~4 KB per distinct
-contact actually messaged**.
+**The fix did what it was for**: the message-history store went from megabytes to
+**4 KB**. Turning `fullSync` off stops WhatsApp history being cached, and it did.
 
-| Tenant profile | Session disk |
+**But my 3–4 MB estimate was wrong, because I mis-attributed the cost.** The disk
+is not consumed by the store; it is consumed by thousands of tiny JSON files each
+occupying a 4 KB filesystem block:
+
+- **811 pre-key files ≈ 3.2 MB.** Signal protocol key material, generated
+  regardless of any setting. **This is a fixed floor per session.**
+- **926 lid-mapping files ≈ 3.7 MB.** These track the linked phone's address
+  book, and `fullSync` only controls whether they are fetched *up front* — they
+  still accumulate as contacts are seen.
+
+**The corrected scaling law:**
+
+> **~3.5 MB fixed, plus ~4 KB per contact the linked phone knows about.**
+
+| Linked phone's address book | Session disk |
 |---|---:|
-| Quiet (few hundred contacts) | ~4–5 MB |
-| Busy (2,500 contacts) | ~14 MB |
-| Very busy (10,000 contacts) | ~44 MB |
+| Small (500 contacts) | ~5.5 MB |
+| Typical business (2,000) | **~11 MB** ← measured |
+| Large (5,000) | ~23 MB |
+| Very large (15,000) | ~63 MB |
+
+Still far better than `fullSync` on, where a five-year-old retail number was
+heading for hundreds of megabytes of message history on top. But **a tenant's
+session cost is driven by their phone's contact list, not by their Qonvo usage** —
+which is worth knowing, because it means a quiet tenant with a huge address book
+costs more disk than a busy one with a small phonebook.
 
 ### 2.2 Postgres, measured
 
-Whole database today: **12 MB** across 4 tenants. Per-row costs at current
-volumes (index overhead included, so these are pessimistic and amortise down):
+Whole database: **12 MB**. Per-row costs are still index-dominated at these
+volumes (36 messages, 3 chunks), so treat them as ceilings:
 
 | Table | Measured | Steady-state estimate |
 |---|---:|---|
-| `messages` | 2.3 KB/row at 50 rows | ~0.5–1 KB/message |
-| `knowledge_chunks` | 112 KB at 1 row | ~6–8 KB/chunk (a 1536-dim vector is 6.1 KB) |
+| `messages` | 3.2 KB/row at 36 rows | ~0.5–1 KB/message |
+| `knowledge_chunks` | 48 KB at 3 rows | ~6–8 KB/chunk (a 1536-dim vector is 6.1 KB) |
 
-**Per tenant, per month**, for a business handling 1,000 customer messages:
+**Per tenant, corrected:**
 
 | Item | Size |
 |---|---:|
-| 2,000 messages (in + out) | ~2 MB |
+| WhatsApp session files | **~11 MB**, one-off, scales with the address book |
+| 2,000 messages (in + out) | ~2 MB/month |
 | Knowledge base, 100 chunks | ~0.7 MB, one-off |
-| Session files | ~4 MB, one-off, grows with contacts |
-| **First month** | **~7 MB** |
+| Uploaded source files | 64 KB observed for one document |
+| **First month** | **~13 MB** |
 | **Each month after** | **~2 MB** |
 
-**100 tenants ≈ 700 MB in year one.** Storage is not your constraint; it is
-nowhere close.
+100 tenants ≈ **1.1 GB in the first month**, then ~200 MB/month. Still not the
+constraint, but roughly double the earlier figure.
 
 ### 2.3 MinIO is currently unused
 
@@ -195,51 +220,66 @@ Groq Orpheus) was chosen for a free tier, not on merit.
 
 ### 6.1 The unit that makes these comparable
 
-This deployment measures **~1,000 tokens per reply** — about 900 in, 150 out.
-So the cost of **1,000 replies** is `0.9 × input_price + 0.15 × output_price`.
-Every LLM row below is priced that way, which is the only fair comparison.
+A real tenant measures **3,312 tokens per reply** — a live number, a knowledge
+base, and a 36-message conversation. The earlier figure of ~1,000 came from a
+dev tenant with one knowledge chunk and no conversation history, and was **3.3x
+too low**.
+
+Where the tokens go, and why this is the right number to plan with:
+
+| Component | Cap | Behaviour |
+|---|---:|---|
+| Retrieved knowledge (RAG) | 2,000 tokens | Fills up once a tenant has a real knowledge base |
+| Conversation history | 4,000 tokens | Grows with the thread, then the rolling summary compresses it |
+| System prompt + persona | ~300 tokens | Fixed |
+
+So the true range is roughly **1,000 tokens for a first message to a
+knowledge-less tenant, up to ~6,500 for a long conversation against a full
+knowledge base.** 3,312 is a working tenant mid-conversation, which is what to
+budget for.
+
+Cost of **1,000 replies** is therefore `3.15 × input_price + 0.16 × output_price`
+(WhatsApp replies are short; output is assumed at ~160 tokens).
 
 ### 6.2 Language models
 
 | Model | $/1M in | $/1M out | **Per 1,000 replies** |
 |---|---:|---:|---:|
-| Gemini 2.5 Flash-Lite *(retires 16 Oct 2026)* | $0.10 | $0.40 | **$0.15** |
-| DeepSeek V4 Flash | $0.14 | $0.28 | **$0.17** |
-| Gemini 2.5 Flash *(current)* | $0.15 | $1.25 | **$0.32** |
-| GPT-5.6 Luna | $0.20 | $1.20 | **$0.36** |
-| MiniMax M2.7 / M3 | $0.30 | $1.20 | **$0.45** |
-| DeepSeek V4 Pro | $0.435 | $0.87 | **$0.52** |
-| GPT-5 mini | $0.25 | $2.00 | **$0.53** |
-| Gemini 3.5 Flash | $0.75 | $4.50 | **$1.35** |
-| Claude Haiku 4.5 | $1.00 | $5.00 | **$1.65** |
-| Kimi K2.6 | $1.20 | $4.50 | **$1.76** |
-| GLM-5.3 (Z.ai) | $1.40 | $4.40 | **$1.92** |
-| GPT-5 | $1.25 | $10.00 | **$2.63** |
-| Gemini 3.1 Pro | $2.00 | $12.00 | **$3.60** |
-| GPT-5.6 Terra | $2.00 | $12.00 | **$3.60** |
-| Claude Sonnet 5 | $3.00 | $15.00 | **$4.95** |
-| Claude Opus 5 | $5.00 | $25.00 | **$8.25** |
-| GPT-5.6 Sol | $5.00 | $30.00 | **$9.00** |
-| Claude Fable 5 | $10.00 | $50.00 | **$16.50** |
+| Gemini 2.5 Flash-Lite *(retires 16 Oct 2026)* | $0.10 | $0.40 | **$0.38** |
+| DeepSeek V4 Flash | $0.14 | $0.28 | **$0.49** |
+| Gemini 2.5 Flash *(current)* | $0.15 | $1.25 | **$0.67** |
+| GPT-5.6 Luna | $0.20 | $1.20 | **$0.82** |
+| GPT-5 mini | $0.25 | $2.00 | **$1.11** |
+| MiniMax M2.7 / M3 | $0.30 | $1.20 | **$1.14** |
+| DeepSeek V4 Pro | $0.435 | $0.87 | **$1.51** |
+| Gemini 3.5 Flash | $0.75 | $4.50 | **$3.08** |
+| Claude Haiku 4.5 | $1.00 | $5.00 | **$3.95** |
+| Kimi K2.6 | $1.20 | $4.50 | **$4.50** |
+| GLM-5.3 (Z.ai) | $1.40 | $4.40 | **$5.11** |
+| GPT-5 | $1.25 | $10.00 | **$5.54** |
+| Gemini 3.1 Pro / GPT-5.6 Terra | $2.00 | $12.00 | **$8.22** |
+| Claude Sonnet 5 | $3.00 | $15.00 | **$11.85** |
+| Claude Opus 5 | $5.00 | $25.00 | **$19.75** |
+| GPT-5.6 Sol | $5.00 | $30.00 | **$20.55** |
+| Claude Fable 5 | $10.00 | $50.00 | **$39.50** |
 
-Qwen3.7 Max is competitive on benchmarks but I could not confirm a current
-published rate — treat it as unpriced until you check Alibaba directly.
+Qwen3.7 Max benchmarks competitively; no published rate confirmed.
 
-**The spread is 100x, and quality does not track it linearly.** Five models —
-DeepSeek V4 Pro Max, Gemini 3.1 Pro, MiniMax M3, Qwen3.7 Max and Kimi K2.6 —
-score within 0.4 points of each other on SWE-bench Verified while their prices
-differ by more than 10x. For answering "what time do you close?" from a
-retrieved paragraph, **the cheap tier is not a compromise**; that task is
-retrieval plus paraphrase, not reasoning.
+**The input side now dominates completely** — 95% of the spend is the prompt, not
+the answer. Two consequences:
 
-Practical shortlist for Qonvo: **DeepSeek V4 Flash** ($0.17) if you want the
-floor, **Gemini 2.5 Flash** ($0.32) for the status quo, **Claude Haiku 4.5**
-($1.65) if instruction-following on the tool loop turns out to matter. At 1,000
-messages/month the gap between cheapest and Haiku is **$1.48 per tenant**, which
-is noise against a $10 subscription — so choose on reliability, not price.
+1. **Prompt caching is no longer optional.** Gemini charges $0.03/M for cache
+   reads against $0.15/M fresh, so caching the stable prefix (system prompt +
+   persona) cuts the bill materially. Qonvo does not use it yet, and at 3,312
+   tokens a reply that is now the single biggest saving available.
+2. **Model choice matters more than it did.** At the old 1,000-token figure,
+   cheapest-to-Haiku was $1.48 per tenant. It is now **$3.28**, and
+   cheapest-to-Sonnet is $11.18. Still small against a $10 subscription, but no
+   longer noise.
 
-Prompt caching cuts the input half substantially and Qonvo does not use it yet;
-the system prompt and knowledge context are exactly the stable prefix it is for.
+Practical shortlist unchanged: **Gemini 2.5 Flash** ($0.67), **DeepSeek V4
+Flash** ($0.49) for the floor, **Claude Haiku 4.5** ($3.95) if the tool loop
+needs better instruction-following.
 
 ### 6.3 Text to speech — read this before choosing
 
@@ -300,19 +340,21 @@ is a one-line model change. STT is your cheapest AI line either way.
 
 ### 6.5 What a tenant actually costs, by choice
 
-1,000 messages/month, 10% arriving as voice, voice replies on:
+1,000 messages/month, 10% arriving as voice, voice replies on, priced at the
+**measured** 3,312 tokens per reply:
 
 | Configuration | LLM | STT | TTS | **Total** |
 |---|---:|---:|---:|---:|
-| Floor (DeepSeek Flash + Groq turbo + `tts-1`) | $0.17 | $0.03 | $0.60 | **$0.80** |
-| Current (Gemini 2.5 Flash + Groq v3 + Orpheus) | $0.32 | $0.09 | $0.88 | **$1.29** |
-| Urdu-capable (Gemini Flash + turbo + ElevenLabs Flash) | $0.32 | $0.03 | $2.00 | **$2.35** |
-| Premium (Claude Haiku + turbo + ElevenLabs v3) | $1.65 | $0.03 | $4.00 | **$5.68** |
-| Text only, floor | $0.17 | — | — | **$0.17** |
+| Floor (DeepSeek Flash + Groq turbo + `tts-1`) | $0.49 | $0.03 | $0.60 | **$1.12** |
+| Current (Gemini 2.5 Flash + Groq v3 + Orpheus) | $0.67 | $0.09 | $0.88 | **$1.64** |
+| Urdu-capable (Gemini Flash + turbo + ElevenLabs Flash) | $0.67 | $0.03 | $2.00 | **$2.70** |
+| Premium (Claude Haiku + turbo + ElevenLabs v3) | $3.95 | $0.03 | $4.00 | **$7.98** |
+| Text only, floor | $0.49 | — | — | **$0.49** |
 
-**Voice dominates every row.** In the current configuration TTS is 68% of the
-bill; in the premium row it is 70%. The LLM is not where your money goes, and
-`voice_reply_mode` is the biggest cost lever you have.
+Voice is still the largest single line in every row that has it (54–74%), but the
+LLM is no longer negligible: it went from 25% of the current configuration to
+41%. **Both levers now matter** — `voice_reply_mode` for the big win, prompt
+caching for the rest.
 
 ### 6.6 Two corrections to make
 
@@ -428,24 +470,26 @@ the disk they are protecting.
 | Email (Gmail SMTP) | $0, capped at 500/day |
 | Monitoring (self-hosted) | $0 |
 | **Fixed total** | **~$12/month** |
-| AI, per tenant | +$0.17 text-only floor / +$1.29 current / +$2.35 Urdu-capable voice |
+| AI, per tenant | +$0.49 text-only floor / +$1.64 current / +$2.70 Urdu-capable voice |
 
-Priced with the Urdu-capable voice stack ($2.35/tenant), the realistic
-configuration for this market:
+Priced with the Urdu-capable voice stack at the **measured** token rate
+($2.70/tenant), the realistic configuration for this market:
 
 | Tenants | Fixed | AI | Total | Revenue at $10/tenant | Margin |
 |---:|---:|---:|---:|---:|---:|
-| 5 | $12 | $12 | **$24** | $50 | 52% |
-| 20 | $12 | $47 | **$59** | $200 | 71% |
-| 50 | $12 | $118 | **$130** | $500 | 74% |
-| 100 | $24 (bigger box) | $235 | **$259** | $1,000 | 74% |
+| 5 | $12 | $14 | **$26** | $50 | 49% |
+| 20 | $12 | $54 | **$66** | $200 | 67% |
+| 50 | $12 | $135 | **$147** | $500 | 71% |
+| 100 | $24 (bigger box) | $270 | **$294** | $1,000 | 71% |
 
-Text-only tenants cost a seventh of that, so the mix matters more than the tier.
+Text-only tenants cost a fifth of that, so the voice mix still moves the margin
+more than the tenant count does. Margins dropped 3–4 points against the earlier
+estimate once real token usage was measured — the business case is unchanged.
 
-The economics work because WAHA has no per-message fee and Gemini Flash is
-nearly free per turn. **Payment processing will take a bigger cut than your
-infrastructure** — a merchant of record charges roughly 5%, which at 100 tenants
-is $50/month against $159 of infrastructure.
+The economics work because WAHA has no per-message fee. **Payment processing
+takes a comparable cut to your entire infrastructure** — a merchant of record
+charges roughly 5%, which at 100 tenants is $50/month against $294 of
+infrastructure.
 
 ---
 
@@ -475,6 +519,8 @@ more in complexity than it could possibly save.
 | Domain | Check `qonvo.com` first; otherwise `qonvo.org` at Cloudflare |
 | LLM | Any cheap-tier model works; pick on reliability. $1.48/tenant separates cheapest from Claude Haiku |
 | STT | Move to `whisper-large-v3-turbo`, same key, ~64% cheaper |
+| **Prompt caching** | Not used. Input is now 95% of LLM spend, and cache reads are 5x cheaper — the largest saving available |
+| **Provider quota** | The free Gemini tier is **20 requests/minute** and was hit during real testing. Enable billing before any demo |
 | Database | Self-hosted; get backups offsite this month |
 | Price table | Correct Gemini to $0.15/$1.25 |
 | Payments in | Confirm a merchant of record actually pays out to Pakistan **before** building on it |

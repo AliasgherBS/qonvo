@@ -48,7 +48,7 @@ if [[ "${MSGS:-0}" -lt 50 ]]; then
 fi
 
 # --------------------------------------------------------------------------- #
-hdr "Tokens and cost per reply  (doc claims ~1,000 tokens/reply)"
+hdr "Tokens and cost per reply  (doc: ~3,312 measured; 1,000-6,500 range)"
 TOK=$(q "select coalesce(sum(tokens),0) from usage_counters")
 OUT=$(q "select coalesce(sum(messages_out),0) from usage_counters")
 IN=$(q "select coalesce(sum(messages_in),0) from usage_counters")
@@ -60,15 +60,18 @@ row "recorded cost (USD)" "\$${COST:-0}"
 row "voice seconds" "${VOICE:-0}"
 if [[ "${OUT:-0}" -gt 0 ]]; then
 	PERREPLY=$(python3 -c "print(round($TOK/$OUT))")
-	claim "tokens per reply" "$PERREPLY" "~1000" \
-		"$(python3 -c "print('OK' if 600 <= $PERREPLY <= 1600 else '** DIFFERS — update the doc **')")"
+	# Wide range on purpose: a first message to a knowledge-less tenant is
+	# ~1,000 tokens; a long thread against a full knowledge base approaches the
+	# RAG + history caps at ~6,500.
+	claim "tokens per reply" "$PERREPLY" "3312 (1k-6.5k)" \
+		"$(python3 -c "print('OK' if 800 <= $PERREPLY <= 7000 else '** OUTSIDE MODELLED RANGE **')")"
 	CPR=$(python3 -c "print(f'{$COST/$OUT:.6f}')")
 	row "recorded cost per reply" "\$$CPR"
 	printf '  %s\n' "note: config.py prices Gemini at 2x Google's direct rate, so this over-reports"
 fi
 
 # --------------------------------------------------------------------------- #
-hdr "Storage per tenant  (doc claims ~2 MB/month after a ~7 MB first month)"
+hdr "Storage per tenant  (doc: ~13 MB first month, ~2 MB after)"
 DB=$(q "select pg_size_pretty(pg_database_size('qonvo'))")
 MSGBYTES=$(q "select case when count(*)=0 then 0 else pg_total_relation_size('messages')/count(*) end from messages")
 CHUNKBYTES=$(q "select case when count(*)=0 then 0 else pg_total_relation_size('knowledge_chunks')/count(*) end from knowledge_chunks")
@@ -86,7 +89,7 @@ if [[ "${TENANTS:-0}" -gt 0 && "${MSGS:-0}" -gt 0 ]]; then
 fi
 
 # --------------------------------------------------------------------------- #
-hdr "WAHA per session  (doc claims ~3-4 MB with fullSync off, ~22 MB RAM each)"
+hdr "WAHA per session  (doc: ~3.5 MB fixed + ~4 KB per contact; 11 MB measured)"
 docker exec "$WAHA" sh -c '
 for d in /app/.sessions/noweb/*/; do
   [ -d "$d" ] || continue
@@ -94,7 +97,8 @@ for d in /app/.sessions/noweb/*/; do
 done' 2>/dev/null || echo "  (no sessions)"
 row "sessions dir total" "$(docker exec "$WAHA" du -sh /app/.sessions 2>/dev/null | cut -f1)"
 row "waha RSS" "$(docker stats --no-stream --format '{{.MemUsage}}' "$WAHA" 2>/dev/null | cut -d/ -f1)"
-printf '  %s\n' "fullSync is off, so lid-mapping files should stay low (they were 4,678 on an old session)"
+printf '  %s\n' "Expect ~811 pre-keys (fixed ~3.2 MB) plus one lid-mapping file per contact."
+printf '  %s\n' "store.sqlite3 should stay near 4 KB. If it grows, fullSync got re-enabled." 
 
 # --------------------------------------------------------------------------- #
 hdr "Uploaded knowledge files"
