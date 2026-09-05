@@ -117,6 +117,24 @@ def resolve_embedding(tenant_config: TenantConfigLike | None = None) -> OpenAICo
     )
 
 
+def resolve_stt_identity(tenant_config: TenantConfigLike | None = None) -> tuple[str, str]:
+    """The ``(provider, model)`` an STT call will use, for pricing."""
+    cfg = _capability_config(tenant_config, "stt")
+    return (
+        cfg.get("provider") or settings.stt_provider,
+        cfg.get("model") or settings.stt_model,
+    )
+
+
+def resolve_tts_identity(tenant_config: TenantConfigLike | None = None) -> tuple[str, str]:
+    """The ``(provider, model)`` a TTS call will use, for pricing."""
+    cfg = _capability_config(tenant_config, "tts")
+    return (
+        cfg.get("provider") or settings.tts_provider,
+        cfg.get("model") or settings.tts_model,
+    )
+
+
 def resolve_stt(tenant_config: TenantConfigLike | None = None):
     """Build an STT provider, or None if no key is configured (voice disabled)."""
     from app.providers.audio import OpenAICompatSTT

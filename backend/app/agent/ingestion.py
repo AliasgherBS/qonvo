@@ -183,6 +183,7 @@ async def ingest_source(
     *,
     text: str,
     embedder: EmbeddingProvider,
+    usage_out: dict[str, int] | None = None,
 ) -> list[KnowledgeChunk]:
     """Chunk + embed ``text`` for ``source``, tombstoning any prior chunks.
 
@@ -203,7 +204,14 @@ async def ingest_source(
     if not pieces:
         return []
 
-    vectors = await embedder.embed(pieces)
+    # Embedding every chunk is a billed call. Report the tokens so the caller
+    # can record what ingesting this source cost.
+    if hasattr(embedder, "embed_with_usage"):
+        vectors, embed_usage = await embedder.embed_with_usage(pieces)
+        if usage_out is not None:
+            usage_out["embedding_tokens"] = embed_usage.prompt_tokens
+    else:
+        vectors = await embedder.embed(pieces)
     chunks: list[KnowledgeChunk] = []
     for piece, vector in zip(pieces, vectors, strict=True):
         chunk = KnowledgeChunk(

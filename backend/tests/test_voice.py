@@ -11,6 +11,8 @@ from app.providers import registry
 from app.workers import pipeline
 from app.workers.pipeline import (
     InboundFragment,
+    compute_stt_cost,
+    compute_tts_cost,
     is_voice_fragment,
     should_reply_voice,
 )
@@ -178,3 +180,45 @@ async def test_images_as_data_uris_empty_without_images():
     bound = SimpleNamespace(info=lambda *_a, **_k: None, warning=lambda *_a, **_k: None)
     frags = [InboundFragment(message_id="1", type="text", body="hi")]
     assert await pipeline._images_as_data_uris(frags, AsyncMock(), bound) == []
+
+
+# --- audio is billed too, in different units ---------------------------------- #
+# STT is priced per minute of audio and TTS per million characters, so neither
+# fits the per-token table. Both were recorded as $0.00, and for a tenant with
+# voice replies on, TTS is the single largest line in the bill.
+_STT = {"groq": {"whisper-large-v3": {"per_minute": 0.00185}}}
+_TTS = {"openai": {"tts-1": {"per_1m_chars": 15.0}}}
+
+
+def test_stt_is_billed_by_the_second_not_the_whole_minute():
+    """A 30-second voice note must cost half a minute, not a full one."""
+    cost = compute_stt_cost("groq", "whisper-large-v3", 30, pricing=_STT)
+
+    assert cost == pytest.approx(0.00185 / 2)
+
+
+def test_tts_is_billed_per_character():
+    cost = compute_tts_cost("openai", "tts-1", 400, pricing=_TTS)
+
+    assert cost == pytest.approx(400 / 1_000_000 * 15.0)
+
+
+def test_an_unpriced_audio_model_records_zero_loudly():
+    """Same contract as the token table: a miss is 0.00 with a warning, so it
+    surfaces as a bug rather than as suspiciously cheap analytics."""
+    assert compute_stt_cost("groq", "not-a-model", 60, pricing=_STT) == 0.0
+    assert compute_tts_cost("openai", "not-a-model", 400, pricing=_TTS) == 0.0
+
+
+def test_no_audio_means_no_charge():
+    assert compute_stt_cost("groq", "whisper-large-v3", 0, pricing=_STT) == 0.0
+    assert compute_tts_cost("openai", "tts-1", 0, pricing=_TTS) == 0.0
+
+
+def test_the_shipped_table_prices_the_models_we_actually_run():
+    """The configured STT and TTS models must be priced, or every voice turn
+    silently records nothing -- which is how this gap existed in the first place."""
+    from app.core.config import settings
+
+    assert compute_stt_cost(settings.stt_provider, settings.stt_model, 60) > 0
+    assert compute_tts_cost(settings.tts_provider, settings.tts_model, 1000) > 0
