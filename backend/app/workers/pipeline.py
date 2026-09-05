@@ -489,7 +489,32 @@ async def _persist_inbound(
     conversation: Conversation,
     fragments: list[InboundFragment],
 ) -> None:
+    """Store the inbound fragments, skipping any already stored.
+
+    Idempotent because arq retries the whole job: on a second attempt these
+    fragments are already committed, and a bare insert would hit the
+    ``wa_message_id`` unique constraint and kill the retry -- turning a
+    transient provider blip into a permanently unanswered customer.
+    """
+    ids = [f.message_id for f in fragments if f.message_id]
+    already: set[str] = set()
+    if ids:
+        already = set(
+            (
+                await db.execute(
+                    select(Message.wa_message_id).where(
+                        Message.tenant_id == tenant_id,
+                        Message.wa_message_id.in_(ids),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+
     for fragment in fragments:
+        if fragment.message_id in already:
+            continue
         try:
             msg_type = MessageType(fragment.type)
         except ValueError:
@@ -613,12 +638,44 @@ async def _run_pipeline_inner(
     tenant_uuid = uuid.UUID(tenant_id)
     bound = logger.bind(session=session, chat_id=chat_id, tenant_id=tenant_id)
 
+    # --- Phase 1: record that the customer wrote in, and COMMIT it ---------- #
+    # This is deliberately its own transaction. Everything after it can fail --
+    # the LLM can be down, out of quota, or slow enough to exhaust retries --
+    # and if that rolled back the inbound message too, the owner would get a
+    # "customer needs a human" alert and find an empty inbox. Worse, dedupe is
+    # Redis-keyed for 24h, so WhatsApp's redelivery would be dropped as a
+    # duplicate and the message would be gone for good. The customer wrote in;
+    # that fact must outlive the provider.
     async with tenant_session(tenant_uuid) as db:
         session_row = (
             await db.execute(select(WhatsAppSession).where(WhatsAppSession.session_name == session))
         ).scalar_one_or_none()
         if session_row is None:
             bound.error("no whatsapp_sessions row for session — cannot process")
+            return PipelineResult(reply_text="", meta={"gate": "unknown_session"})
+
+        tenant_config = (
+            await db.execute(select(TenantConfig).where(TenantConfig.tenant_id == tenant_uuid))
+        ).scalar_one_or_none()
+
+        conversation = await _get_or_create_conversation(db, tenant_uuid, session_row, chat_id)
+        # Voice-in: transcribe before persisting so the inbound Message stores the
+        # transcript as its body (§2 voice loop). A failed transcription degrades
+        # to a text-only turn rather than raising, so it cannot cost us the row.
+        inbound_had_voice, voice_seconds = await _transcribe_voice_fragments(
+            fragments, tenant_config, waha, bound
+        )
+        await _persist_inbound(db, tenant_uuid, conversation, fragments)
+
+    # --- Phase 2: gates, retrieval, the model, the reply -------------------- #
+    # Re-resolved because the phase-1 objects belong to a closed session. Three
+    # cheap primary-key-ish reads, in exchange for not losing customer messages.
+    async with tenant_session(tenant_uuid) as db:
+        session_row = (
+            await db.execute(select(WhatsAppSession).where(WhatsAppSession.session_name == session))
+        ).scalar_one_or_none()
+        if session_row is None:
+            bound.error("session disappeared between phases — cannot reply")
             return PipelineResult(reply_text="", meta={"gate": "unknown_session"})
 
         # Every outbound below — gate notices, catch-up, the reply itself — is
@@ -630,12 +687,6 @@ async def _run_pipeline_inner(
         ).scalar_one_or_none()
 
         conversation = await _get_or_create_conversation(db, tenant_uuid, session_row, chat_id)
-        # Voice-in: transcribe before persisting so the inbound Message stores the
-        # transcript as its body (§2 voice loop).
-        inbound_had_voice, voice_seconds = await _transcribe_voice_fragments(
-            fragments, tenant_config, waha, bound
-        )
-        await _persist_inbound(db, tenant_uuid, conversation, fragments)
 
         now = datetime.now(UTC)
 
