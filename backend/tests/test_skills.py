@@ -30,6 +30,13 @@ def _ctx(db, **overrides) -> SkillContext:
 def _db_with_capture(db_add_target: list) -> AsyncMock:
     db = AsyncMock()
     db.add = MagicMock(side_effect=lambda obj: db_add_target.append(obj))
+    # A bare AsyncMock returns a truthy MagicMock from every lookup, which reads
+    # as "a row already exists" to any skill that checks. Default every query to
+    # "found nothing"; tests that need a hit override it.
+    empty = MagicMock()
+    empty.scalar_one_or_none = MagicMock(return_value=None)
+    empty.scalars = MagicMock(return_value=MagicMock(all=MagicMock(return_value=[])))
+    db.execute = AsyncMock(return_value=empty)
     return db
 
 
@@ -556,3 +563,50 @@ async def test_share_payment_details_errors_when_unset():
     ctx = _ctx(AsyncMock(), tenant_config=_Config())
     result = await SKILL_REGISTRY["share_payment_details"].handler(ctx, {})
     assert result["status"] == "error"
+
+
+# --- escalating the same issue twice ------------------------------------------ #
+def _db_with_open_handoff(added: list, open_handoff) -> AsyncMock:
+    """Capture db.add, and answer the "is one already open?" lookup."""
+    db = _db_with_capture(added)
+    result = MagicMock()
+    result.scalar_one_or_none = MagicMock(return_value=open_handoff)
+    db.execute = AsyncMock(return_value=result)
+    return db
+
+
+async def test_handoff_does_not_re_escalate_an_already_open_issue():
+    """The bot keeps talking after an escalation now, so it will meet the topic
+    again. Re-escalating would alert the owner twice for one problem and pile up
+    open rows nobody closes."""
+    added: list = []
+
+    class _FakeConversation:
+        state = ConversationState.bot_active
+
+    db = _db_with_open_handoff(added, open_handoff=MagicMock(reason="Refund for a colour."))
+    ctx = _ctx(db, conversation=_FakeConversation())
+
+    result = await SKILL_REGISTRY["human_handoff"].handler(
+        ctx, {"reason": "still asking about the refund"}
+    )
+
+    assert result["status"] == "already_escalated"
+    assert added == [], "a second handoff row or notification was created"
+
+
+async def test_handoff_escalates_when_nothing_is_open():
+    added: list = []
+
+    class _FakeConversation:
+        state = ConversationState.bot_active
+
+    conversation = _FakeConversation()
+    db = _db_with_open_handoff(added, open_handoff=None)
+    ctx = _ctx(db, conversation=conversation)
+
+    result = await SKILL_REGISTRY["human_handoff"].handler(ctx, {"reason": "a new problem"})
+
+    assert result["status"] == "escalated"
+    assert len(added) == 2, "expected one Handoff and one Notification"
+    assert conversation.state == ConversationState.needs_human

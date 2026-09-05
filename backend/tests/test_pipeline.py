@@ -37,10 +37,11 @@ def test_bot_active_never_paused():
     [
         ConversationState.paused_by_agent,
         ConversationState.paused_by_owner,
-        ConversationState.needs_human,
     ],
 )
 def test_paused_states_block_without_ttl(state):
+    """needs_human is deliberately absent: see
+    test_an_escalated_conversation_keeps_answering."""
     assert is_paused(state, None, now=NOW) is True
 
 
@@ -361,3 +362,48 @@ async def test_summary_refresh_failure_costs_nothing_and_keeps_the_old_summary()
 
     assert text == "the old one"
     assert usage.prompt_tokens == 0 and usage.completion_tokens == 0
+
+
+# --- escalation must not take the rep offline --------------------------------- #
+# human_handoff set state=needs_human and never set paused_until, and is_paused
+# treated any non-active state as paused. should_auto_resume requires a
+# paused_until, so the conversation stayed paused forever: every later message
+# from that customer was stored and silently dropped. Owner takeover is
+# different on purpose -- it sets a 6h TTL.
+def test_an_escalated_conversation_keeps_answering():
+    """needs_human means flagged and notified, not muted."""
+    assert is_paused(ConversationState.needs_human, None, now=NOW) is False
+
+
+def test_a_human_taking_over_still_silences_the_bot():
+    """The states that mean a person has the wheel must keep pausing."""
+    assert is_paused(ConversationState.paused_by_agent, None, now=NOW) is True
+    assert is_paused(ConversationState.paused_by_owner, None, now=NOW) is True
+
+
+def test_takeover_still_auto_resumes_when_its_ttl_expires():
+    expired = NOW - timedelta(hours=7)
+    assert is_paused(ConversationState.paused_by_owner, expired, now=NOW) is False
+    assert is_paused(ConversationState.paused_by_owner, NOW + timedelta(hours=1), now=NOW) is True
+
+
+def test_an_open_escalation_is_described_to_the_model():
+    """So it defers on the escalated topic instead of re-escalating it, and
+    keeps answering everything else."""
+    turn = build_turn_prompt(
+        context_block="Open 9 to 7.",
+        conversation_summary=None,
+        message="any update on my refund?",
+        open_handoff_reason="Customer wants a refund for a ruined colour treatment.",
+    )
+
+    assert "ruined colour treatment" in turn
+    assert "already" in turn.lower()
+
+
+def test_a_turn_with_no_open_escalation_says_nothing_about_one():
+    turn = build_turn_prompt(
+        context_block="Open 9 to 7.", conversation_summary=None, message="what time do you open?"
+    )
+
+    assert "escalat" not in turn.lower()
