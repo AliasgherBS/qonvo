@@ -225,9 +225,19 @@ def should_auto_resume(
     )
 
 
+#: Only these mean a person has the wheel. ``needs_human`` deliberately is not
+#: one of them: escalating an issue flags it and notifies the owner, but taking
+#: the rep offline for every later question is how one unanswerable question
+#: silences a customer permanently.
+_PAUSED_STATES = frozenset(
+    {ConversationState.paused_by_agent, ConversationState.paused_by_owner}
+)
+
+
 def is_paused(state: ConversationState, paused_until: datetime | None, *, now: datetime) -> bool:
-    """True when the bot must not reply: paused/needs_human and not yet auto-resumed."""
-    if state == ConversationState.bot_active:
+    """True when the bot must not reply: a human has taken over and the takeover
+    has not yet auto-resumed."""
+    if state not in _PAUSED_STATES:
         return False
     return not should_auto_resume(state, paused_until, now=now)
 
@@ -320,6 +330,7 @@ def build_turn_prompt(
     context_block: str,
     conversation_summary: str | None,
     message: str,
+    open_handoff_reason: str | None = None,
 ) -> str:
     """The volatile half — knowledge, summary and question, in that order.
 
@@ -336,6 +347,17 @@ def build_turn_prompt(
     if conversation_summary:
         # Turns that have scrolled out of the history window (§5.4 step 6).
         parts.append("Summary of the conversation so far:\n" + conversation_summary)
+    if open_handoff_reason:
+        # An issue is already with a human. Say so, so the model neither
+        # re-escalates it nor answers over the top of the colleague who is about
+        # to reply -- while still helping with anything unrelated.
+        parts.append(
+            "This issue has already been passed to the team and is being handled "
+            f"by a person: {open_handoff_reason}\n"
+            "Do not escalate it again and do not try to resolve it yourself. If "
+            "the customer asks about it, say the team is on it and will come "
+            "back to them. Answer any other question normally."
+        )
     parts.append("Customer message:\n" + message)
     return "\n\n".join(parts)
 
@@ -1052,10 +1074,16 @@ async def _run_pipeline_inner(
         )
         windowed = window_history(history_rows)
         images = await _images_as_data_uris(fragments, waha, bound)
+        # If something is already with a human, tell the model so it defers on
+        # that topic instead of re-escalating it, and keeps helping otherwise.
+        from app.skills.human_handoff import open_handoff_for
+
+        open_handoff = await open_handoff_for(db, conversation.id)
         turn_prompt = build_turn_prompt(
             context_block=context_block,
             conversation_summary=conversation.summary,
             message=coalesced,
+            open_handoff_reason=(open_handoff.reason if open_handoff else None),
         )
         llm_messages = [
             ChatMessage(role="system", content=system_prompt),
