@@ -25,6 +25,8 @@ from app.api.config import (
     _config_to_dict,
 )
 from app.api.deps import get_system_db, get_waha, require_admin
+from app.billing.plans import PLANS
+from app.billing.service import set_subscription
 from app.core.logging import logger
 from app.core.security import TokenClaims, hash_password
 from app.models import TENANT_SCOPED_TABLES
@@ -309,6 +311,63 @@ async def update_tenant(
     await db.flush()
     email, full_name = (await _owner_map(db, [tenant.id])).get(tenant.id, (None, None))
     return {**_tenant_to_dict(tenant), "owner_email": email, "owner_name": full_name}
+
+
+class SetSubscriptionRequest(BaseModel):
+    plan_key: str
+    status: str = "active"  # active | trialing | past_due | canceled
+    current_period_end: datetime | None = None
+    cancel_at_period_end: bool = False
+
+
+@router.put("/tenants/{tenant_id}/subscription")
+async def set_tenant_subscription(
+    tenant_id: UUID,
+    body: SetSubscriptionRequest,
+    claims: TokenClaims = Depends(require_admin),
+    db: AsyncSession = Depends(get_system_db),
+) -> dict:
+    """Record what a tenant is on — the manual adapter's "mark paid".
+
+    This is the same path a merchant-of-record webhook takes, so entitlements
+    are rewritten from the plan catalogue either way and the two can never
+    disagree about what a plan grants.
+    """
+    tenant = (await db.execute(select(Tenant).where(Tenant.id == tenant_id))).scalar_one_or_none()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="tenant not found")
+    if body.plan_key not in PLANS:
+        raise HTTPException(status_code=400, detail="unknown plan")
+    if body.status not in ("active", "trialing", "past_due", "canceled"):
+        raise HTTPException(status_code=400, detail="unknown subscription status")
+
+    sub = await set_subscription(
+        db,
+        tenant_id,
+        {
+            "plan_key": body.plan_key,
+            "status": body.status,
+            "provider": "manual",
+            "current_period_end": body.current_period_end,
+            "cancel_at_period_end": body.cancel_at_period_end,
+        },
+    )
+    await _audit(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="tenant.subscription.set",
+        target=str(tenant_id),
+        meta={"plan_key": body.plan_key, "status": body.status},
+    )
+    await db.flush()
+    return {
+        "plan_key": sub.plan_key,
+        "status": sub.status,
+        "provider": sub.provider,
+        "current_period_end": sub.current_period_end,
+        "cancel_at_period_end": sub.cancel_at_period_end,
+    }
 
 
 @router.delete("/tenants/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)

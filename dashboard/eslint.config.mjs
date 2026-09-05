@@ -12,7 +12,10 @@ const compat = new FlatCompat({
 const eslintConfig = [
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
-    ignores: [".next/**", "out/**", "build/**", "next-env.d.ts"],
+    // .next-staging is the staging build output (see next.config.ts distDir).
+    // Without it here, eslint lints minified build artifacts and the lint gate
+    // fails with thousands of errors in generated code.
+    ignores: [".next/**", ".next-staging/**", "out/**", "build/**", "next-env.d.ts"],
   },
 ];
 

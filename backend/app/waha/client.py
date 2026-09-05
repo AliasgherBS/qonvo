@@ -207,9 +207,12 @@ class WahaClient:
             config["metadata"] = {"engine": engine}
         # The NOWEB engine needs its store enabled at create time, otherwise
         # sends (and chat/contact resolution) 400 with "Enable NOWEB store".
-        # fullSync pulls history so the store is populated for a fresh number.
+        # fullSync is separate: it backfills the number's whole WhatsApp history,
+        # which costs real disk per tenant and which nothing here ever reads.
         if engine and engine.upper() == "NOWEB":
-            config["noweb"] = {"store": {"enabled": True, "fullSync": True}}
+            config["noweb"] = {
+                "store": {"enabled": True, "fullSync": settings.waha_full_sync}
+            }
         payload: dict[str, Any] = {"name": name, "start": start}
         if config:
             payload["config"] = config

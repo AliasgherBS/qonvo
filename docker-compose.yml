@@ -5,7 +5,13 @@ name: qonvo
 
 x-backend-env: &backend-env
   env_file:
-    - .env
+    # Which env file the application containers read. Interpolated, so a second
+    # stack can point at its own: qonvo-staging.sh exports QONVO_ENV_FILE.
+    # Note this is NOT the same as compose's --env-file, which only supplies
+    # values for interpolation in this file — the containers would still read
+    # .env without this variable, and a staging stack would silently run on
+    # production's secrets.
+    - ${QONVO_ENV_FILE:-.env}
 
 services:
   # --------------------------------------------------------------------- #
@@ -86,8 +92,11 @@ services:
     volumes:
       - minio_data:/data
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      # Localhost-only: the API reaches MinIO over the compose network
+      # (minio:9000); these are for tooling on the box. Ports are variables so a
+      # second (staging) stack can run alongside production.
+      - "127.0.0.1:${MINIO_HOST_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_HOST_PORT:-9001}:9001"
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
@@ -183,8 +192,8 @@ services:
     environment:
       DOMAIN: ${DOMAIN}
     ports:
-      - "80:80"
-      - "443:443"
+      - "${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_HTTPS_PORT:-443}:443"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

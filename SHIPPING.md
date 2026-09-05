@@ -110,14 +110,14 @@ critical engine bugs fixed.
 
 | Area | Gap | Priority |
 |---|---|---|
-| **Billing** | No subscription/payment/metering-to-invoice. Tenants are created by hand. | 🔴 must |
-| **Self-serve signup** | Public signup → auto-provision tenant (replaces admin hand-creation). | 🔴 must |
+| **Billing** | ✅ Built and provider-agnostic (plans, subscriptions, entitlements, grace/cancel states, webhook route), shipped on the manual adapter. Needs a merchant-of-record account to take money automatically. | 🟠 should |
+| **Self-serve signup** | ✅ Built (`POST /api/auth/signup`, 14-day trial). | ✅ done |
 | **WAHA scale** | Sharding/Plus plan + session-count monitoring for many tenants. | 🔴 must |
 | **Reconnect UX** | On session drop, notify owner + guided re-scan (health monitor exists; wire the owner-facing nudge). | 🟠 should |
 | **Official Cloud API** | Second provider for zero-ban-risk / high-trust customers. | 🟠 should |
-| **Admin overview** | Summary tiles (tenants, live sessions, knowledge ingested, msgs/mo) + per-tenant knowledge count. | 🟠 should |
+| **Admin overview** | ✅ Built (overview tiles + `/admin/health`). | ✅ done |
 | **Voice-out** | Add an OpenAI TTS key to enable voice replies (STT already works). | 🟡 nice |
-| **Ops hardening** | Backups (script exists — schedule it), alerting, rate-limit/abuse, staging env. | 🟠 should |
+| **Ops hardening** | Alerting ✅ (Prometheus/Grafana/Alertmanager), rate-limit/abuse ✅, staging env ✅ (`./qonvo-staging.sh`). **Backups are still unscheduled — the script exists, cron does not.** No CI. | 🔴 must |
 | **Legal/compliance** | WhatsApp ToS posture, privacy policy, data-retention/DPA, per-tenant data export/delete. | 🟠 should |
 | **CRM sync** | Push leads/orders to external CRMs. | 🟡 want |
 

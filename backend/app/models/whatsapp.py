@@ -31,8 +31,11 @@ class WhatsAppSession(Base, TenantScopedMixin):
     # Per-session HMAC secret for verifying that session's webhooks.
     hmac_secret: Mapped[str | None] = mapped_column(String(255), nullable=True)
     daily_cap: Mapped[int] = mapped_column(Integer, nullable=False, default=500)
-    # Warm-up stage for a new number (DESIGN.md §5.6): 1 → 50/day, 2 → 150/day, 0 → normal.
-    warmup_stage: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Warm-up stage for a new number (DESIGN.md §5.6): 1 → 50/day, 2 → 150/day,
+    # 0 → normal. New sessions start at 1; app.waha.session_warmup advances them.
+    # The server default stays 0 so pre-existing (already established) numbers
+    # are unaffected.
+    warmup_stage: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     # Auto-recovery bookkeeping (§12.1). Bounds how hard the health poller
     # tries to restart a FAILED session; both reset once it is WORKING again.
     recovery_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

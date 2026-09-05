@@ -21,6 +21,7 @@ import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 import redis.asyncio as redis
 
@@ -146,6 +147,20 @@ class SessionPacing:
     max_delay: float | None = None
 
 
+def pacing_for_session(session_row: Any) -> SessionPacing:
+    """Build pacing from a ``WhatsAppSession`` row.
+
+    Every send path must go through this rather than constructing a bare
+    ``SessionPacing()``: the dataclass defaults are a generous 500/day with no
+    warm-up, so a default-constructed pacing silently ignores whatever the
+    session was actually configured for.
+    """
+    return SessionPacing(
+        daily_cap=session_row.daily_cap,
+        warmup_stage=session_row.warmup_stage,
+    )
+
+
 class SendGateway:
     """Serialized, paced sender for one WAHA deployment."""
 
@@ -206,11 +221,10 @@ class SendGateway:
         chat_id: str,
         text: str,
         *,
-        pacing: SessionPacing | None = None,
+        pacing: SessionPacing,
         reply_to: str | None = None,
     ) -> dict:
         """Human-like paced text send: seen → typing → delay → send → stop."""
-        pacing = pacing or SessionPacing()
         await self._check_daily_cap(session, pacing)
         await self._await_slot(session, pacing)
 
@@ -244,9 +258,8 @@ class SendGateway:
         *,
         url: str | None = None,
         data: str | None = None,
-        pacing: SessionPacing | None = None,
+        pacing: SessionPacing,
     ) -> dict:
-        pacing = pacing or SessionPacing()
         await self._check_daily_cap(session, pacing)
         await self._await_slot(session, pacing)
 
@@ -266,6 +279,7 @@ __all__ = [
     "SendGateway",
     "SessionPacing",
     "effective_daily_cap",
+    "pacing_for_session",
     "token_bucket_wait",
     "typing_delay_seconds",
 ]

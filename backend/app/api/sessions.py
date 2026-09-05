@@ -30,7 +30,9 @@ class CreateSessionRequest(BaseModel):
     label: str | None = None
     engine: str | None = None
     daily_cap: int = Field(default=settings.send_default_daily_cap, ge=1)
-    warmup_stage: int = Field(default=0, ge=0, le=2)
+    # New numbers warm up by default (§5.6): 50/day for a week, then 150/day.
+    # Pass 0 explicitly when connecting a number that is already established.
+    warmup_stage: int = Field(default=1, ge=0, le=2)
 
 
 class SessionResponse(BaseModel):
