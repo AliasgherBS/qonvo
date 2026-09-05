@@ -44,3 +44,24 @@ monitoring/alertmanager/smtp_password
 
 # Windows "downloaded from the internet" markers, created by WSL/Explorer.
 *:Zone.Identifier
+
+# --------------------------------------------------------------------------- #
+# Large binaries and generated marketing output.
+# Git keeps every version of a binary forever and cannot diff them. The brand
+# kit and promo video are 15 MB of the repo's 26 MB history; the dashboard
+# already carries its own optimised copies (public/hero.mp4, public/logo-*).
+# The logo PNGs stay tracked: 112 KB, and pitch-decks/src/hub.mjs reads them.
+# --------------------------------------------------------------------------- #
+Branding+Marketing/*.pdf
+Branding+Marketing/*.mp4
+Branding+Marketing/pitch-decks/
+Branding+Marketing/promo-video/
+Branding+Marketing/qonvo-marketing-kit.*
+
+# Local test data for the end-to-end run (see docs/E2E-LIVE-TEST-PLAN.md).
+fixtures/
+
+# Superseded by dashboard/lib/legal.ts, which the Terms and Privacy pages
+# render from and which calls itself the single source of truth. Keeping a
+# second copy in markdown only invites the two to drift apart.
+legal/

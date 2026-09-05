@@ -91,12 +91,17 @@ PY
 
 sed -i -E "0,/^version = \"[0-9]+\.[0-9]+\.[0-9]+\"/s//version = \"$VERSION\"/" backend/pyproject.toml
 sed -i -E "0,/\"version\": \"[0-9]+\.[0-9]+\.[0-9]+\"/s//\"version\": \"$VERSION\"/" dashboard/package.json
+
+# uv.lock records the project version too. Without this it drifts out of sync
+# and the next `uv run` rewrites it, leaving a stray diff in someone's tree.
+(cd backend && uv lock --quiet 2>/dev/null || uv lock)
+
 echo "→ bumped to $VERSION and promoted the changelog"
 
 # --- the release notes are that version's changelog section ----------------- #
 NOTES=$(awk -v v="## [$VERSION]" 'index($0,v)==1{f=1;next} /^## \[/{f=0} f' CHANGELOG.md)
 
-git add CHANGELOG.md backend/pyproject.toml dashboard/package.json
+git add CHANGELOG.md backend/pyproject.toml backend/uv.lock dashboard/package.json
 git commit -q -m "chore(release): $TAG"
 
 git switch -q main
