@@ -242,10 +242,18 @@ class Settings(BaseSettings):
                 },
                 "gpt-5.6-luna": {"input": 0.0002, "cached_input": 0.00002, "output": 0.0012},
                 "gpt-5.6-terra": {"input": 0.002, "cached_input": 0.0002, "output": 0.012},
-                "gpt-5.6-sol": {"input": 0.005, "cached_input": 0.0005, "output": 0.03},
+                # Sol is on promotional pricing at least until 2026-11-21;
+                # revisit then. (Corrected from 0.005/0.03, which a third-party
+                # summary reported but OpenAI's own page contradicts.)
+                "gpt-5.6-sol": {"input": 0.004, "cached_input": 0.0004, "output": 0.02},
                 "gpt-5-mini": {"input": 0.00025, "cached_input": 0.000025, "output": 0.002},
-                "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
-                "gpt-4o": {"input": 0.0025, "output": 0.01},
+                # NOTE the cache discount is NOT uniform: the gpt-5 family gets
+                # 90% off cached input, gpt-4.1 gets 75%, and gpt-4o-mini only
+                # 50%. Assuming a flat tenth would under-report the 4o models.
+                "gpt-4.1-nano": {"input": 0.0001, "cached_input": 0.000025, "output": 0.0004},
+                "gpt-4.1-mini": {"input": 0.0004, "cached_input": 0.0001, "output": 0.0016},
+                "gpt-4o-mini": {"input": 0.00015, "cached_input": 0.000075, "output": 0.0006},
+                "gpt-4o": {"input": 0.0025, "cached_input": 0.00125, "output": 0.01},
                 "text-embedding-3-small": {"input": 0.00002, "output": 0.0},
             },
             "openrouter": {
