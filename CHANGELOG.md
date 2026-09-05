@@ -9,6 +9,8 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-05
+
 The first tagged release. Everything before it was untagged work on `main`. This
 marks the product as live-verified against a real WhatsApp number, with the
 billing, staging, CI and test-harness work that closed the last gaps before it
@@ -76,3 +78,4 @@ could be sold.
   stack cannot silently run on production's JWT, Fernet and WAHA secrets.
 
 [Unreleased]: https://github.com/AliasgherBS/qonvo/commits/dev
+[0.9.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.9.0
