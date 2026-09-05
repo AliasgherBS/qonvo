@@ -84,11 +84,27 @@ def resolve_llm(tenant_config: TenantConfigLike | None = None) -> OpenAICompatPr
     )
 
 
+def resolve_embedding_identity(
+    tenant_config: TenantConfigLike | None = None,
+) -> tuple[str, str]:
+    """The ``(provider, model)`` an embedding call for this tenant will use.
+
+    Split out for the same reason as :func:`resolve_llm_identity`: pricing has
+    to name the model that actually ran. Note there are no flat
+    ``embedding_provider``/``embedding_model`` columns on tenant_config — the
+    only per-tenant override is the nested ``providers`` map.
+    """
+    emb_cfg = _capability_config(tenant_config, "embedding")
+    return (
+        emb_cfg.get("provider") or settings.embedding_provider,
+        emb_cfg.get("model") or settings.embedding_model,
+    )
+
+
 def resolve_embedding(tenant_config: TenantConfigLike | None = None) -> OpenAICompatProvider:
     """Build an embedding provider for a tenant, falling back to system defaults."""
     emb_cfg = _capability_config(tenant_config, "embedding")
-    provider_name = emb_cfg.get("provider") or settings.embedding_provider
-    model = emb_cfg.get("model") or settings.embedding_model
+    provider_name, model = resolve_embedding_identity(tenant_config)
     base_url = _resolve_base_url(
         provider_name, emb_cfg.get("base_url") or settings.embedding_base_url
     )

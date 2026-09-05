@@ -322,3 +322,42 @@ def test_cached_tokens_cannot_exceed_the_prompt():
     cost = compute_cost("openai", "m", 100, 0, cached_tokens=9_999, pricing=_RATES)
 
     assert cost >= 0
+
+
+# --- every billed call must be recorded --------------------------------------- #
+# The chat completion was the only call feeding usage_counters. Four others are
+# billed and were invisible: the summary refresh, the per-query embedding, the
+# ingestion embeddings, and voice. The first two are token-priced and covered
+# here; voice needs its own per-character/per-second rates.
+async def test_summary_refresh_reports_what_it_cost():
+    """It sends the whole windowed transcript, so it is not a rounding error:
+    fired every 10 turns against a 4,000-token window, it adds roughly a tenth
+    to a tenant's token bill and was recorded as zero."""
+
+    class _Llm:
+        async def generate(self, *_a, **_k):
+            from app.providers.base import LLMResult
+
+            return LLMResult(text="Customer asked about hours.", prompt_tokens=3800,
+                             completion_tokens=40)
+
+    text, usage = await pipeline.refresh_summary_with_usage(
+        _Llm(), prior_summary=None, recent=[], model="m"
+    )
+
+    assert text == "Customer asked about hours."
+    assert usage.prompt_tokens == 3800
+    assert usage.completion_tokens == 40
+
+
+async def test_summary_refresh_failure_costs_nothing_and_keeps_the_old_summary():
+    class _Broken:
+        async def generate(self, *_a, **_k):
+            raise RuntimeError("provider down")
+
+    text, usage = await pipeline.refresh_summary_with_usage(
+        _Broken(), prior_summary="the old one", recent=[], model="m"
+    )
+
+    assert text == "the old one"
+    assert usage.prompt_tokens == 0 and usage.completion_tokens == 0

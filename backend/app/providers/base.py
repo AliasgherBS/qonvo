@@ -45,6 +45,13 @@ class LLMResult:
 
 
 @dataclass(slots=True)
+class EmbeddingUsage:
+    """Tokens billed for one embedding call. 0 when the provider omits usage."""
+
+    prompt_tokens: int = 0
+
+
+@dataclass(slots=True)
 class TranscriptionResult:
     text: str
     language: str | None = None
