@@ -36,6 +36,7 @@ from app.models.whatsapp import WhatsAppSession
 from app.providers.base import ChatMessage, LLMProvider, LLMResult, ToolCall
 from app.providers.registry import (
     resolve_embedding,
+    resolve_embedding_identity,
     resolve_llm,
     resolve_llm_identity,
     voice_reply_mode,
@@ -963,7 +964,10 @@ async def _run_pipeline_inner(
         embedder = resolve_embedding(tenant_config)
         from app.agent.rag import build_context_block, retrieve
 
-        chunks = await retrieve(db, tenant_uuid, coalesced, embedder=embedder)
+        rag_usage: dict[str, int] = {}
+        chunks = await retrieve(
+            db, tenant_uuid, coalesced, embedder=embedder, usage_out=rag_usage
+        )
         if not chunks and coalesced:
             db.add(
                 AnalyticsEvent(
@@ -1085,6 +1089,18 @@ async def _run_pipeline_inner(
                 meta={"knowledge_gap": True} if not chunks else {},
             )
         )
+        # The query embedding is billed too, on every single message.
+        embed_tokens = rag_usage.get("embedding_tokens", 0)
+        if embed_tokens:
+            emb_provider, emb_model = resolve_embedding_identity(tenant_config)
+            await record_billed_usage(
+                tenant_uuid,
+                messages_in=0,
+                messages_out=0,
+                tokens=embed_tokens,
+                cost=compute_cost(emb_provider, emb_model, embed_tokens, 0),
+            )
+
         # Committed separately, because the provider has already charged for
         # this call and a failure further down must not erase that fact.
         await record_billed_usage(
@@ -1106,12 +1122,25 @@ async def _run_pipeline_inner(
         prior_bot_turns = sum(1 for m in history_rows if m.author == MessageAuthor.bot)
         turn_number = prior_bot_turns + 1
         if should_refresh_summary(turn_number):
-            try:
-                conversation.summary = await _refresh_summary(
-                    llm, conversation.summary, windowed, model=model_name
+            summary_text, summary_usage = await refresh_summary_with_usage(
+                llm, conversation.summary, windowed, model=model_name
+            )
+            conversation.summary = summary_text
+            if summary_usage.total:
+                # A separate call, separately billed. Recorded as its own row so
+                # the tenant's token bill reflects what the provider charged.
+                await record_billed_usage(
+                    tenant_uuid,
+                    messages_in=0,
+                    messages_out=0,
+                    tokens=summary_usage.total,
+                    cost=compute_cost(
+                        provider_name,
+                        model_name,
+                        summary_usage.prompt_tokens,
+                        summary_usage.completion_tokens,
+                    ),
                 )
-            except Exception as exc:  # noqa: BLE001 — summary refresh must not break the turn
-                bound.warning(f"summary refresh failed: {exc}")
 
         if was_voice:
             await _send_voice(bound, send_gateway, session, chat_id, audio_b64, pacing)
@@ -1131,9 +1160,44 @@ async def _run_pipeline_inner(
         )
 
 
-async def _refresh_summary(
+@dataclass(slots=True)
+class CallUsage:
+    """Tokens a provider billed for one call, so it can be recorded."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
+
+
+async def refresh_summary_with_usage(
+    llm: LLMProvider,
+    prior_summary: str | None,
+    recent: list[Message],
+    *,
+    model: str | None,
+) -> tuple[str, CallUsage]:
+    """Refresh the rolling summary, reporting what the call cost.
+
+    This is a second, separately billed model call that sends the whole windowed
+    transcript. Fired every ``summary_refresh_turns`` against a 4,000-token
+    window it adds roughly a tenth to a tenant's token bill, and it used to be
+    recorded as nothing at all because only ``.text`` was read off the result.
+
+    A failure keeps the previous summary and costs nothing: the turn must not
+    break because a summary could not be rewritten.
+    """
+    try:
+        return await _refresh_summary_text(llm, prior_summary, recent, model=model)
+    except Exception:
+        return (prior_summary or ""), CallUsage()
+
+
+async def _refresh_summary_text(
     llm: LLMProvider, prior_summary: str | None, recent: list[Message], *, model: str | None
-) -> str:
+) -> tuple[str, CallUsage]:
     transcript = "\n".join(
         f"{'Customer' if m.author == MessageAuthor.customer else 'Agent'}: "
         f"{m.body or m.transcript or ''}"
@@ -1145,7 +1209,10 @@ async def _refresh_summary(
         f"Prior summary: {prior_summary or '(none)'}\n\nRecent messages:\n{transcript}"
     )
     result = await llm.generate([ChatMessage(role="user", content=prompt)], model=model)
-    return result.text.strip() or (prior_summary or "")
+    return (
+        result.text.strip() or (prior_summary or ""),
+        CallUsage(result.prompt_tokens, result.completion_tokens),
+    )
 
 
 async def _send(
@@ -1213,7 +1280,9 @@ __all__ = [
     "coalesce_fragments",
     "compute_cost",
     "is_hard_quota_exceeded",
+    "CallUsage",
     "record_billed_usage",
+    "refresh_summary_with_usage",
     "is_paused",
     "is_voice_fragment",
     "should_reply_voice",

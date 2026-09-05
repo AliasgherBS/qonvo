@@ -35,6 +35,7 @@ async def retrieve(
     embedder: EmbeddingProvider,
     top_k: int | None = None,
     min_score: float | None = None,
+    usage_out: dict[str, int] | None = None,
 ) -> list[RetrievedChunk]:
     """Embed ``query`` and return the top-k tenant-scoped chunks above threshold.
 
@@ -48,7 +49,14 @@ async def retrieve(
     if not query or not query.strip():
         return []
 
-    vectors = await embedder.embed([query])
+    # Embedding the query is a billed call on every inbound message. Report the
+    # tokens so the pipeline can record them; providers that omit usage give 0.
+    if hasattr(embedder, "embed_with_usage"):
+        vectors, embed_usage = await embedder.embed_with_usage([query])
+        if usage_out is not None:
+            usage_out["embedding_tokens"] = embed_usage.prompt_tokens
+    else:
+        vectors = await embedder.embed([query])
     if not vectors:
         return []
     query_vector = vectors[0]

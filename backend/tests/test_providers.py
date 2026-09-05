@@ -12,6 +12,7 @@ from app.providers.openai_compat import OpenAICompatProvider, ProviderError, Pro
 from app.providers.registry import (
     PROVIDER_PRESETS,
     resolve_embedding,
+    resolve_embedding_identity,
     resolve_llm,
     resolve_llm_identity,
 )
@@ -263,3 +264,54 @@ def test_llm_identity_falls_back_to_flat_columns_then_settings():
 
     assert resolve_llm_identity(FlatConfig()) == ("groq", "llama-3.1-8b-instant")
     assert resolve_llm_identity(None) == (settings.llm_provider, settings.llm_model)
+
+
+# --- embeddings are billed too ------------------------------------------------ #
+async def test_embed_reports_the_tokens_it_was_billed_for():
+    """embed() returned only vectors, so every RAG query and every ingested
+    chunk was billed and recorded as nothing."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "data": [{"embedding": [0.1, 0.2]}],
+                "usage": {"prompt_tokens": 37, "total_tokens": 37},
+            },
+        )
+
+    provider = _provider(handler)
+    vectors, usage = await provider.embed_with_usage(["what time do you open?"])
+
+    assert vectors == [[0.1, 0.2]]
+    assert usage.prompt_tokens == 37
+
+
+async def test_embed_without_usage_reports_zero_rather_than_guessing():
+    """Some OpenAI-compatible providers omit usage on embeddings. Recording a
+    guess would be worse than recording nothing."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"data": [{"embedding": [0.1]}]})
+
+    vectors, usage = await _provider(handler).embed_with_usage(["hi"])
+
+    assert vectors == [[0.1]]
+    assert usage.prompt_tokens == 0
+
+
+def test_embedding_identity_matches_the_provider_actually_used():
+    """There are no flat embedding columns on tenant_config -- only the nested
+    providers map -- so pricing must resolve it the same way the client does."""
+
+    class FakeConfig:
+        llm_provider = None
+        llm_model = None
+        providers = {"embedding": {"provider": "openai", "model": "text-embedding-3-small"}}
+
+    config = FakeConfig()
+    assert resolve_embedding_identity(config) == ("openai", "text-embedding-3-small")
+    assert resolve_embedding_identity(None) == (
+        settings.embedding_provider,
+        settings.embedding_model,
+    )
