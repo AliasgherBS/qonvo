@@ -9,6 +9,13 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+### Added
+
+- [docs/DEPLOYMENT-AND-COSTS.md](docs/DEPLOYMENT-AND-COSTS.md): measured resource
+  profile, per-tenant storage model, VPS provider comparison at September 2026 rates,
+  AI cost per tenant grounded in observed token usage, and the self-hosted versus
+  managed Postgres decision.
+
 ## [0.9.0] - 2026-09-05
 
 The first tagged release. Everything before it was untagged work on `main`. This
