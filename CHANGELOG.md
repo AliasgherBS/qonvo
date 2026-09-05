@@ -48,6 +48,13 @@ untagged work on `main`. Cut it with `./scripts/release.sh 0.9.0`.
 
 ### Fixed
 
+- **A provider failure no longer discards the customer's message.** The whole turn
+  ran in one transaction, so an LLM outage or exhausted quota rolled back the inbound
+  message, the conversation, the handoff and the notification, while the "a customer
+  needs a human" email had already been sent. The owner got an alert and an empty
+  inbox, and Redis-keyed dedupe then dropped WhatsApp's redelivery, losing the message
+  for good. The inbound message is now committed before the model is called.
+
 - **`alembic upgrade head` failed on any fresh database.** Migration `0001` builds the
   schema from the current models, so `0007`'s unguarded `add_column` collided with
   columns that already existed, aborting the upgrade. Every new deploy would have
