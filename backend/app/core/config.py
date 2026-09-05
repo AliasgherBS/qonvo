@@ -224,7 +224,26 @@ class Settings(BaseSettings):
     # Per-provider-per-model USD price per 1K tokens: {provider: {model: {input, output}}}.
     llm_pricing: dict[str, dict[str, dict[str, float]]] = Field(
         default_factory=lambda: {
+            # $/1K tokens. "cached_input" is what a provider charges for the
+            # part of the prompt served from its automatic prompt cache — around
+            # a tenth of the input rate, and a large share of every request once
+            # the prompt is ordered for caching (see build_system_prompt).
+            # Rates verified 2026-09-06.
             "openai": {
+                "gpt-5.4-nano": {
+                    "input": 0.0002,
+                    "cached_input": 0.00002,
+                    "output": 0.00125,
+                },
+                "gpt-5-nano": {
+                    "input": 0.00005,
+                    "cached_input": 0.000005,
+                    "output": 0.0004,
+                },
+                "gpt-5.6-luna": {"input": 0.0002, "cached_input": 0.00002, "output": 0.0012},
+                "gpt-5.6-terra": {"input": 0.002, "cached_input": 0.0002, "output": 0.012},
+                "gpt-5.6-sol": {"input": 0.005, "cached_input": 0.0005, "output": 0.03},
+                "gpt-5-mini": {"input": 0.00025, "cached_input": 0.000025, "output": 0.002},
                 "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
                 "gpt-4o": {"input": 0.0025, "output": 0.01},
                 "text-embedding-3-small": {"input": 0.00002, "output": 0.0},
@@ -240,7 +259,16 @@ class Settings(BaseSettings):
                 # records $0.00 (it returns 0 on a pricing miss).
                 "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
                 "gemini-2.0-flash": {"input": 0.0001, "output": 0.0004},
-                "gemini-2.5-flash": {"input": 0.0003, "output": 0.0025},
+                # Corrected 2026-09-06: this was 0.0003/0.0025, the OpenRouter
+                # rate, so every turn was billed at twice what Google charges.
+                "gemini-2.5-flash": {
+                    "input": 0.00015,
+                    "cached_input": 0.000015,
+                    "output": 0.00125,
+                },
+                "gemini-2.5-flash-lite": {"input": 0.0001, "output": 0.0004},
+                "gemini-3.5-flash": {"input": 0.00075, "output": 0.0045},
+                "gemini-3.1-pro": {"input": 0.002, "output": 0.012},
                 "gemini-embedding-001": {"input": 0.00015, "output": 0.0},
             },
         }

@@ -38,6 +38,10 @@ class LLMResult:
     tool_calls: list[ToolCall] = field(default_factory=list)
     prompt_tokens: int = 0
     completion_tokens: int = 0
+    #: Part of ``prompt_tokens`` the provider served from its automatic prompt
+    #: cache, billed at roughly a tenth of the input rate. 0 when the provider
+    #: does not report it.
+    cached_tokens: int = 0
 
 
 @dataclass(slots=True)

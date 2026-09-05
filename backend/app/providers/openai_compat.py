@@ -201,11 +201,16 @@ class OpenAICompatProvider(LLMProvider, EmbeddingProvider):
         # the provider — ``or 0`` covers all three (a .get default only covers
         # a missing key).
         usage = data.get("usage") or {}
+        # OpenAI and Gemini both report the cached share of the prompt here, and
+        # bill it at ~10% of the input rate. Same defensive parsing: the details
+        # object can be missing or null.
+        details = usage.get("prompt_tokens_details") or {}
         return LLMResult(
             text=msg.get("content") or "",
             tool_calls=_parse_tool_calls(msg.get("tool_calls")),
             prompt_tokens=usage.get("prompt_tokens") or 0,
             completion_tokens=usage.get("completion_tokens") or 0,
+            cached_tokens=details.get("cached_tokens") or 0,
         )
 
     async def embed(self, texts: list[str], *, model: str | None = None) -> list[list[float]]:

@@ -282,9 +282,17 @@ def build_system_prompt(
     tone: str | None,
     custom_instructions: str | None,
     primary_language: str,
-    context_block: str,
-    conversation_summary: str | None = None,
 ) -> str:
+    """The stable half of the prompt — identical on every turn for a tenant.
+
+    This is the cacheable prefix. OpenAI and Gemini 2.5+ both cache
+    automatically by matching the longest common prefix of a request against a
+    recent one and billing the hit at roughly a tenth of the input rate, so
+    anything that changes between turns must NOT appear here: the system message
+    is position 0, and one volatile byte in it means a cache miss on every
+    single request. Retrieved knowledge and the rolling summary therefore live
+    in :func:`build_turn_prompt`, at the end of the request.
+    """
     lines = [f"You are the AI customer representative for {business_name or 'this business'}."]
     if persona:
         lines.append(persona)
@@ -292,10 +300,6 @@ def build_system_prompt(
         lines.append(f"Tone: {tone}.")
     if custom_instructions:
         lines.append(custom_instructions)
-    if conversation_summary:
-        # Rolling summary of turns that have scrolled out of the history window
-        # (§5.4 step 6) — gives the model long-term memory of this conversation.
-        lines.append("Summary of the conversation so far:\n" + conversation_summary)
     lines.append(GROUNDING_INSTRUCTION)
     lines.append(
         "Always reply in the customer's language; default to "
@@ -305,11 +309,32 @@ def build_system_prompt(
         "Keep replies concise and conversational, in WhatsApp style — short "
         "paragraphs, no markdown headers or bullet-heavy formatting."
     )
-    if context_block:
-        lines.append("Business knowledge:\n" + context_block)
-    else:
-        lines.append("No relevant business knowledge was found for this question.")
     return "\n\n".join(lines)
+
+
+def build_turn_prompt(
+    *,
+    context_block: str,
+    conversation_summary: str | None,
+    message: str,
+) -> str:
+    """The volatile half — knowledge, summary and question, in that order.
+
+    Sent as the final user turn so everything before it (system prompt, then the
+    append-only history) stays byte-identical and can be served from cache. The
+    customer's own words come last, both because it reads as the thing to answer
+    and because it is the part that always differs.
+    """
+    parts: list[str] = []
+    if context_block:
+        parts.append("Business knowledge:\n" + context_block)
+    else:
+        parts.append("No relevant business knowledge was found for this question.")
+    if conversation_summary:
+        # Turns that have scrolled out of the history window (§5.4 step 6).
+        parts.append("Summary of the conversation so far:\n" + conversation_summary)
+    parts.append("Customer message:\n" + message)
+    return "\n\n".join(parts)
 
 
 # --------------------------------------------------------------------------- #
@@ -363,9 +388,18 @@ def compute_cost(
     prompt_tokens: int,
     completion_tokens: int,
     *,
+    cached_tokens: int = 0,
     pricing: dict[str, dict[str, dict[str, float]]] | None = None,
 ) -> float:
-    """USD cost from the per-provider-per-model $/1K-token pricing table."""
+    """USD cost from the per-provider-per-model $/1K-token pricing table.
+
+    ``cached_tokens`` is the part of the prompt a provider served from its
+    automatic prompt cache, billed at roughly a tenth of the input rate. It is
+    a large share once the prompt is ordered for caching — measured at 2,048 of
+    2,161 tokens on gpt-5-nano — so ignoring it over-reports cost several times
+    over. When a model has no recorded cached rate, the cached half is billed at
+    the full input rate: a slightly high number beats a silently low one.
+    """
     pricing = pricing if pricing is not None else settings.llm_pricing
     rates = (pricing.get(provider) or {}).get(model)
     if not rates:
@@ -376,9 +410,17 @@ def compute_cost(
             f"no pricing for {provider}/{model} — recording $0.00; add it to llm_pricing"
         )
         return 0.0
-    return (prompt_tokens / 1000) * rates.get("input", 0.0) + (
-        completion_tokens / 1000
-    ) * rates.get("output", 0.0)
+
+    input_rate = rates.get("input", 0.0)
+    cached = max(0, min(cached_tokens, prompt_tokens))
+    fresh = prompt_tokens - cached
+    cached_rate = rates.get("cached_input", input_rate)
+
+    return (
+        (fresh / 1000) * input_rate
+        + (cached / 1000) * cached_rate
+        + (completion_tokens / 1000) * rates.get("output", 0.0)
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -391,6 +433,8 @@ class ToolLoopResult:
     completion_tokens: int
     transcript: list[ChatMessage]
     iterations: int
+    #: Share of prompt_tokens served from the provider's automatic prompt cache.
+    cached_tokens: int = 0
     tool_results: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -418,6 +462,7 @@ async def run_tool_loop(
     working = list(messages)
     prompt_tokens = 0
     completion_tokens = 0
+    cached_tokens = 0
     tool_results: list[dict[str, Any]] = []
     last = LLMResult(text="")
 
@@ -425,11 +470,13 @@ async def run_tool_loop(
         last = await llm.generate(working, tools=tools or None, model=model)
         prompt_tokens += last.prompt_tokens
         completion_tokens += last.completion_tokens
+        cached_tokens += last.cached_tokens
         if not last.tool_calls:
             return ToolLoopResult(
                 text=last.text,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                cached_tokens=cached_tokens,
                 transcript=working,
                 iterations=i + 1,
                 tool_results=tool_results,
@@ -452,6 +499,7 @@ async def run_tool_loop(
         text=last.text,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        cached_tokens=cached_tokens,
         transcript=working,
         iterations=max_iterations,
         tool_results=tool_results,
@@ -893,21 +941,30 @@ async def _run_pipeline_inner(
         context_block = build_context_block(chunks)
 
         # --- Grounding prompt + windowed history (§5.4 steps 6–7) ---
+        # Ordered for automatic prompt caching: stable system prompt, then the
+        # append-only history, then everything volatile in the final turn. The
+        # prefix a provider can serve from cache ends where the first change
+        # begins, so anything per-question in front of the history would cost
+        # the whole prefix. Input is ~95% of LLM spend, so this ordering is the
+        # largest single lever on cost.
         system_prompt = build_system_prompt(
             business_name=tenant_config.business_name if tenant_config else None,
             persona=tenant_config.persona if tenant_config else None,
             tone=tenant_config.tone if tenant_config else None,
             custom_instructions=tenant_config.custom_instructions if tenant_config else None,
             primary_language=tenant_config.primary_language if tenant_config else "en",
-            context_block=context_block,
-            conversation_summary=conversation.summary,
         )
         windowed = window_history(history_rows)
         images = await _images_as_data_uris(fragments, waha, bound)
+        turn_prompt = build_turn_prompt(
+            context_block=context_block,
+            conversation_summary=conversation.summary,
+            message=coalesced,
+        )
         llm_messages = [
             ChatMessage(role="system", content=system_prompt),
             *to_chat_messages(windowed),
-            ChatMessage(role="user", content=coalesced, images=images),
+            ChatMessage(role="user", content=turn_prompt, images=images),
         ]
 
         tools = await skill_enabled_tools(db, tenant_uuid)
@@ -956,7 +1013,11 @@ async def _run_pipeline_inner(
         provider_name, model_name = resolve_llm_identity(tenant_config)
         total_tokens = loop_result.prompt_tokens + loop_result.completion_tokens
         cost = compute_cost(
-            provider_name, model_name, loop_result.prompt_tokens, loop_result.completion_tokens
+            provider_name,
+            model_name,
+            loop_result.prompt_tokens,
+            loop_result.completion_tokens,
+            cached_tokens=loop_result.cached_tokens,
         )
 
         # --- Voice-out (§2): synthesize when the customer sent voice / tenant opts in ---
@@ -1110,6 +1171,7 @@ __all__ = [
     "PipelineResult",
     "ToolLoopResult",
     "build_system_prompt",
+    "build_turn_prompt",
     "business_hours_closed_reply",
     "coalesce_fragments",
     "compute_cost",

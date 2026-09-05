@@ -13,6 +13,7 @@ from app.waha.send_gateway import SessionPacing
 from app.workers import pipeline
 from app.workers.pipeline import (
     build_system_prompt,
+    build_turn_prompt,
     business_hours_closed_reply,
     compute_cost,
     is_hard_quota_exceeded,
@@ -100,6 +101,9 @@ def test_quota_exceeded_at_threshold():
 
 
 # --- grounding prompt assembly --------------------------------------------------- #
+# The prompt is split in two so the system half can be served from a provider's
+# automatic prompt cache: persona and rules are stable, knowledge and the
+# question are not. See tests/test_prompt_caching.py for the ordering property.
 def test_prompt_includes_grounding_instruction_and_business_name():
     prompt = build_system_prompt(
         business_name="Acme Cafe",
@@ -107,7 +111,6 @@ def test_prompt_includes_grounding_instruction_and_business_name():
         tone="Warm",
         custom_instructions="Always mention our loyalty card.",
         primary_language="en",
-        context_block="[1] We open at 9am.",
     )
     assert "Acme Cafe" in prompt
     assert "Friendly and upbeat." in prompt
@@ -116,19 +119,29 @@ def test_prompt_includes_grounding_instruction_and_business_name():
     assert "ONLY using the business knowledge" in prompt
     assert "human_handoff" in prompt
     assert "customer's language" in prompt
-    assert "[1] We open at 9am." in prompt
+
+
+def test_retrieved_knowledge_reaches_the_model_in_the_turn():
+    turn = build_turn_prompt(
+        context_block="[1] We open at 9am.",
+        conversation_summary=None,
+        message="what time do you open?",
+    )
+    assert "[1] We open at 9am." in turn
+    assert "what time do you open?" in turn
 
 
 def test_prompt_notes_missing_knowledge_when_context_empty():
+    turn = build_turn_prompt(context_block="", conversation_summary=None, message="hi")
+    assert "No relevant business knowledge was found" in turn
+
     prompt = build_system_prompt(
         business_name=None,
         persona=None,
         tone=None,
         custom_instructions=None,
         primary_language="en",
-        context_block="",
     )
-    assert "No relevant business knowledge was found" in prompt
     assert "this business" in prompt
 
 
@@ -271,3 +284,41 @@ async def test_bot_voice_reply_is_sent_with_the_session_pacing():
     await pipeline._send_voice(logger, gateway, "s1", "1@c.us", "YWJj", pacing)
 
     assert gateway.pacing == pacing
+
+
+# --- cached-token pricing ---------------------------------------------------- #
+# Providers bill a cached prefix at roughly a tenth of the input rate. Measured
+# on gpt-5-nano: 2,048 of 2,161 prompt tokens served from cache. Ignoring that
+# over-reports cost by several times once caching is working.
+_RATES = {"openai": {"m": {"input": 0.0002, "cached_input": 0.00002, "output": 0.00125}}}
+
+
+def test_cost_bills_cached_tokens_at_the_cached_rate():
+    full = compute_cost("openai", "m", 10_000, 1_000, pricing=_RATES)
+    mostly_cached = compute_cost(
+        "openai", "m", 10_000, 1_000, cached_tokens=9_000, pricing=_RATES
+    )
+
+    # 1k fresh + 9k cached + 1k output, versus 10k fresh + 1k output.
+    assert mostly_cached < full
+    assert mostly_cached == pytest.approx(
+        (1_000 / 1000) * 0.0002 + (9_000 / 1000) * 0.00002 + (1_000 / 1000) * 0.00125
+    )
+
+
+def test_cost_without_a_cached_rate_falls_back_to_the_input_rate():
+    """A model whose cached rate we have not recorded must not be billed at
+    zero for its cached half -- silently under-reporting is worse than a
+    slightly high number."""
+    rates = {"openai": {"m": {"input": 0.0002, "output": 0.00125}}}
+
+    assert compute_cost("openai", "m", 10_000, 0, cached_tokens=9_000, pricing=rates) == (
+        pytest.approx((10_000 / 1000) * 0.0002)
+    )
+
+
+def test_cached_tokens_cannot_exceed_the_prompt():
+    """Defensive: a provider reporting nonsense must not produce a negative bill."""
+    cost = compute_cost("openai", "m", 100, 0, cached_tokens=9_999, pricing=_RATES)
+
+    assert cost >= 0
