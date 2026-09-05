@@ -202,7 +202,11 @@ async def test_tool_loop_executes_capture_lead_then_returns_final_answer():
     assert result.prompt_tokens == 30
     assert result.completion_tokens == 13
     assert dispatched == [tool_call]
-    assert result.tool_results == [{"status": "captured", "message": "ok"}]
+    # The tool name is carried alongside the result so callers (the escalation
+    # report) can tell which tool produced it.
+    assert result.tool_results == [
+        {"status": "captured", "message": "ok", "_tool": "capture_lead"}
+    ]
     # The transcript carries the assistant tool-call message and the tool reply.
     roles = [m.role for m in result.transcript]
     assert roles == ["system", "user", "assistant", "tool"]
@@ -407,3 +411,38 @@ def test_a_turn_with_no_open_escalation_says_nothing_about_one():
     )
 
     assert "escalat" not in turn.lower()
+
+
+# --- what the owner needs to see about escalations ---------------------------- #
+def test_tool_results_name_the_tool_that_ran():
+    """Without the name, nothing downstream can tell an escalation from a
+    booking, and the escalation report has no source."""
+    from app.workers.pipeline import escalation_from_tool_results
+
+    results = [
+        {"_tool": "book_appointment", "status": "booked"},
+        {"_tool": "human_handoff", "status": "escalated", "message": "team notified"},
+    ]
+
+    assert escalation_from_tool_results(results) == {
+        "status": "escalated",
+        "message": "team notified",
+        "_tool": "human_handoff",
+    }
+
+
+def test_no_escalation_is_reported_when_none_happened():
+    from app.workers.pipeline import escalation_from_tool_results
+
+    assert escalation_from_tool_results([{"_tool": "capture_lead", "status": "captured"}]) is None
+    assert escalation_from_tool_results([]) is None
+
+
+def test_a_repeat_escalation_is_not_reported_as_a_new_one():
+    """already_escalated means the topic was raised before; counting it again
+    would inflate the report and make one problem look like many."""
+    from app.workers.pipeline import escalation_from_tool_results
+
+    results = [{"_tool": "human_handoff", "status": "already_escalated"}]
+
+    assert escalation_from_tool_results(results) is None

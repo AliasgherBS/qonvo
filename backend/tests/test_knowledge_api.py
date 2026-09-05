@@ -215,9 +215,69 @@ async def test_knowledge_gaps_lists_recent_events(client, tenant_id):
     assert resp.status_code == 200
     items = resp.json()
     assert len(items) == 1
-    assert items[0]["data"]["question"] == "do you ship internationally?"
+    assert items[0]["question"] == "do you ship internationally?"
+    assert items[0]["kind"] == "retrieval_miss"
 
 
 async def test_knowledge_routes_require_tenant_token(client):
     resp = await client.get("/api/knowledge/sources")
     assert resp.status_code == 401
+
+
+async def test_gaps_separates_a_retrieval_miss_from_an_answer_miss(client, tenant_id):
+    """The distinction is the whole point of the report. A question that found
+    nothing is fixed by adding knowledge; one that found plenty and still failed
+    is not, and telling an owner to "add more" there wastes their time."""
+    headers = {"Authorization": f"Bearer {_token_for(tenant_id)}"}
+    async with _tenant_session(tenant_id) as db:
+        db.add(
+            AnalyticsEvent(
+                tenant_id=tenant_id,
+                event_type="knowledge_gap",
+                occurred_at=datetime.now(UTC),
+                data={"question": "do you do laser?"},
+            )
+        )
+        db.add(
+            AnalyticsEvent(
+                tenant_id=tenant_id,
+                event_type="escalation",
+                occurred_at=datetime.now(UTC),
+                data={
+                    "question": "why was my colour ruined?",
+                    "reason": "Complaint needs a person.",
+                    "had_context": True,
+                },
+            )
+        )
+
+    items = (await client.get("/api/knowledge/gaps", headers=headers)).json()
+    by_question = {r["question"]: r for r in items}
+
+    assert by_question["do you do laser?"]["kind"] == "retrieval_miss"
+    answer_miss = by_question["why was my colour ruined?"]
+    assert answer_miss["kind"] == "answer_miss"
+    assert answer_miss["reason"] == "Complaint needs a person."
+
+
+async def test_an_escalation_without_context_is_not_called_an_answer_miss(client, tenant_id):
+    """Escalating with nothing retrieved is a retrieval problem wearing a
+    different hat, and must not be reported as the knowledge being wrong."""
+    headers = {"Authorization": f"Bearer {_token_for(tenant_id)}"}
+    async with _tenant_session(tenant_id) as db:
+        db.add(
+            AnalyticsEvent(
+                tenant_id=tenant_id,
+                event_type="escalation",
+                occurred_at=datetime.now(UTC),
+                data={
+                    "question": "do you sell aeroplane parts?",
+                    "reason": "Not covered by the business knowledge.",
+                    "had_context": False,
+                },
+            )
+        )
+
+    items = (await client.get("/api/knowledge/gaps", headers=headers)).json()
+
+    assert items[0]["kind"] == "escalation"
