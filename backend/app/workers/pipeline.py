@@ -1122,8 +1122,21 @@ async def _run_pipeline_inner(
 
         try:
             loop_result = await run_tool_loop(llm, llm_messages, tools, dispatch)
-        except Exception:
+        except Exception as exc:
             await obs.incr("qonvo_provider_errors_total", {"kind": "llm"})
+            # Tell someone. Until now this surfaced only as a DLQ row in the
+            # worker log: the owner learned nothing and the customer got silence,
+            # which reads as the business having shut down.
+            await _handle_provider_outage(
+                bound,
+                tenant_uuid,
+                cause="llm",
+                error=exc,
+                send_gateway=send_gateway,
+                session=session,
+                chat_id=chat_id,
+                pacing=pacing,
+            )
             raise
         # .strip() so a whitespace-only model output (seen when an untranscribed
         # voice note yields an empty user turn) falls back instead of sending a
@@ -1308,6 +1321,56 @@ async def _refresh_summary_text(
         result.text.strip() or (prior_summary or ""),
         CallUsage(result.prompt_tokens, result.completion_tokens),
     )
+
+
+async def _handle_provider_outage(
+    bound: Any,
+    tenant_id: uuid.UUID,
+    *,
+    cause: str,
+    error: Exception,
+    send_gateway: SendGateway,
+    session: str,
+    chat_id: str,
+    pacing: SessionPacing,
+) -> None:
+    """Alert the owner and say something to the customer, then let the job fail.
+
+    Both halves are best-effort: this runs on a path that is already failing,
+    and neither an alert nor a courtesy reply may replace the original error,
+    which still needs to reach the retry machinery and the DLQ.
+    """
+    from app.agent.outage import PROVIDER_OUTAGE_REPLY, should_alert_owner
+    from app.core.redis import get_redis
+    from app.models.enums import NotificationType
+    from app.services.notifications import notify
+
+    try:
+        if await should_alert_owner(get_redis(), tenant_id=str(tenant_id), cause=cause):
+            # Its OWN transaction. Writing it to the turn's session would be
+            # pointless: this runs on a path that is about to raise, and the
+            # rollback would take the notification with it -- the same trap that
+            # lost inbound messages and usage rows.
+            async with tenant_session(tenant_id) as alert_db:
+                await notify(
+                    alert_db,
+                    tenant_id=tenant_id,
+                    type=NotificationType.disconnect,
+                    title="Your AI rep could not reply",
+                    body=(
+                        "Qonvo could not reach the AI provider, so a customer "
+                        "message went unanswered. If this keeps happening, check "
+                        f"the provider key and its quota. ({cause}: {str(error)[:120]})"
+                    ),
+                    send_gateway=send_gateway,
+                )
+    except Exception as exc:  # noqa: BLE001 — never mask the original failure
+        bound.warning(f"could not raise outage notification: {exc}")
+
+    try:
+        await _send(bound, send_gateway, session, chat_id, PROVIDER_OUTAGE_REPLY, pacing)
+    except Exception as exc:  # noqa: BLE001 — the send may be why we are here
+        bound.warning(f"could not send outage reply to the customer: {exc}")
 
 
 async def _send(
