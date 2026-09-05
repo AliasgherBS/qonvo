@@ -10,7 +10,6 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from enum import StrEnum
-from pathlib import Path
 from uuid import UUID
 
 from arq import ArqRedis
@@ -19,8 +18,8 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.storage import purge_source_files, source_dir
 from app.api.deps import get_arq, get_db, require_tenant
-from app.core.config import settings
 from app.models.enums import KnowledgeSourceType
 from app.models.knowledge import KnowledgeSource
 from app.models.ops import AnalyticsEvent
@@ -185,6 +184,9 @@ async def delete_source(
 ) -> None:
     row = await _get_source(db, source_id, tenant_id)
     await db.delete(row)
+    # The chunks go with the row; the uploaded file does not, and would
+    # otherwise sit on the volume forever.
+    purge_source_files(tenant_id, source_id)
 
 
 @router.post("/sources/{source_id}/upload", response_model=SourceResponse)
@@ -205,7 +207,7 @@ async def upload_source_file(
     data = await file.read()
 
     safe_name = _SAFE_FILENAME.sub("_", file.filename or "upload.bin")
-    dest_dir = Path(settings.knowledge_upload_dir) / str(tenant_id) / str(source_id)
+    dest_dir = source_dir(tenant_id, source_id)
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest_path = dest_dir / safe_name
     dest_path.write_bytes(data)

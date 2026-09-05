@@ -18,6 +18,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.storage import purge_tenant_files
 from app.api.config import (
     ConfigResponse,
     ConfigUpdateRequest,
@@ -417,7 +418,13 @@ async def delete_tenant(
                 text("DELETE FROM users WHERE id = :uid AND is_qonvo_admin = false"), {"uid": uid}
             )
 
-    # 5. Drop the tenant. (audit_log is tenant-scoped and just got purged, so log
+    # 5. Remove uploaded files. The database rows are gone, but the documents
+    #    themselves live on a volume — leaving a business's price lists and
+    #    contracts on the server after they offboard is a privacy problem, not
+    #    just wasted disk.
+    purge_tenant_files(tenant_id)
+
+    # 6. Drop the tenant. (audit_log is tenant-scoped and just got purged, so log
     #    the offboarding to the ops log instead.)
     await db.execute(text("DELETE FROM tenants WHERE id = :tid"), {"tid": tenant_id})
     logger.bind(tenant_id=str(tenant_id), actor=claims.subject).info(
