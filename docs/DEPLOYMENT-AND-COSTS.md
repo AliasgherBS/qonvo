@@ -6,6 +6,36 @@ otherwise._
 
 ---
 
+## 0. What is measured and what is not
+
+Re-verified 2026-09-05 with `./scripts/measure-usage.sh`. **Run that after any
+real usage session and update this table** — several rows below are extrapolated
+from a machine carrying 50 messages, and extrapolations age badly.
+
+| Claim | Basis | Status |
+|---|---|---|
+| ~1,000 tokens per reply | 24,099 tokens / 24 replies | ✅ **measured** — re-measured at 1,004 |
+| Container memory ~740 MB (app), ~1.15 GB with monitoring | `docker stats` | ✅ **measured** |
+| WAHA base 257 MB | staging with zero sessions | ✅ **measured** |
+| WAHA ~22 MB per session | (369 − 257) / 5 sessions | ⚠️ **derived from two points**, not per-session isolation |
+| Session disk 24 MB with `fullSync` on | `du` on a real session, 5,511 files | ✅ **measured** |
+| Session disk 3–4 MB with `fullSync` off | reasoning about which files stop being created | ❌ **estimate — never observed.** The first real one settles this |
+| Messages ~0.5–1 KB steady state | measured 2.3 KB at 50 rows, minus amortising index overhead | ⚠️ **extrapolated** |
+| Knowledge chunk 6–8 KB | a 1536-dim float32 vector is 6.1 KB; measured 112 KB at 1 row | ⚠️ **extrapolated** |
+| MinIO unused, media not retained | `minio_data` is 4 KB | ✅ **measured** |
+| Uploaded files persist after tenant delete | **was true, fixed 2026-09-05** | ✅ **fixed and verified** |
+| WAHA `DELETE` frees the session directory | 124 KB directory, gone after the call | ✅ **measured** |
+| Postgres `DELETE` does not shrink the file | standard Postgres behaviour | ✅ **true, and worth knowing** |
+| Per-tenant ~7 MB first month, ~2 MB after | built from the rows above | ⚠️ **modelled** |
+| AI cost per tenant | current published rates × measured tokens | ⚠️ **modelled** — rates verified, volumes assumed |
+| Provider rates in §6 | vendor pricing pages, 2026-09-05 | ✅ **checked**, except Uplift AI (not public) |
+| Anything about concurrency | — | ❌ **never tested** |
+
+The honest summary: **resource measurements are solid, per-tenant projections are
+arithmetic on a small sample, and load behaviour is unknown.**
+
+---
+
 ## 1. What the system actually costs to run, measured
 
 `docker stats`, production stack, idle:
