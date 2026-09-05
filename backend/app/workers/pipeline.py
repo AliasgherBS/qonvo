@@ -585,6 +585,42 @@ async def _persist_inbound(
         )
 
 
+async def record_billed_usage(
+    tenant_id: uuid.UUID,
+    *,
+    messages_in: int,
+    messages_out: int,
+    tokens: int,
+    cost: float,
+    voice_seconds: int = 0,
+) -> None:
+    """Commit a usage row in its own transaction, right after the model answers.
+
+    The provider billed us the moment the call returned. Recording that inside
+    the turn's transaction meant a later failure — most commonly a send failing
+    because the WhatsApp session is unlinked — rolled the cost back and the turn
+    recorded $0.00 for tokens we had already paid for. Found by
+    scripts/verify-billing.sh: ten messages produced ten model calls and zero
+    usage rows.
+
+    Deliberately counts a retried turn twice, because a retry is a second real
+    call and a second real charge.
+    """
+    try:
+        async with tenant_session(tenant_id) as db:
+            await _bump_usage(
+                db,
+                tenant_id,
+                messages_in=messages_in,
+                messages_out=messages_out,
+                tokens=tokens,
+                cost=cost,
+                voice_seconds=voice_seconds,
+            )
+    except Exception as exc:  # noqa: BLE001 — accounting must never break a reply
+        logger.bind(tenant_id=str(tenant_id)).warning(f"could not record usage: {exc}")
+
+
 async def _bump_usage(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -1049,8 +1085,9 @@ async def _run_pipeline_inner(
                 meta={"knowledge_gap": True} if not chunks else {},
             )
         )
-        await _bump_usage(
-            db,
+        # Committed separately, because the provider has already charged for
+        # this call and a failure further down must not erase that fact.
+        await record_billed_usage(
             tenant_uuid,
             messages_in=len(fragments),
             messages_out=1,
@@ -1176,6 +1213,7 @@ __all__ = [
     "coalesce_fragments",
     "compute_cost",
     "is_hard_quota_exceeded",
+    "record_billed_usage",
     "is_paused",
     "is_voice_fragment",
     "should_reply_voice",
