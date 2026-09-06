@@ -182,8 +182,10 @@ in practice, whatever the price says.**
 
 | Provider | Plan | vCPU | RAM | Disk | Monthly | Verdict |
 |---|---|---:|---:|---:|---:|---|
-| **Netcup** | RS 1000 G12 | 4 **dedicated** | 8 GB DDR5 ECC | 256 GB NVMe | **~€10.74** | Best value on paper: dedicated cores at shared-vCPU money |
-| **Contabo** | VPS S | 4 shared | 8 GB | 200 GB | ~$6.99–7.49 | Cheapest, and **the easiest to actually buy from Pakistan** (§7) |
+| **Netcup** | VPS Lite 2 G12s | 4 shared | 8 GB | 160 GB SSD | **€6.65** (~$7.2) | **Exact match for the spec above.** Quarterly billing, no lock-in |
+| **Netcup** | RS 1000 G12 | 4 **dedicated** | 8 GB DDR5 ECC | 256 GB NVMe | ~€10.74 (~$11.6) | Dedicated cores. Buy this if shared cores prove noisy |
+| **Contabo** | Cloud VPS 4 | 4 shared | 8 GB | **100 GB** | $5.28 / $6.60 | Cheapest headline, but **disk is under the 160 GB floor** |
+| **Contabo** | Cloud VPS 6 | 6 shared | 12 GB | 200 GB | $7.20 / $9.00 | The Contabo plan that actually fits. **Easiest to buy from Pakistan** (§7) |
 | Hetzner | CX33 | 4 shared | 8 GB | 80 GB | €25.47 | Great network, now expensive, tight disk, **and the hardest to get verified** |
 | Hetzner | CX23 | 2 shared | 4 GB | 40 GB | €5.49 | Too small: the Next.js build will not fit |
 | Hostinger | KVM 4 | 4 | 16 GB | 200 GB | $12.99 → **$28.99** | Renewal more than doubles |
@@ -191,6 +193,199 @@ in practice, whatever the price says.**
 
 Whichever you pick: build images on the box, keep the monitoring profile off
 until you need it, and stop the staging stack when you are not using it.
+
+### 4.1 Cloudflare Containers: priced, and the answer is no
+
+Worth checking because the pricing model looks cheap at a glance. It is not
+cheap for this workload, and cost is the *second* problem.
+
+**The rates**, on the Workers Paid plan at $5/month: memory $0.0000025 per
+GiB-second with 25 GiB-hours included; CPU $0.000020 per vCPU-second with 375
+vCPU-minutes included, billed on actual use; disk $0.00000007 per GB-second with
+200 GB-hours included. Egress from Pakistan falls in "Everywhere Else" at
+$0.04/GB with 500 GB included.
+
+A month is 730 hours, or 2,628,000 seconds. Qonvo needs its services **up all the
+time**, so every one of those seconds is billable.
+
+| Line | `standard-3` (2 vCPU, 8 GiB, 16 GB) | `standard-4` (4 vCPU, 12 GiB, 20 GB) |
+|---|---:|---:|
+| Memory, provisioned 24/7 | $52.34 | $78.62 |
+| Disk, provisioned 24/7 | $2.89 | $3.63 |
+| CPU at 10% average | $10.06 | $20.57 |
+| Workers Paid plan | $5.00 | $5.00 |
+| **Monthly** | **~$70** | **~$108** |
+| Same at 25% average CPU | ~$96 | ~$139 |
+
+Against the table above:
+
+| Option | vCPU | RAM | Disk | Monthly |
+|---|---:|---:|---:|---:|
+| **Contabo VPS S** | 4 | 8 GB | 200 GB **persistent** | **~$7** |
+| Netcup RS 1000 G12 | 4 dedicated | 8 GB | 256 GB **persistent** | ~$11.60 |
+| CF Containers `standard-3` | 2 | 8 GiB | 16 GB **ephemeral** | ~$70 |
+| CF Containers `standard-4` | 4 | 12 GiB | 20 GB **ephemeral** | ~$108 |
+
+**Ten to twenty times the price for less disk**, and that is one container. Qonvo
+runs api, worker, scheduler, Postgres, Redis, WAHA, MinIO, Caddy and the
+dashboard.
+
+#### Cost is not why it fails
+
+**All container disk is ephemeral.** Cloudflare's own wording: when an instance
+goes to sleep, the next start gives it *"a fresh disk as defined by its container
+image"*. Persistent disks are *"not slated for the near future"*. That deletes,
+on every sleep:
+
+- the Postgres data directory
+- **the WAHA session files**, which is a QR re-scan for every tenant
+- MinIO objects
+
+**Scale-to-zero is the product, and it is exactly what breaks this.** The pricing
+model rewards idling. WAHA holds a live connection to WhatsApp; if it sleeps, the
+session drops. The one feature that makes Containers cheap is the one Qonvo
+cannot use, so you would pay always-on rates on a platform designed for bursty
+work.
+
+**The disk ceiling is 20 GB**, against the 160 GB+ §3 calls for once images and
+nightly backups are counted. Memory caps at 12 GiB per instance, so the Scale
+tier (32 GB) has no path at all.
+
+You could push state into R2, D1 and Durable Objects, but that is not a
+deployment change, it is rewriting the persistence layer of a working product to
+pay more for it.
+
+#### Where it would make sense
+
+Genuinely bursty, stateless work that idles most of the day: an image build, a
+one-off bulk knowledge ingestion, a PDF renderer. If knowledge ingestion ever
+becomes spiky enough to need its own box, this is the right shape for that one
+job. The stateless Next.js dashboard could also live at the edge, though Workers
+or Pages is cheaper than Containers for that.
+
+**Verdict: stay on the VPS.** Contabo VPS S at ~$7 is the recommendation, and
+nothing about Containers changes it.
+
+
+### 4.2 Head to head, from the quoted prices
+
+Both quotes in hand, against the §3 floor of **4 vCPU / 8 GB / 160 GB+**.
+
+**Contabo**, 24-month prepaid price first, undiscounted second:
+
+| Plan | vCPU | RAM | SSD | 24 mo | List | Port |
+|---|---:|---:|---:|---:|---:|---:|
+| Cloud VPS 4 | 4 | 8 GB | **100 GB** | $5.28 | $6.60 | 200 Mbit/s |
+| Cloud VPS 6 | 6 | 12 GB | 200 GB | $7.20 | $9.00 | 300 Mbit/s |
+| Cloud VPS 8 | 8 | 24 GB | 300 GB | $13.44 | $16.80 | 600 Mbit/s |
+| Cloud VPS 12 | 12 | 48 GB | 400 GB | $24.00 | $30.00 | 800 Mbit/s |
+| Cloud VPS 16 | 16 | 64 GB | 500 GB | $35.60 | $44.50 | 1 Gbit/s |
+| Cloud VPS 18 | 18 | 96 GB | 600 GB | $47.04 | $58.80 | 1 Gbit/s |
+
+**Netcup VPS Lite G12s**, monthly, 0% VAT, no discount tiers to game:
+
+| Plan | vCore | RAM | SSD | €/mo | ~$/mo |
+|---|---:|---:|---:|---:|---:|
+| piko G11s | 1 | 1 GB | 30 GB | €1.54 | $1.7 |
+| nano G11s | 2 | 2 GB | 60 GB | €2.58 | $2.8 |
+| Lite 1 G12s | 2 | 4 GB | 80 GB | €4.10 | $4.4 |
+| **Lite 2 G12s** | **4** | **8 GB** | **160 GB** | **€6.65** | **$7.2** |
+| Lite 3 G12s | 8 | 16 GB | 320 GB | €11.67 | $12.6 |
+| Lite 4 G12s | 16 | 32 GB | 640 GB | €21.61 | $23.3 |
+
+#### The comparison that matters
+
+`Cloud VPS 4` looks like the winner at $5.28 and is not eligible: **100 GB is
+below the 160 GB floor**, and adding storage at Contabo is a one-way ratchet
+(below). The real Contabo entry is `Cloud VPS 6`.
+
+| | Contabo Cloud VPS 6 | Netcup VPS Lite 2 G12s |
+|---|---|---|
+| CPU / RAM / disk | 6 shared / 12 GB / 200 GB | 4 shared / 8 GB / 160 GB |
+| Headline price | $7.20/mo | €6.65/mo (~$7.2) |
+| **What that price requires** | **24 months prepaid, $172.80 up front** | **Nothing. It is the price** |
+| True monthly | **$9.00** | €6.65 |
+| 12-month rate | $7.65 ($91.80 up front) | n/a |
+| Billing cycle | 1, 12 or 24 months | 3 months (~€19.95) |
+| Minimum contract | none monthly | 3 months |
+| Port | 300 Mbit/s | 750 Mbps, throttled to 100 if the 24h average exceeds 100 |
+| Snapshots | 2 | Copy-on-write, unlimited by count |
+| Extra storage later | Plan upgrade or Storage Extension. **Downgrades impossible**, and you must repartition by hand | **Local Block Storage, expandable to 4 TB** |
+
+**Contabo Cloud VPS 6 is the better value, and it is not close on unit price.**
+Netcup is cheaper in absolute terms, but you get less of everything:
+
+| | $/mo | $/vCPU | $/GB RAM | $/GB disk |
+|---|---:|---:|---:|---:|
+| Contabo VPS 6, monthly | $9.00 | $1.50 | $0.75 | $0.045 |
+| Contabo VPS 6, 24 mo | $7.20 | $1.20 | $0.60 | $0.036 |
+| Netcup Lite 2 | ~$7.20 | $1.80 | $0.90 | $0.045 |
+
+At its **monthly** rate Contabo is ~17% cheaper per core and per GB of RAM, with
+identical disk pricing, for $1.80 more a month in absolute terms. It also buys
+real runway: 6 vCPU / 12 GB sits between the Pilot and Growth rows in §3, and
+**WAHA memory is the term that grows**. Netcup Lite 2 is exactly Pilot and
+nothing beyond it.
+
+**The 24-month discount is not worth taking.** $9.00 → $7.20 saves $1.80/month
+against locking two years and $172.80 up front, on a product that has **never
+been load-tested** (§3) and may need to move. The 12-month tier at $7.65 saves
+$1.35/month for half the lock-in and is the better of the two if you commit at
+all. Best of the three: **run monthly at $9.00 until the load test exists.**
+$1.80/month is cheap optionality.
+
+**And §7.2 points the same way.** Contabo takes PayPal, which is exactly the
+send-only mode a Pakistani account has. Netcup leans SEPA with German KYC, so it
+may not be buyable at all. Better value *and* easier to buy is not a close call.
+
+Netcup keeps two genuine edges, neither decisive here: a faster port (750 Mbps
+against 300 Mbit/s) and cleaner storage growth (Local Block Storage to 4 TB,
+versus Contabo's one-way upgrade and manual repartition). If disk I/O or
+throughput ever becomes the measured bottleneck, that is when to revisit.
+
+One more distinction the earlier table blurred: **VPS Lite is shared cores, RS is
+dedicated.** Both sit on the same EPYC 9645 hardware; only the guarantee differs.
+Qonvo is mostly I/O-bound — Postgres, retrieval, HTTP out to the model — so
+shared cores are fine at pilot scale. If a noisy neighbour shows up, `RS 1000
+G12` at ~€10.74 is the same shape with dedicated cores.
+
+---
+
+### 4.3 The add-ons: what to buy and what to skip
+
+| Add-on | Price | Verdict |
+|---|---:|---|
+| Contabo **Auto Backup** | $4.00/mo | **Buy it.** See below |
+| Contabo UK region | +$2.00/mo | **No.** The EU region is both cheaper (free) and *closer*: 124 ms vs 147 ms (§7.3) |
+| Contabo 400 GB SSD | +$3.60/mo | **Not yet.** 200 GB clears the 160 GB floor with room |
+| Contabo cPanel / Plesk / Windows | +$27.50 / $15.00 / $20.40 | **No.** Docker Compose on Ubuntu, no control panel in the stack |
+| Contabo Private Networking | free, off | **No.** Single box |
+| Contabo Object Storage | free, none | **No.** MinIO is self-hosted and currently holds nothing (§2.3) |
+| Netcup IPv6-only | −€0.50/mo | **No.** Saving €0.50 to drop IPv4 breaks reachability for a public API |
+| Netcup `.dev` domain | €1.50/mo | **No.** €18/yr against Cloudflare at cost (§5) |
+
+#### Why backup is the one worth buying
+
+`scripts/backup.sh` dumps Postgres, the WAHA session volume and the MinIO bucket
+to a **local** directory, and mirrors **only MinIO** offsite when
+`BACKUP_MINIO_TARGET` is set. MinIO is the one thing in that list holding no data
+(§2.3). So today the offsite copy covers nothing, and the two things that would
+actually end the business if the disk died — **the Postgres database and the WAHA
+session files** — exist only on the box being backed up.
+
+Two ways to close it:
+
+1. **Contabo Auto Backup, $4/month.** Daily whole-VM backup stored off-server,
+   last 10 kept, one-click restore. Covers disk failure and ransomware. It does
+   **not** cover losing the Contabo account itself, since it is the same vendor.
+2. **Extend `backup.sh`** to push the Postgres dump and the WAHA tarball to
+   Cloudflare R2 or Backblaze B2. R2 gives 10 GB free with **zero egress fees**,
+   so restoring costs nothing, and it survives the provider disappearing.
+
+Option 2 is better and nearly free; option 1 is available this afternoon. The
+$4/month is already budgeted in §9. **Do 1 now, 2 this month**, and stop
+pretending the current offsite mirror protects anything.
+
 
 ---
 
@@ -209,6 +404,109 @@ until you need it, and stop the staging stack when you are not using it.
 Changing the domain touches four coupled places: `AUTH_URL`,
 `QONVO_GOOGLE_OAUTH_REDIRECT_BASE`, `QONVO_DASHBOARD_BASE_URL`, and the Google
 Cloud console redirect URIs.
+
+### 5.1 Email, which is attached to the domain
+
+> Step by step setup, DNS records and the migration path is in
+> [`EMAIL-SETUP.md`](EMAIL-SETUP.md). This section is only what it costs.
+
+Two different jobs get conflated under "email", and they are bought separately.
+
+- **Sending** — password resets, welcome mails, owner alerts. Machine to human,
+  from `noreply@`. Needs a *transactional API*, not a mailbox.
+- **Receiving and replying** — support, billing, MoR paperwork, service signups.
+  Human to human. Needs an *inbox*, or at least forwarding.
+
+A mailbox cannot send bulk transactional mail without wrecking its reputation,
+and a transactional API cannot receive anything. You need one of each.
+
+#### The cheapest stack that actually works: $0/month
+
+| Job | Choice | Cost |
+|---|---|---:|
+| Receive on `@qonvo.org` | **Cloudflare Email Routing** | **$0** |
+| Reply as `@qonvo.org` | Gmail *Send mail as* over the provider's SMTP | $0 |
+| Send transactional | **Brevo** 300/day, or **Resend** 3,000/month | $0 |
+
+Cloudflare Email Routing is free with **200 addresses and 200 destinations per
+domain**, no message-count limit, plus a catch-all. It forwards into the Gmail
+you already use. It is **forward-only** — it cannot send — which is why replies
+go out through Gmail's *Send mail as* pointed at an SMTP relay. Brevo hands you
+free SMTP credentials that serve as that relay and as the app's transactional
+sender, so one free account covers both.
+
+That is genuinely $0/month on top of the domain, and it is enough until you are
+sending thousands of mails a day or want an inbox that is not your personal one.
+
+#### What each tier costs when you outgrow free
+
+| Product | What it is | Price |
+|---|---|---:|
+| Cloudflare Email Routing | Forwarding only, no mailbox | **$0** |
+| Zoho Mail Free | Real mailbox, 5 users, 5 GB, **webmail only, no IMAP/POP**, and no longer offered to new signups in every region | $0 |
+| **Zoho Mail Lite** | Real mailbox with IMAP/POP, 5 GB | **$1/user/mo** billed yearly, $1.25 monthly |
+| Migadu Micro | Unlimited domains, mailboxes and aliases; limits are on daily volume | $19/yr |
+| Purelymail | Unlimited domains and accounts, 10 GB | from $49/yr |
+| Google Workspace | The default nobody gets fired for | $7/user/mo |
+| Microsoft 365 Business Basic | Same, with Office | $6/user/mo |
+| Brevo | Transactional API + SMTP, **300/day (~9,000/mo)** free, marketing too | $0 |
+| Resend | Transactional API, 3,000/mo but **capped at 100/day**, 3 domains | $0 |
+| Resend Pro | 50,000/mo, no daily cap, 10 domains | $20/mo, $0.90 per extra 1,000 |
+| Amazon SES | Cheapest at scale, most setup | **$0.10 per 1,000** |
+| Mailgun free | Testing volumes only | $0, 100/day |
+
+Resend's **100/day** cap is the trap in its free tier: the monthly figure reads
+generous and the daily one is what actually binds. Brevo's 300/day is three
+times more headroom for the same $0. At real volume nothing beats SES: 100,000
+mails is **$10**.
+
+#### You do not need a mailbox per purpose
+
+The instinct to buy `support@`, `billing@`, `noreply@` and `marketing@` as four
+paid users is wrong, and at $1–7 each it is a recurring waste.
+
+- **`noreply@` needs no mailbox at all.** It only sends, from the transactional
+  provider. Nobody logs into it.
+- **`support@`, `billing@`, `hello@`, `admin@` are aliases** onto one inbox.
+  Cloudflare gives 200 for free; Zoho and Migadu give unlimited.
+- **Marketing is not a mailbox problem, it is a reputation problem.** Solve it
+  with a subdomain, not a second account.
+
+So: **one mailbox, many aliases, one sending domain per reputation class.** One
+paid seat at $1/month is the entire mailbox bill for a long time.
+
+#### Split sending by reputation, not by department
+
+Separate subdomains carry separate sender reputations, which is the whole point.
+A marketing blast marked as spam must not be able to stop your password resets
+arriving.
+
+| Domain | Carries | Risk |
+|---|---|---|
+| `qonvo.org` | Human mail: support, billing, corporate | Low volume, keep it clean |
+| `send.qonvo.org` | Transactional: resets, welcome, owner alerts | Must never be marked spam |
+| `news.qonvo.org` | Marketing, if and when | Highest risk, isolated on purpose |
+
+Each needs its own SPF, DKIM and DMARC. Do not send marketing from the root
+domain, and do not send transactional from the marketing subdomain.
+
+#### Using it to buy things, and to register with a merchant of record
+
+Yes, and you should. Any address that receives mail works for signing up to a
+service, and Cloudflare forwarding receives fine, so a $0 setup is enough to
+register for Polar, a VPS, or a domain.
+
+Use a **role address you keep**, `billing@qonvo.org`, rather than a personal
+Gmail, for three practical reasons: the account survives you changing personal
+email, MoR invoices and KYC correspondence land somewhere findable, and a
+merchant of record running business verification on a personal Gmail is a
+slightly worse first impression than one on the domain it is verifying.
+
+One caveat that catches people: some services refuse **forward-only** addresses
+for account recovery, and a few block known forwarders. If Polar or a bank
+rejects the address, that is the point to spend $1/month on a real Zoho mailbox,
+not before.
+
 
 ---
 
@@ -467,7 +765,7 @@ the disk they are protecting.
 | Domain (.org at cost, amortised) | $0.71 |
 | Offsite backup (optional, recommended) | ~$4 |
 | WAHA | **$0** — everything moved into the free Core in 2026.6.1, no session limit |
-| Email (Gmail SMTP) | $0, capped at 500/day |
+| Email (Cloudflare Routing + Brevo free tier) | **$0** — see 5.1; $1/mo if you want a real mailbox |
 | Monitoring (self-hosted) | $0 |
 | **Fixed total** | **~$12/month** |
 | AI, per tenant | +$0.49 text-only floor / +$1.64 current / +$2.70 Urdu-capable voice |
@@ -515,16 +813,19 @@ more in complexity than it could possibly save.
 | Decision | Recommendation |
 |---|---|
 | **TTS (urgent)** | Orpheus English **cannot speak Urdu**. Evaluate Uplift AI first, then ElevenLabs and OpenAI `tts-1` |
-| VPS | **Contabo** to start (buyable from Pakistan); Netcup if payment clears |
+| VPS | **Contabo Cloud VPS 6, monthly at $9.00.** Best value per core and per GB, and the easiest to buy from Pakistan (4.2, 7.2). Skip Cloud VPS 4: 100 GB is under the floor. Do **not** prepay 24 months before a load test exists. Netcup VPS Lite 2 at €6.65 is the fallback if Contabo disappoints on I/O |
+| Backups | Contabo Auto Backup $4/mo now; extend `backup.sh` to push Postgres and WAHA offsite to R2 this month. The current offsite mirror covers MinIO, which is empty (4.3) |
 | Domain | Check `qonvo.com` first; otherwise `qonvo.org` at Cloudflare |
 | LLM | Any cheap-tier model works; pick on reliability. $1.48/tenant separates cheapest from Claude Haiku |
 | STT | Move to `whisper-large-v3-turbo`, same key, ~64% cheaper |
 | **Prompt caching** | Not used. Input is now 95% of LLM spend, and cache reads are 5x cheaper — the largest saving available |
-| **Provider quota** | The free Gemini tier is **20 requests/minute** and was hit during real testing. Enable billing before any demo |
+| **Provider quota** | Free Gemini was hit again on 2026-09-05 and killed a live test mid-run. The 429 named `GenerateRequestsPerDayPerProjectPerModel-FreeTier`, `quotaValue: 20`, on `gemini-2.5-flash` — a **per-day** id, not the per-minute limit recorded earlier. Worth confirming which binds. Either way: enable billing before any demo, and note the failure is invisible to owner and customer alike |
 | Database | Self-hosted; get backups offsite this month |
 | Price table | Correct Gemini to $0.15/$1.25 |
-| Payments in | Confirm a merchant of record actually pays out to Pakistan **before** building on it |
+| Payments in | **Answered: Polar lists Pakistan as a supported payout country**, via Stripe Connect Express. Paddle does not block Pakistan either. Confirm the receiving method before building on it |
+| Email | Cloudflare Email Routing + Brevo, $0. Add Zoho Mail Lite at $1/user/mo only when a forwarded address is refused or you want a non-personal inbox |
 | Load test | Do one before promising concurrency |
+| **Cloudflare Containers** | **Evaluated and rejected** (4.1). 10-20x the VPS cost, 20 GB ceiling against 160 GB needed, and all disk is ephemeral, which loses Postgres and every WAHA session on sleep |
 
 ---
 
