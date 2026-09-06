@@ -334,14 +334,35 @@ $1.35/month for half the lock-in and is the better of the two if you commit at
 all. Best of the three: **run monthly at $9.00 until the load test exists.**
 $1.80/month is cheap optionality.
 
-**And §7.2 points the same way.** Contabo takes PayPal, which is exactly the
-send-only mode a Pakistani account has. Netcup leans SEPA with German KYC, so it
-may not be buyable at all. Better value *and* easier to buy is not a close call.
+**Then the tiebreaker moved.** Two things settled it for Netcup instead:
 
-Netcup keeps two genuine edges, neither decisive here: a faster port (750 Mbps
-against 300 Mbit/s) and cleaner storage growth (Local Block Storage to 4 TB,
-versus Contabo's one-way upgrade and manual repartition). If disk I/O or
-throughput ever becomes the measured bottleneck, that is when to revisit.
+- **Contabo's delivered performance does not match its spec sheet.** The
+  consistent operator report is oversubscribed nodes, slow disk I/O and thin
+  support. Price per core is meaningless if the cores are contended, and Postgres
+  plus pgvector is exactly the workload that suffers. The table above prices
+  advertised capacity; it cannot price what actually arrives.
+- **Netcup takes PayPal**, so §7.2's original worry does not apply. Cards
+  (Visa/Mastercard/Amex) work too. Expect a verification step on the first order
+  (below), not a rejection.
+
+Netcup also carries the faster port (750 Mbps against 300 Mbit/s) and cleaner
+storage growth (Local Block Storage to 4 TB, against Contabo's one-way upgrade
+and manual repartition). **Netcup VPS Lite 2 G12s at €6.65 is the buy**, and the
+~$1.80/month it costs against Contabo's larger box is worth paying for hardware
+that behaves.
+
+#### Two things to know before ordering
+
+**The contract auto-renews.** Minimum term and billing period are both 3 months,
+and it renews for another 3 unless cancelled **at least one month before the term
+ends**. So on a 3-month contract the cancellation window closes at the end of
+month 2. This is not cancel-anytime; diary the date on the day you order.
+
+**First order triggers prepayment or KYC.** After the first order Netcup asks you
+to either prepay or verify identity, and its risk system decides which. Manual
+KYC means uploading a government ID and sometimes a proof of address. You get
+**14 days** to complete it. Budget for the delay rather than ordering the evening
+before you need the box.
 
 One more distinction the earlier table blurred: **VPS Lite is shared cores, RS is
 dedicated.** Both sit on the same EPYC 9645 hardware; only the guarantee differs.
@@ -693,7 +714,7 @@ and PKR transfer — basic VPS, but no currency problem at all.
 | Provider | Buying from Pakistan |
 |---|---|
 | **Contabo** | **Easiest.** Card **and PayPal**, and PayPal's send-only mode is exactly what you have. No crypto |
-| **Netcup** | Best value, but German KYC and SEPA-leaning payment. Confirm before relying on it |
+| **Netcup** | **Buyable. Takes PayPal** and Visa/Mastercard/Amex. First order triggers prepay-or-KYC (ID upload, 14 days to complete), which is a delay, not a blocker |
 | **Hetzner** | **Highest risk.** ID verification is strict and opaque for non-EU customers, with Pakistani users specifically reporting rejections and no clear appeal (`cda-review@hetzner.com` is the escalation) |
 
 **Revised recommendation: start on Contabo.** Netcup's dedicated cores are the
@@ -813,7 +834,7 @@ more in complexity than it could possibly save.
 | Decision | Recommendation |
 |---|---|
 | **TTS (urgent)** | Orpheus English **cannot speak Urdu**. Evaluate Uplift AI first, then ElevenLabs and OpenAI `tts-1` |
-| VPS | **Contabo Cloud VPS 6, monthly at $9.00.** Best value per core and per GB, and the easiest to buy from Pakistan (4.2, 7.2). Skip Cloud VPS 4: 100 GB is under the floor. Do **not** prepay 24 months before a load test exists. Netcup VPS Lite 2 at €6.65 is the fallback if Contabo disappoints on I/O |
+| VPS | **Netcup VPS Lite 2 G12s, €6.65/mo.** Contabo wins on paper (~17% cheaper per core and per GB) but is widely reported as oversubscribed on I/O, which is the resource Postgres and pgvector actually need. Netcup takes PayPal, so it is buyable. **Contract auto-renews every 3 months unless cancelled a month before term end** (4.2) |
 | Backups | Contabo Auto Backup $4/mo now; extend `backup.sh` to push Postgres and WAHA offsite to R2 this month. The current offsite mirror covers MinIO, which is empty (4.3) |
 | Domain | Check `qonvo.com` first; otherwise `qonvo.org` at Cloudflare |
 | LLM | Any cheap-tier model works; pick on reliability. $1.48/tenant separates cheapest from Claude Haiku |
