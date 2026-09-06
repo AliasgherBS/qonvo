@@ -17,4 +17,4 @@ cp -r public .next/standalone/ && cp -r .next/static .next/standalone/.next/
 tmux respawn-window -k -t qonvo:dashboard "~/qonvo/run-dashboard.sh 2>&1 | tee /tmp/qonvo-dashboard.log"
 
 echo "✓ redeployed. Hard-refresh the browser (Ctrl+Shift+R)."
-echo "  public: https://sesame-denial-dumpling.ngrok-free.dev"
+echo "  public: https://qonvo.org"

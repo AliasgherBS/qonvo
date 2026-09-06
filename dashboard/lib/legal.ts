@@ -21,7 +21,7 @@ export const LEGAL = {
   /** Same address, or a dedicated one, for data-deletion and access requests. */
   privacyEmail: CONTACT.email,
   /** Public origin these pages are served from. */
-  siteUrl: "https://sesame-denial-dumpling.ngrok-free.dev",
+  siteUrl: "https://qonvo.org",
   /** Shown at the top of both documents. */
   lastUpdated: "15 August 2026",
   /**
