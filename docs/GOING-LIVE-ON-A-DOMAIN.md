@@ -207,6 +207,10 @@ allows several; overlap costs nothing and is your rollback.
 Optional, but `hello@qonvo.org` reads better than a personal Gmail on a welcome
 message, and deliverability is better.
 
+> The full setup, including a **$0/month** receive-and-reply path with Cloudflare
+> Email Routing, the address plan and the provider comparison, is in
+> [`EMAIL-SETUP.md`](EMAIL-SETUP.md). What follows is the minimum.
+
 Gmail SMTP can only send as an address it owns, so either use Google Workspace
 (~$6/user/month) or a transactional provider. Whichever you choose, add these
 or your mail lands in spam:
