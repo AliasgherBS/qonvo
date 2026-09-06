@@ -31,7 +31,7 @@ Two jobs, two products, one vendor.
 | Job | Product | Cost |
 |---|---|---:|
 | Mailbox, aliases, receiving, replying | **Zoho Mail Lite**, 1 user | **$1/mo** billed yearly |
-| The four emails the app sends | **ZeptoMail** | 10,000 free, then **$2.50/10,000** |
+| The four emails the app sends | **ZeptoMail** | 10,000 free credits, **valid 1 month**, then **$2.50/10,000** |
 | DNS | Cloudflare | $0 |
 
 **Why two products and not one.** Zoho Mail's own SMTP is a human mailbox with a
@@ -41,8 +41,8 @@ for machine mail, and it **refuses promotional email by design** — the split t
 document recommends, enforced by the vendor rather than by your discipline.
 
 **Why not Brevo.** Its free tier is 300/day forever against ZeptoMail's one-off
-10,000, which looks more generous until you notice it **stamps the Brevo logo on
-every email you send**. Removing it costs the Starter plan plus an add-on, about
+10,000 that **expires after a month**, which looks more generous until you notice
+it **stamps the Brevo logo on every email you send**. Removing it costs the Starter plan plus an add-on, about
 $20/month. ZeptoMail at Qonvo's volume is roughly $2.50 every six months.
 
 **Why not Cloudflare Email Routing.** Nothing is wrong with it, and it is the
@@ -130,6 +130,111 @@ correspondence land somewhere findable for years.
 
 ---
 
+## 2.5 Signup, step by step
+
+Three accounts, in this order. Cloudflare first because DNS propagation is the
+only slow part and everything else waits on it; ZeptoMail last because its
+account review runs on its own clock and nothing blocks on it.
+
+### A. Cloudflare token (5 minutes, no signup -- the account exists)
+
+1. [dash.cloudflare.com](https://dash.cloudflare.com) -> your profile icon
+   (top right) -> **My Profile** -> **API Tokens** -> **Create Token**.
+2. Use the **"Edit zone DNS"** template.
+3. Under *Zone Resources*, choose **Include -> Specific zone -> qonvo.org**.
+   Do not leave it on "All zones": this token only ever needs the one.
+4. Add a second permission row: **Zone -> Zone -> Read**. The template only
+   grants DNS edit, and resolving the zone id needs read.
+5. **Continue to summary -> Create Token.** Copy it now; the page never shows it
+   again.
+6. Verify and see the current state:
+   ```bash
+   export CLOUDFLARE_API_TOKEN=<paste>
+   ./scripts/dns-email.sh check
+   ```
+
+`check` writes nothing. If it reports Email Routing enabled, turn it off in
+**Websites -> qonvo.org -> Email -> Email Routing** before going further.
+
+**Hand over:** the token.
+
+### B. Zoho Mail (~15 minutes plus DNS wait)
+
+> **Pick the data centre carefully.** Zoho assigns it from your IP at signup and
+> it decides your login host and API endpoint for the life of the account
+> (`zoho.com` vs `zoho.in` vs `zoho.eu`). From Pakistan you will land in **IN**.
+> Changing it later is not self-service: it means emailing
+> `migrations@zohoaccounts.com`.
+
+1. [zoho.com/mail](https://www.zoho.com/mail/) -> **Business Email** -> choose
+   **Mail Lite**, **1 user**, **billed yearly** (~$12/year). Visa and
+   Mastercard both work from Pakistan.
+2. Sign up with a personal address for now. `ali@qonvo.org` does not exist yet,
+   so it cannot be the signup address.
+3. When asked, **add the domain `qonvo.org`** (do not let it create a
+   `.zohomail` subdomain).
+4. **Verify the domain.** Zoho supports **Domain Connect one-click for
+   Cloudflare** -- if offered, take it and skip to step 6. Otherwise choose the
+   **TXT** method and send me the value; it looks like
+   `zoho-verification=zb********.zmverify.zoho.com`.
+5. I add it: `./scripts/dns-email.sh txt @ "<value>"`, then you click Verify.
+6. **Create the user `ali@qonvo.org`.** This is the single paid seat.
+7. **Add the four aliases** on that user: *Users -> ali -> Mail Accounts ->
+   Email Aliases* -> `hello@`, `support@`, `billing@`, `admin@`.
+   Aliases are free and unlimited. **Do not create them as users** -- that is
+   what turns $12/year into $60/year.
+8. **MX**: I run `./scripts/dns-email.sh zoho-mx`. No input needed; the three
+   hosts are fixed.
+9. **DKIM**: *Domains -> qonvo.org -> Email Configuration -> DKIM -> Add*.
+   Use selector `zmail`. Send me the generated value.
+
+**Hand over:** the verification TXT value (unless Domain Connect handled it) and
+the DKIM value.
+
+> **The $0 alternative, stated honestly.** Zoho's Forever Free plan (5 users,
+> 5 GB each) is still available in the **IN** data centre, which is where you
+> will land. It would cost nothing. What it lacks is **IMAP, POP and
+> ActiveSync** -- web and Zoho's own mobile app only, no Gmail or Outlook
+> client. Since app mail goes through ZeptoMail regardless, the only thing you
+> actually give up is reading `support@` from a third-party client. If that is
+> acceptable, the mailbox line drops to $0 and this document is otherwise
+> unchanged.
+
+### C. ZeptoMail (~10 minutes, then a 2-day review)
+
+1. [zoho.com/zeptomail](https://www.zoho.com/zeptomail/) -> **Get started**.
+   Sign in with the Zoho account from step B so both live under one login.
+2. Verify by the code sent to your mobile.
+3. **Create a Mail Agent** named `qonvo-app`.
+4. **Add the domain `send.qonvo.org`** -- the subdomain, *never* `qonvo.org`.
+   Getting this wrong puts app mail on the same reputation as your inbox.
+5. ZeptoMail shows a **DKIM TXT** record and a **bounce CNAME**. Send me both.
+   I add them:
+   ```bash
+   ./scripts/dns-email.sh dkim  zmail._domainkey.send "<DKIM value>"
+   ./scripts/dns-email.sh cname bounce.send           "<CNAME target>"
+   ./scripts/dns-email.sh spf   send "v=spf1 include:zeptomail.zoho.com ~all"
+   ```
+6. Click **Verify** in ZeptoMail once DNS has propagated (usually minutes).
+7. **SMTP tab -> generate a Send Mail token.** Send it to me and I wire §4.2.
+8. **Submit the Customer Validation form** (left pane). Do this immediately,
+   because of the limits below.
+
+> **Until that form is approved you can send 100 emails per day**, to a total of
+> 10,000, and **the free credits expire after one month**. Review takes about
+> two business days. 100/day is plenty for testing and would be a real ceiling
+> in production, so submit it on day one rather than discovering the cap during
+> a launch.
+
+**Hand over:** the DKIM value, the bounce CNAME target, and the Send Mail token.
+
+### What I do once you hand those over
+
+Every DNS record, `QONVO_EMAIL_*` in `.env`, the force-recreate, a real
+password-reset test, and a [mail-tester.com](https://www.mail-tester.com) run.
+
+---
+
 ## 3. Zoho Mail: the mailbox
 
 1. Sign up at Zoho Mail, choose **Mail Lite**, 1 user, billed yearly.
@@ -182,9 +287,20 @@ reputation hit is not.
 
 1. ZeptoMail → **Mail Agents** → create one, e.g. `qonvo-app`.
 2. **Domains** → add `send.qonvo.org`.
-3. Add the DKIM and SPF records it gives you in Cloudflare, **on the `send`
-   subdomain**, not the root.
+3. Add the records it gives you in Cloudflare, **on the `send` subdomain**,
+   not the root. There are three, and the CNAME is easy to miss:
+   ```bash
+   ./scripts/dns-email.sh dkim  zmail._domainkey.send "<DKIM value>"
+   ./scripts/dns-email.sh cname bounce.send           "<CNAME target>"
+   ./scripts/dns-email.sh spf   send "v=spf1 include:zeptomail.zoho.com ~all"
+   ```
+   The CNAME is how ZeptoMail collects bounces. Skip it and delivery still
+   works, so nothing looks broken -- you simply never learn which addresses are
+   dead.
 4. Verify, then generate a **Send Mail token**.
+5. **Submit the Customer Validation form.** Until it is approved you are capped
+   at **100 emails a day**, and the 10,000 free credits **expire after a
+   month**. Approval takes about two business days.
 
 Do **not** put ZeptoMail's SPF on the root. The root's SPF belongs to Zoho, and
 overwriting it breaks your mailbox.
@@ -308,7 +424,8 @@ forward-only addresses. For Polar:
 - [ ] Inbound test mail arrives
 - [ ] Reply sent as `support@` and received correctly
 - [ ] ZeptoMail Mail Agent created, `send.qonvo.org` added and verified
-- [ ] ZeptoMail SPF + DKIM on the **`send`** subdomain
+- [ ] ZeptoMail SPF + DKIM + **bounce CNAME** on the **`send`** subdomain
+- [ ] ZeptoMail Customer Validation form submitted (else 100/day)
 - [ ] DMARC `p=none` on both names, `rua` pointing somewhere you read
 - [ ] `QONVO_EMAIL_*` set, including `QONVO_EMAIL_REPLY_TO`, containers **force-recreated**
 - [ ] Password reset actually received
@@ -333,6 +450,12 @@ forward-only addresses. For Polar:
 - **Sending app mail from the root domain.** Works, until something burns the
   reputation and password resets stop arriving.
 - **`p=reject` too early.** Bounces your own mail while records settle.
+- **Forgetting ZeptoMail's Customer Validation form.** 100 emails a day is
+  invisible in testing and fatal at launch, and the free credits expire after a
+  month rather than lasting until spent.
+- **Choosing the wrong Zoho data centre.** It is set from your IP at signup and
+  fixes your login host and API endpoint. Changing it means emailing
+  `migrations@zohoaccounts.com`, not clicking a setting.
 - **Changing the domain** invalidates everything here plus the app's hostname
   wiring, and the two Google redirect URIs live on **different hosts**. Do not
   work it out from memory:
@@ -356,6 +479,11 @@ app mail on its own subdomain: the sender can be replaced without touching
 `qonvo.org`.
 
 ---
+
+_Checked 2026-09-07: Zoho data-centre assignment and migration process; Zoho
+Mail domain-verification methods including Domain Connect for Cloudflare;
+ZeptoMail onboarding, the pre-review 100/day cap and the one-month validity of
+the free credits._
 
 _Checked 2026-09-06: Zoho Mail Lite and Zoho Mail free plan limits; ZeptoMail
 pricing, free credit and transactional-only policy; Brevo free plan limits and

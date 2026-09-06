@@ -12,6 +12,7 @@
 #   ./scripts/dns-email.sh spf send  "v=spf1 include:zeptomail.zoho.com ~all"
 #   ./scripts/dns-email.sh dkim zmail._domainkey       "v=DKIM1; k=rsa; p=..."
 #   ./scripts/dns-email.sh dkim zmail._domainkey.send  "v=DKIM1; k=rsa; p=..."
+#   ./scripts/dns-email.sh cname bounce.send  bounce.zeptomail.com
 #   ./scripts/dns-email.sh dmarc                       # both names, p=none
 #   ./scripts/dns-email.sh txt <name> <value>          # domain verification
 #
@@ -19,9 +20,9 @@
 # derived, so those two commands take what the vendor shows you. Everything
 # else is fixed and needs no input.
 #
-# SAFETY: this script only ever writes MX and TXT. The tunnel's CNAME records
-# for qonvo.org and api.qonvo.org are what make the site reachable, and nothing
-# here can touch them -- see guard_type().
+# SAFETY: this writes MX, TXT, and CNAMEs strictly beneath send.<zone>. The
+# tunnel's CNAMEs for qonvo.org and api.qonvo.org are what make the site
+# reachable, and no argument can reach them -- see guard_write().
 set -euo pipefail
 
 ZONE_NAME="${QONVO_DNS_ZONE:-qonvo.org}"
@@ -47,11 +48,27 @@ cf() {
 	curl "${args[@]}"
 }
 
-# Refuse to write anything that could take the site down. Only mail records.
-guard_type() {
-	case "$1" in
-		MX|TXT) ;;
-		*) die "refusing to write a $1 record: this script writes mail records only" ;;
+# Refuse to write anything that could take the site down.
+#
+# MX and TXT are unconditionally safe: the site is reached over CNAMEs, so no
+# value of either can affect it.
+#
+# CNAME is the exception, and it is a narrow one. ZeptoMail requires a CNAME
+# under the sending subdomain to collect bounces, so the type cannot simply be
+# banned -- but a CNAME is also exactly what serves qonvo.org and
+# api.qonvo.org through the tunnel. The compromise is that a CNAME must sit
+# strictly beneath `send.<zone>`, which the two tunnel records cannot: they are
+# the apex and `api.`. A typo therefore fails loudly instead of taking the site
+# offline.
+guard_write() {
+	local type="$1" full="$2"
+	case "$type" in
+		MX|TXT) return 0 ;;
+		CNAME)
+			[[ "$full" == *".send.$ZONE_NAME" ]] && return 0
+			die "refusing to write CNAME $full: only names under send.$ZONE_NAME are allowed here"
+			;;
+		*) die "refusing to write a $type record: this script writes mail records only" ;;
 	esac
 }
 
@@ -73,10 +90,10 @@ fqdn() {
 # name is illegal and fails closed, which is exactly the accident this avoids.
 upsert() {
 	local type="$1" name="$2" content="$3" prio="${4:-}"
-	guard_type "$type"
 	local zid full existing match_id body
-	zid="$(zone_id)" || die "could not resolve zone $ZONE_NAME"
 	full="$(fqdn "$name")"
+	guard_write "$type" "$full"
+	zid="$(zone_id)" || die "could not resolve zone $ZONE_NAME"
 
 	existing="$(cf GET "/zones/$zid/dns_records?type=$type&name=$full" | py result)" \
 		|| die "lookup failed for $type $full"
@@ -120,8 +137,15 @@ cmd_spf() {
 	inf "One SPF record per name, always. A second is illegal and fails closed."
 }
 
-cmd_dkim() { upsert TXT "${1:?name, e.g. zmail._domainkey}" "${2:?the DKIM value}"; }
-cmd_txt()  { upsert TXT "${1:?name}" "${2:?value}"; }
+cmd_dkim()  { upsert TXT "${1:?name, e.g. zmail._domainkey}" "${2:?the DKIM value}"; }
+cmd_txt()   { upsert TXT "${1:?name}" "${2:?value}"; }
+
+# ZeptoMail's bounce collector. A CNAME, so it goes through the narrow exception
+# in guard_write: the name must sit under send.<zone>.
+cmd_cname() {
+	upsert CNAME "${1:?name, e.g. bounce.send}" "${2:?target ZeptoMail gave you}"
+	inf "Bounce CNAMEs must stay grey cloud. Cloudflare does not proxy them anyway."
+}
 
 cmd_dmarc() {
 	local rua="${1:-admin@$ZONE_NAME}"
@@ -135,6 +159,7 @@ case "${1:-check}" in
 	zoho-mx) cmd_zoho_mx ;;
 	spf)     shift; cmd_spf "$@" ;;
 	dkim)    shift; cmd_dkim "$@" ;;
+	cname)   shift; cmd_cname "$@" ;;
 	dmarc)   shift; cmd_dmarc "$@" ;;
 	txt)     shift; cmd_txt "$@" ;;
 	*)       sed -n '3,21p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
