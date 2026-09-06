@@ -3,6 +3,7 @@ import Link from "next/link";
 
 import { LegalPage, MarketingShell, Section } from "@/components/marketing-shell";
 import { LEGAL } from "@/lib/legal";
+import { trialLengthAdjective } from "@/lib/plan";
 
 export const metadata: Metadata = {
   title: "Terms of Service",
@@ -41,7 +42,7 @@ export default function TermsPage() {
 
         <Section title="3. Free trial and payment">
           <p>
-            New accounts include a 14-day free trial with no card required. After the trial, continued
+            New accounts include a {trialLengthAdjective} free trial with no card required. After the trial, continued
             use requires a paid plan; if you do not upgrade, your account is restricted and your AI
             rep stops replying. We will tell you the price before charging you, and fees are
             non-refundable except where the law requires otherwise.

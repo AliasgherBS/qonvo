@@ -293,7 +293,7 @@ def welcome(name: str | None, business: str, dashboard_url: str) -> tuple[str, s
         + _numbered_steps(_SETUP_STEPS)
         + _volt_note(
             f"{TRIAL_DAYS} days free",
-            f"Your trial includes {trial_quota:,} messages a month, which is plenty to see it "
+            f"Your trial includes {trial_quota:,} messages, which is plenty to see it "
             f"working on real customers. Paid plans lift that to {paid_quotas} when "
             f'you are ready: <a href="{dashboard_url}/billing" target="_blank" '
             f'style="color:{DEEP_FOREST};font-weight:700;">see the plans</a>.',

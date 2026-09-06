@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import { Logo } from "@/components/logo";
 import { SignupForm } from "@/components/signup-form";
+import { trialLength } from "@/lib/plan";
 
 export default function SignupPage() {
   return (
@@ -13,7 +14,7 @@ export default function SignupPage() {
           </div>
           <h1 className="text-2xl font-extrabold tracking-tight">Start your free trial</h1>
           <p className="text-sm text-muted-foreground">
-            Put an AI rep on your WhatsApp. 14 days free, no card required.
+            Put an AI rep on your WhatsApp. {trialLength} free, no card required.
           </p>
         </div>
 

@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { useToast } from "@/components/ui/toast";
 import { adminTenants, describeError, type AdminTenant } from "@/lib/api";
 import { useAuthToken } from "@/lib/use-api";
+import { trialLengthAdjective } from "@/lib/plan";
 
 export function TenantLifecycleCard({ tenant, onChanged }: { tenant: AdminTenant; onChanged: () => void }) {
   const token = useAuthToken();
@@ -97,7 +98,7 @@ export function TenantLifecycleCard({ tenant, onChanged }: { tenant: AdminTenant
                   )
                 }
               >
-                Start 14-day trial
+                Start {trialLengthAdjective} trial
               </Button>
             )}
           </div>
