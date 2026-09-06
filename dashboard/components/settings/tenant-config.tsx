@@ -9,6 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { CharCounter } from "@/components/settings/char-counter";
+import { MAX_CUSTOM_INSTRUCTIONS, MAX_PAYMENT_DETAILS } from "@/lib/limits";
 import { useToast } from "@/components/ui/toast";
 import {
   config,
@@ -114,6 +116,24 @@ export type SectionProps = {
  * config section uses this, so each page owns exactly one save button and the
  * user never wonders which fields a given Save applies to.
  */
+/**
+ * Teaches by example rather than describing the field.
+ *
+ * "Anything else your rep should keep in mind" invites a paragraph of facts,
+ * which is the wrong content in the wrong place: facts belong in Knowledge,
+ * where they can change without touching behaviour, and where they are only
+ * retrieved when relevant instead of billed on every reply.
+ *
+ * Modelled on the instruction set that survived the live grounding test.
+ */
+const CUSTOM_INSTRUCTIONS_PLACEHOLDER = `Rules your rep must always follow. Be specific and short.
+
+Example:
+- Never quote a price. Say it depends on the branch and offer to check.
+- If you do not know, say so and offer to pass the customer to the team.
+- Match the customer's language. Reply in Roman Urdu if they write Roman Urdu.
+- Never promise a booking time without checking the calendar first.`;
+
 export function TenantConfigPage({
   title,
   description,
@@ -378,11 +398,17 @@ export function PersonaSection({ form, setForm }: SectionProps) {
           <Label htmlFor="custom-instructions">Custom instructions</Label>
           <Textarea
             id="custom-instructions"
-            rows={4}
+            rows={7}
             value={form.customInstructions}
             onChange={(e) => setForm({ ...form, customInstructions: e.target.value })}
-            placeholder="Anything else your AI rep should always keep in mind."
+            placeholder={CUSTOM_INSTRUCTIONS_PLACEHOLDER}
           />
+          <CharCounter value={form.customInstructions} max={MAX_CUSTOM_INSTRUCTIONS} />
+          <p className="text-xs text-muted-foreground">
+            Rules, not facts. Prices, hours and policies belong in Knowledge, where they can be
+            updated without touching how your rep behaves. Every word here is read on every
+            single reply, so short and specific beats thorough.
+          </p>
         </div>
       </CardContent>
     </Card>
@@ -622,6 +648,7 @@ export function PaymentsSection({ form, setForm }: SectionProps) {
               "Bank: HBL\nTitle: Glow Salon\nAccount / IBAN: PK..\nJazzCash/Easypaisa: 03XX-XXXXXXX"
             }
           />
+          <CharCounter value={form.paymentDetails} max={MAX_PAYMENT_DETAILS} />
           <p className="text-xs text-muted-foreground">
             Leave blank to keep the payment option off. The bot only offers it when this is set.
           </p>

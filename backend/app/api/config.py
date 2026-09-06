@@ -15,6 +15,12 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_tenant
+from app.core.limits import (
+    MAX_CUSTOM_INSTRUCTIONS,
+    MAX_PAYMENT_DETAILS,
+    MAX_PERSONA,
+    exceeded,
+)
 from app.models.tenant import Tenant, TenantConfig
 
 router = APIRouter(prefix="/api/config", tags=["config"])
@@ -39,6 +45,36 @@ class ConfigUpdateRequest(BaseModel):
     # Owner notification preference: alert the owner when the bot hands a
     # conversation off to a human. Stored in escalation_rules (no column).
     notify_on_handoff: bool | None = None
+
+    # --- length caps (spec §2) --------------------------------------------- #
+    # Rejected, never truncated. Silently dropping the end of someone's
+    # instructions is worse than refusing them: the save appears to work and the
+    # rep quietly stops following the rules that got cut.
+    #
+    # Only a value the caller actually sent is checked. A tenant already over a
+    # newly-lowered cap keeps working and is only asked to fix it when they next
+    # edit that field, which is what "grandfather on read, enforce on write"
+    # means in practice.
+    @field_validator("custom_instructions")
+    @classmethod
+    def _cap_custom_instructions(cls, v: str | None) -> str | None:
+        if v is not None and len(v) > MAX_CUSTOM_INSTRUCTIONS:
+            raise exceeded("Custom instructions", limit=MAX_CUSTOM_INSTRUCTIONS, actual=len(v))
+        return v
+
+    @field_validator("persona")
+    @classmethod
+    def _cap_persona(cls, v: str | None) -> str | None:
+        if v is not None and len(v) > MAX_PERSONA:
+            raise exceeded("Persona", limit=MAX_PERSONA, actual=len(v))
+        return v
+
+    @field_validator("payment_details")
+    @classmethod
+    def _cap_payment_details(cls, v: str | None) -> str | None:
+        if v is not None and len(v) > MAX_PAYMENT_DETAILS:
+            raise exceeded("Payment details", limit=MAX_PAYMENT_DETAILS, actual=len(v))
+        return v
 
     @field_validator("voice_reply_mode")
     @classmethod
