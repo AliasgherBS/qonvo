@@ -441,23 +441,34 @@ Two different jobs get conflated under "email", and they are bought separately.
 A mailbox cannot send bulk transactional mail without wrecking its reputation,
 and a transactional API cannot receive anything. You need one of each.
 
-#### The cheapest stack that actually works: $0/month
+#### What we are buying: about $1/month
 
 | Job | Choice | Cost |
 |---|---|---:|
-| Receive on `@qonvo.org` | **Cloudflare Email Routing** | **$0** |
-| Reply as `@qonvo.org` | Gmail *Send mail as* over the provider's SMTP | $0 |
-| Send transactional | **Brevo** 300/day, or **Resend** 3,000/month | $0 |
+| Mailbox, aliases, receive and reply | **Zoho Mail Lite**, 1 user | **$1/mo** yearly |
+| Send the app's four transactional mails | **ZeptoMail** | 10,000 free, then **$2.50/10,000** |
+| DNS | Cloudflare | $0 |
 
-Cloudflare Email Routing is free with **200 addresses and 200 destinations per
-domain**, no message-count limit, plus a catch-all. It forwards into the Gmail
-you already use. It is **forward-only** — it cannot send — which is why replies
-go out through Gmail's *Send mail as* pointed at an SMTP relay. Brevo hands you
-free SMTP credentials that serve as that relay and as the app's transactional
-sender, so one free account covers both.
+**Why not the $0 option.** Cloudflare Email Routing is free and good, but it only
+*forwards*: no mailbox, no storage, and it cannot send, so replying as `support@`
+needs a relay bolted on. It is also either/or with a real mailbox, since **MX
+points at exactly one provider**. For a traditional SaaS setup with real
+addresses, $1/month buys receive, store, send and reply in one place.
 
-That is genuinely $0/month on top of the domain, and it is enough until you are
-sending thousands of mails a day or want an inbox that is not your personal one.
+**Why ZeptoMail and not Brevo.** Brevo's free tier is 300/day forever against
+ZeptoMail's one-off 10,000, which reads more generous until you find it **stamps
+the Brevo logo on every email**. Removing it needs Starter plus an add-on, about
+**$20/month**. ZeptoMail is pay-as-you-go with no branding, and at Qonvo's volume
+costs roughly $2.50 every six months. It also **refuses promotional mail by
+design**, which enforces the transactional/marketing reputation split below at
+the vendor level instead of by discipline.
+
+**Known risk, worth recording.** Operators running ZeptoMail for years report
+that some Zoho sending IPs get blacklisted and Zoho does not auto-retry from a
+clean one. Most report good delivery. If it disappoints, **Amazon SES at $0.10
+per 1,000** is cheaper still and the best regarded of the affordable options; the
+cost is a sandbox you must exit. Because app mail lives on `send.qonvo.org`, that
+swap never touches the mailbox.
 
 #### What each tier costs when you outgrow free
 
@@ -465,12 +476,13 @@ sending thousands of mails a day or want an inbox that is not your personal one.
 |---|---|---:|
 | Cloudflare Email Routing | Forwarding only, no mailbox | **$0** |
 | Zoho Mail Free | Real mailbox, 5 users, 5 GB, **webmail only, no IMAP/POP**, and no longer offered to new signups in every region | $0 |
-| **Zoho Mail Lite** | Real mailbox with IMAP/POP, 5 GB | **$1/user/mo** billed yearly, $1.25 monthly |
+| **Zoho Mail Lite** *(chosen)* | Real mailbox with IMAP/POP, 5 GB, unlimited aliases | **$1/user/mo** billed yearly |
+| **ZeptoMail** *(chosen)* | Transactional only, no branding, pay-as-you-go | 10,000 free, then **$2.50/10,000** |
 | Migadu Micro | Unlimited domains, mailboxes and aliases; limits are on daily volume | $19/yr |
 | Purelymail | Unlimited domains and accounts, 10 GB | from $49/yr |
 | Google Workspace | The default nobody gets fired for | $7/user/mo |
 | Microsoft 365 Business Basic | Same, with Office | $6/user/mo |
-| Brevo | Transactional API + SMTP, **300/day (~9,000/mo)** free, marketing too | $0 |
+| Brevo | Transactional + marketing, 300/day free, **but its logo on every email**; ~$20/mo to remove | $0 |
 | Resend | Transactional API, 3,000/mo but **capped at 100/day**, 3 domains | $0 |
 | Resend Pro | 50,000/mo, no daily cap, 10 domains | $20/mo, $0.90 per extra 1,000 |
 | Amazon SES | Cheapest at scale, most setup | **$0.10 per 1,000** |
@@ -829,7 +841,7 @@ the disk they are protecting.
 | Domain (.org at cost, amortised) | $0.71 |
 | Offsite backup (optional, recommended) | ~$4 |
 | WAHA | **$0** — everything moved into the free Core in 2026.6.1, no session limit |
-| Email (Cloudflare Routing + Brevo free tier) | **$0** — see 5.1; $1/mo if you want a real mailbox |
+| Email (Zoho Mail Lite + ZeptoMail) | **~$1** — see 5.1 |
 | Monitoring (self-hosted) | $0 |
 | **Fixed total** | **~$12/month** |
 | AI, per tenant | +$0.49 text-only floor / +$1.64 current / +$2.70 Urdu-capable voice |
@@ -887,7 +899,7 @@ more in complexity than it could possibly save.
 | Database | Self-hosted; get backups offsite this month |
 | Price table | Correct Gemini to $0.15/$1.25 |
 | Payments in | **Answered: Polar lists Pakistan as a supported payout country**, via Stripe Connect Express. Paddle does not block Pakistan either. Confirm the receiving method before building on it |
-| Email | Cloudflare Email Routing + Brevo, $0. Add Zoho Mail Lite at $1/user/mo only when a forwarded address is refused or you want a non-personal inbox |
+| Email | **Zoho Mail Lite $1/mo** (one user, role addresses as free aliases) + **ZeptoMail** for app mail (10,000 free, then $2.50/10,000). Not Brevo: its free tier brands every email. Fallback if deliverability disappoints is Amazon SES (5.1) |
 | Load test | Do one before promising concurrency |
 | **Cloudflare Containers** | **Evaluated and rejected** (4.1). 10-20x the VPS cost, 20 GB ceiling against 160 GB needed, and all disk is ephemeral, which loses Postgres and every WAHA session on sleep |
 
