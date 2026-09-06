@@ -3,6 +3,11 @@
 _Everything that has to change, in the order it has to change, with the traps
 that have already bitten this project marked._
 
+> **Executed on 2026-09-06 (Path A).** `qonvo.org` and `api.qonvo.org` are live
+> through a Cloudflare Tunnel, both Google flows are verified, and ngrok is
+> retired. What follows stays here because it is the same runbook for the VPS
+> move (Path B) and for putting staging on `dev.qonvo.org` — only §2 differs.
+
 Replace `qonvo.org` below with the domain you actually bought. It appears in
 more places than you would expect, and **four of them are coupled** — change one
 without the others and Google sign-in breaks with `redirect_uri_mismatch` from
@@ -12,10 +17,9 @@ every device.
 
 ## 0. Decide this first: where does it run?
 
-A domain needs something to point at. Right now Qonvo runs on your machine
-behind an ngrok tunnel, and this box's address (`58.65.198.91`) is a home
-connection — almost certainly behind CGNAT, so **DNS cannot point at it
-directly**. Two honest options:
+A domain needs something to point at. Qonvo runs on your machine, and this
+box's address (`58.65.198.91`) is a home connection behind CGNAT, so **DNS
+cannot point at it directly** — confirmed, not assumed. Two honest options:
 
 | | **Path A — Cloudflare Tunnel** | **Path B — VPS** |
 |---|---|---|
@@ -197,8 +201,18 @@ issues refresh tokens that **expire after seven days**, so every tenant's Google
 integration dies weekly. All scopes here are non-sensitive, so publishing is
 free and needs no review.
 
-**Keep the ngrok URIs until the switch is verified**, then delete them. Google
-allows several; overlap costs nothing and is your rollback.
+**Keep the old tunnel's URIs until the switch is verified**, then delete them.
+Google allows several; overlap costs nothing and is your rollback.
+
+> ✅ **Verified 2026-09-06** — both flows work on the new hosts, so the ngrok
+> URIs are now dead weight. Delete these two from the client, and only these:
+> ```
+> https://sesame-denial-dumpling.ngrok-free.dev/api/auth/callback/google
+> https://sesame-denial-dumpling.ngrok-free.dev/backend/api/integrations/oauth/callback
+> ```
+> Leaving them is not merely untidy: a redirect URI is a place Google is willing
+> to send an authorisation code, and that hostname now belongs to whoever claims
+> it next.
 
 ---
 
@@ -241,7 +255,10 @@ DNS first, because it is the slowest and everything else depends on it.
 5. **Rebuild the dashboard** (`NEXT_PUBLIC_*` is build-time) and recreate the
    backend containers
 6. **Verify** (§8)
-7. **Only then** remove the ngrok URIs from Google and stop the ngrok window
+7. **Only then** remove the old tunnel's URIs from Google and stop its window
+
+All seven done on 2026-09-06. Step 7's second half is the one that needs a human
+in the Cloud console; the ngrok window itself is gone.
 
 ---
 
@@ -283,9 +300,14 @@ Nothing here is destructive and every step is reversible.
 | Caddy will not start | It could not get a certificate. Usually DNS has not propagated, port 80 is closed, or an uncommented host block has no DNS record |
 | Google integration dies after a week | The OAuth client is still in Testing |
 
-**Rollback:** put the ngrok values back in both env files, rebuild the
-dashboard, restart. The old redirect URIs still being in Google is what makes
-this a two-minute reversal — which is why §5 says to delete them last.
+**Rollback:** put the previous tunnel's values back in both env files, rebuild
+the dashboard, restart. The old redirect URIs still being in Google is what
+makes this a two-minute reversal — which is why §5 says to delete them last.
+
+**That window has now closed**, deliberately: ngrok is stopped and its URIs are
+being removed, because a rollback path kept open indefinitely is just a second
+production hostname nobody is watching. Reverting from here means standing up a
+fresh tunnel and re-registering its URIs.
 
 ---
 
@@ -301,6 +323,12 @@ Done on 2026-09-06, when `qonvo.org` went live:
   public URLs at the end. A tunnel that connects but routes nowhere looks
   identical to a healthy one from the machine it runs on, so the script proves
   the public path rather than assuming it.
+- ✅ **ngrok retired** — the tmux window is stopped and every reference in the
+  env files, `qonvo-redeploy.sh` and `dashboard/lib/legal.ts` now names
+  `qonvo.org`. The `legal.ts` one mattered most: it is the declared origin of
+  the Terms and Privacy pages, which is exactly what a Google reviewer reads.
+  It was unused by any component, so nothing rendered wrong — which is also why
+  a grep found it and a browser never would have.
 - ✅ **Crawl surface verified on the real host** — `robots.txt`, `sitemap.xml`
   and `llms.txt` all serve `https://qonvo.org` URLs with zero ngrok or localhost
   references. Worth re-checking after any rebuild: these come from
