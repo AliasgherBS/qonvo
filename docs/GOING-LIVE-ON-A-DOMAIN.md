@@ -287,12 +287,53 @@ this a two-minute reversal — which is why §5 says to delete them last.
 
 ## 10. Afterwards
 
-- **Update `CLAUDE.md`.** It documents the coupled URLs and still names the
-  tunnel host.
-- **`qonvo-up.sh` starts ngrok.** Point it at `cloudflared` (Path A) or drop the
-  tunnel window entirely (Path B).
-- **Staging on `dev.qonvo.org`** needs its own Google redirect URIs if you want
-  to test Google there; until then staging is email-and-password only.
-- The landing page carries a `noindex` only if you set one — once the domain is
-  live, **check `robots.txt` and the sitemap** are pointing at the real host
-  before search engines cache the wrong one.
+Done on 2026-09-06, when `qonvo.org` went live:
+
+- ✅ **`CLAUDE.md` updated** — a "Public access" section describing the tunnel and
+  the two hosts, the coupled-URL warning rewritten off the ngrok hostname, and
+  the two Google redirect URIs recorded as living on *different* hosts, which is
+  the part that is easy to get wrong.
+- ✅ **`qonvo-up.sh` runs `cloudflared`** instead of ngrok, and now curls both
+  public URLs at the end. A tunnel that connects but routes nowhere looks
+  identical to a healthy one from the machine it runs on, so the script proves
+  the public path rather than assuming it.
+- ✅ **Crawl surface verified on the real host** — `robots.txt`, `sitemap.xml`
+  and `llms.txt` all serve `https://qonvo.org` URLs with zero ngrok or localhost
+  references. Worth re-checking after any rebuild: these come from
+  `NEXT_PUBLIC_SITE_URL`, which is baked in at build time.
+
+### Staging on `dev.qonvo.org`
+
+Not exposed, deliberately. Adding it is two steps:
+
+```yaml
+# ~/.cloudflared/config.yml, above the catch-all 404
+  - hostname: dev.qonvo.org
+    service: http://localhost:3012      # the staging dashboard
+  - hostname: dev-api.qonvo.org
+    service: http://localhost:8010      # the staging API
+```
+```bash
+cloudflared tunnel route dns qonvo dev.qonvo.org
+cloudflared tunnel route dns qonvo dev-api.qonvo.org
+```
+
+Then set `AUTH_URL`, `NEXT_PUBLIC_API_URL` and `NEXT_PUBLIC_SITE_URL` in
+`dashboard/.env.staging.local` to the dev hosts and rebuild with
+`./run-dashboard-staging.sh --build`.
+
+**Google will not work on staging until its redirect URIs are added too** —
+`https://dev-api.qonvo.org/api/integrations/oauth/callback` and
+`https://dev.qonvo.org/api/auth/callback/google`. Until then staging is
+email-and-password only, which is fine for everything except testing the Google
+flows themselves.
+
+**Use `dev-api` rather than `api.dev`.** A wildcard certificate covers one label
+only, and second-level names like `api.dev.qonvo.org` fall outside it. Cloudflare
+issues per-host certificates here so it would work either way, but the flat name
+stays portable to the VPS.
+
+Two more things worth doing once staging is public: put `X-Robots-Tag: noindex`
+on it (the Caddyfile blocks already have it) so it never competes with
+production in search, and give staging its own LLM key — it currently shares
+production's, so a test run can exhaust the real quota.
