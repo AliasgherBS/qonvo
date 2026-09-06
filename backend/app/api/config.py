@@ -33,9 +33,8 @@ class ConfigUpdateRequest(BaseModel):
     llm_model: str | None = None
     payment_details: str | None = None
     voice_reply_mode: str | None = None  # "match" | "always" | "never"
-    # "match" or a language code (see app/agent/language.py). Script-aware:
-    # Urdu script and Roman Urdu are separate choices, because a model told
-    # "reply in Urdu" always picks the Arabic script.
+    # "match", "en", or a language the owner typed. Open on purpose: which
+    # languages work is a property of the model, not of Qonvo.
     reply_language_mode: str | None = None
     # Owner notification preference: alert the owner when the bot hands a
     # conversation off to a human. Stored in escalation_rules (no column).
@@ -55,12 +54,15 @@ class ConfigUpdateRequest(BaseModel):
     def _validate_reply_language_mode(cls, v: str | None) -> str | None:
         if v is None:
             return v
-        from app.agent.language import SUPPORTED_REPLY_LANGUAGES, is_supported
+        from app.agent.language import MAX_LANGUAGE_WORDS, is_valid, sanitise_language
 
-        if not is_supported(v):
-            allowed = ", ".join(lang.code for lang in SUPPORTED_REPLY_LANGUAGES)
-            raise ValueError(f"reply_language_mode must be one of: {allowed}")
-        return v
+        if not is_valid(v):
+            raise ValueError(
+                "reply_language_mode must be 'match', 'en', or a language name "
+                f"of at most {MAX_LANGUAGE_WORDS} words"
+            )
+        # Store the tidied form, so what the model is told is what was validated.
+        return v if v in ("match", "en") else sanitise_language(v)
 
     @field_validator("owner_alert_number")
     @classmethod

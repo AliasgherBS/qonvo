@@ -460,20 +460,18 @@ function mapKnowledgeSource(dto: KnowledgeSourceDto): KnowledgeSource {
  * there, the knowledge exists and does not answer the question.
  */
 /**
- * Reply-language options, mirroring app/agent/language.py. Script matters:
- * Urdu and Roman Urdu are one language written two ways, and a model told
- * "reply in Urdu" will always choose the Arabic script.
+ * The three reply-language choices. "other" is a UI state, not a stored value:
+ * picking it reveals a text field, and whatever is typed is what gets saved.
+ * The list of languages is deliberately not enumerated here -- which ones work
+ * is a property of the model in use, not of Qonvo, so a fixed menu would be us
+ * guessing on the model's behalf and going stale as it improves.
  */
-export const REPLY_LANGUAGE_OPTIONS = [
+export const REPLY_LANGUAGE_PRESETS = [
   { value: "match", label: "Match the customer" },
   { value: "en", label: "English" },
-  { value: "ur", label: "Urdu (Urdu script)" },
-  { value: "ur-Latn", label: "Roman Urdu" },
-  { value: "pa", label: "Punjabi (Shahmukhi script)" },
-  { value: "pa-Latn", label: "Roman Punjabi" },
-  { value: "sd", label: "Sindhi" },
-  { value: "ar", label: "Arabic" },
 ] as const;
+
+export const OTHER_REPLY_LANGUAGE = "other";
 
 export type KnowledgeGapKind = "retrieval_miss" | "answer_miss" | "escalation";
 

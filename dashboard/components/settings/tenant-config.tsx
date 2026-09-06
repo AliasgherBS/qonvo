@@ -16,7 +16,8 @@ import {
   type ConfigField,
   type LlmProvider,
   type TenantConfig,
-  REPLY_LANGUAGE_OPTIONS,
+  OTHER_REPLY_LANGUAGE,
+  REPLY_LANGUAGE_PRESETS,
 } from "@/lib/api";
 import { useApi, useAuthToken } from "@/lib/use-api";
 import { cn } from "@/lib/utils";
@@ -468,6 +469,12 @@ export function HoursSection({ form, setForm }: SectionProps) {
  * infrastructure the owner should have to reason about.
  */
 export function VoiceSection({ form, setForm }: SectionProps) {
+  // A saved language that is not one of the two presets was typed, so the form
+  // opens in that mode rather than silently offering to replace it.
+  const [languageIsCustom, setLanguageIsCustom] = useState(
+    () => !!form.replyLanguageMode && !["match", "en"].includes(form.replyLanguageMode),
+  );
+
   return (
     <Card>
       <CardHeader>
@@ -504,19 +511,47 @@ export function VoiceSection({ form, setForm }: SectionProps) {
           <select
             id="reply-language-mode"
             className={SELECT_CLASSES}
-            value={form.replyLanguageMode}
-            onChange={(e) => setForm({ ...form, replyLanguageMode: e.target.value })}
+            // "Other" is a UI state, not a stored value: choosing it clears the
+            // field so the text input starts empty and what gets typed is what
+            // gets saved.
+            value={languageIsCustom ? OTHER_REPLY_LANGUAGE : form.replyLanguageMode}
+            onChange={(e) => {
+              const chosen = e.target.value;
+              if (chosen === OTHER_REPLY_LANGUAGE) {
+                setLanguageIsCustom(true);
+                setForm({ ...form, replyLanguageMode: "" });
+              } else {
+                setLanguageIsCustom(false);
+                setForm({ ...form, replyLanguageMode: chosen });
+              }
+            }}
           >
-            {REPLY_LANGUAGE_OPTIONS.map((option) => (
+            {REPLY_LANGUAGE_PRESETS.map((option) => (
               <option key={option.value} value={option.value}>
                 {option.label}
               </option>
             ))}
+            <option value={OTHER_REPLY_LANGUAGE}>Other (type a language)</option>
           </select>
-          <p className="text-xs text-muted-foreground">
-            Urdu and Roman Urdu are the same language in different scripts, so they are separate
-            choices here. Matching the customer matches their script too.
-          </p>
+          {languageIsCustom ? (
+            <>
+              <Input
+                id="reply-language-custom"
+                placeholder="Roman Urdu"
+                value={form.replyLanguageMode}
+                onChange={(e) => setForm({ ...form, replyLanguageMode: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Any language your AI model can write. Name the script if it matters: Urdu and
+                Roman Urdu are the same language written two ways, and asking for Urdu will get
+                you Urdu script.
+              </p>
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Matching the customer matches their script too, so Roman Urdu gets Roman Urdu back.
+            </p>
+          )}
         </div>
       </CardContent>
     </Card>

@@ -4,100 +4,104 @@ Voice already worked this way: a validated mode the owner picks. Language was
 governed only by prose in ``custom_instructions``, so it drifted; an Urdu-script
 question came back in Roman Urdu.
 
-The property that matters is that this is **script-aware**. Urdu and Roman Urdu
-are one language written two ways, and a model told "reply in Urdu" will pick
-the Arabic script every time. So they are separate options, and ``match`` is
-explicit that the script is part of what gets mirrored.
+Three choices, deliberately:
+
+* ``match``  — mirror the customer, including the script
+* ``en``     — always English, the common explicit choice
+* anything else — a language the owner types
+
+The third is open on purpose. Which languages are available is a property of
+the model in use, not of Qonvo, so shipping a fixed list would be us guessing
+on the model's behalf and going stale every time it improves.
+
+Being able to type it also solves the script problem better than a menu could:
+"Roman Urdu" and "Urdu script" are both just things you can write, and the
+model understands them. A menu would have to enumerate every script of every
+language to say the same thing.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
 
 MATCH = "match"
+ENGLISH = "en"
 
+#: Free text reaches the system prompt, so it is kept to something that is
+#: plausibly a language name. The owner can already write arbitrary instructions
+#: in custom_instructions, so this is not a defence against them -- it is about
+#: keeping the setting coherent: a sentence pasted here would read as
+#: "Always reply in do as I say not as I do" and behave unpredictably.
+MAX_LANGUAGE_LENGTH = 40
+#: Language names are short. "Chinese (Simplified)", "Brazilian Portuguese" and
+#: "Urdu (Urdu script)" all fit; a sentence does not.
+MAX_LANGUAGE_WORDS = 3
 
-@dataclass(frozen=True, slots=True)
-class ReplyLanguage:
-    code: str
-    label: str
-    #: Told to the model verbatim. Written to be unambiguous about script.
-    instruction: str
+_ALLOWED = re.compile(r"^[A-Za-zÀ-ɏ؀-ۿ\s()'\-/,.]+$")
 
-
-#: The order here is the order the dashboard renders. Match first because it is
-#: the default and the right answer for most businesses; English next because it
-#: is the common explicit choice; then the regional languages this product is
-#: built for, with each script an option in its own right.
-SUPPORTED_REPLY_LANGUAGES: tuple[ReplyLanguage, ...] = (
-    ReplyLanguage(
-        MATCH,
-        "Match the customer",
-        "Reply in the same language AND the same script the customer used. If "
-        "they write Urdu in Roman/Latin letters, reply in Roman/Latin letters "
-        "too; if they write in Urdu script, reply in Urdu script.",
-    ),
-    ReplyLanguage(
-        "en", "English", "Always reply in English, regardless of what the customer writes."
-    ),
-    ReplyLanguage(
-        "ur",
-        "Urdu (Urdu script)",
-        "Always reply in Urdu written in Urdu (Arabic) script, regardless of "
-        "what the customer writes.",
-    ),
-    ReplyLanguage(
-        "ur-Latn",
-        "Roman Urdu",
-        "Always reply in Urdu written in Roman/Latin letters (Roman Urdu), not "
-        "Urdu script, regardless of what the customer writes.",
-    ),
-    ReplyLanguage(
-        "pa",
-        "Punjabi (Shahmukhi script)",
-        "Always reply in Punjabi written in Shahmukhi script, regardless of "
-        "what the customer writes.",
-    ),
-    ReplyLanguage(
-        "pa-Latn",
-        "Roman Punjabi",
-        "Always reply in Punjabi written in Roman/Latin letters, regardless of "
-        "what the customer writes.",
-    ),
-    ReplyLanguage(
-        "sd", "Sindhi", "Always reply in Sindhi, regardless of what the customer writes."
-    ),
-    ReplyLanguage(
-        "ar", "Arabic", "Always reply in Arabic, regardless of what the customer writes."
-    ),
+MATCH_INSTRUCTION = (
+    "Reply in the same language AND the same script the customer used. If they "
+    "write Urdu in Roman/Latin letters, reply in Roman/Latin letters too; if "
+    "they write in Urdu script, reply in Urdu script."
 )
 
-_BY_CODE = {lang.code: lang for lang in SUPPORTED_REPLY_LANGUAGES}
 
+def sanitise_language(value: str | None) -> str | None:
+    """A safe, single-line language name, or None if it is not usable.
 
-def normalise_reply_language(code: str | None) -> str:
-    """A known code, or ``match``.
-
-    Falls back rather than raising: a stale value left by an older build must
-    not break every reply for that tenant.
+    Collapses whitespace, then requires something that is plausibly a language
+    name: single line, at most a few words, no punctuation beyond what names
+    actually use. "Roman Urdu" passes; a sentence does not, because it would be
+    spliced into the prompt as "Always reply in <sentence>" and behave
+    unpredictably.
     """
-    return code if code in _BY_CODE else MATCH
+    if value is None:
+        return None
+    cleaned = re.sub(r"\s+", " ", value.replace("\n", " ").replace("\r", " ")).strip()
+    if not cleaned or len(cleaned) > MAX_LANGUAGE_LENGTH:
+        return None
+    if len(cleaned.split(" ")) > MAX_LANGUAGE_WORDS:
+        return None
+    if not _ALLOWED.match(cleaned):
+        return None
+    return cleaned
 
 
-def language_instruction(code: str | None) -> str:
+def normalise_reply_language(value: str | None) -> str:
+    """``match``, ``en``, or a sanitised language name. Falls back to ``match``.
+
+    Falling back rather than raising matters: a value stored by an older build,
+    or one that no longer passes sanitising, must not break every reply for
+    that tenant.
+    """
+    if value in (MATCH, ENGLISH):
+        return value
+    return sanitise_language(value) or MATCH
+
+
+def language_instruction(value: str | None) -> str:
     """The sentence handed to the model for this setting."""
-    return _BY_CODE[normalise_reply_language(code)].instruction
+    mode = normalise_reply_language(value)
+    if mode == MATCH:
+        return MATCH_INSTRUCTION
+    if mode == ENGLISH:
+        return "Always reply in English, regardless of what the customer writes."
+    return f"Always reply in {mode}, regardless of what the customer writes."
 
 
-def is_supported(code: str | None) -> bool:
-    return code in _BY_CODE
+def is_valid(value: str | None) -> bool:
+    """Whether the API should accept this value."""
+    return value in (MATCH, ENGLISH) or sanitise_language(value) is not None
 
 
 __all__ = [
+    "ENGLISH",
     "MATCH",
-    "SUPPORTED_REPLY_LANGUAGES",
-    "ReplyLanguage",
-    "is_supported",
+    "MATCH_INSTRUCTION",
+    "MAX_LANGUAGE_LENGTH",
+    "MAX_LANGUAGE_WORDS",
+    "is_valid",
     "language_instruction",
     "normalise_reply_language",
+    "sanitise_language",
 ]
