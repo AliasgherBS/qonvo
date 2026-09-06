@@ -26,26 +26,51 @@ class Plan:
 
 
 #: Ordered by quota: this is the order an upgrade page renders.
+#:
+#: ``knowledge_sources`` bounds the ingestion queue; ``knowledge_chars`` bounds
+#: what actually costs money, since every chunk is an embedding row in pgvector
+#: and is re-embedded on re-crawl. The trial matches Starter deliberately: a
+#: trial that cannot hold a real price list does not demonstrate the product.
 PLANS: dict[str, Plan] = {
     TRIAL_PLAN: Plan(
         key=TRIAL_PLAN,
         name="Trial",
-        entitlements={"monthly_message_quota": 300, "seats": 2},
+        entitlements={
+            "monthly_message_quota": 300,
+            "seats": 2,
+            "knowledge_sources": 25,
+            "knowledge_chars": 500_000,
+        },
     ),
     "starter": Plan(
         key="starter",
         name="Starter",
-        entitlements={"monthly_message_quota": 1_000, "seats": 2},
+        entitlements={
+            "monthly_message_quota": 1_000,
+            "seats": 2,
+            "knowledge_sources": 25,
+            "knowledge_chars": 500_000,
+        },
     ),
     "growth": Plan(
         key="growth",
         name="Growth",
-        entitlements={"monthly_message_quota": 5_000, "seats": 5},
+        entitlements={
+            "monthly_message_quota": 5_000,
+            "seats": 5,
+            "knowledge_sources": 50,
+            "knowledge_chars": 2_000_000,
+        },
     ),
     "scale": Plan(
         key="scale",
         name="Scale",
-        entitlements={"monthly_message_quota": 20_000, "seats": 15},
+        entitlements={
+            "monthly_message_quota": 20_000,
+            "seats": 15,
+            "knowledge_sources": 100,
+            "knowledge_chars": 10_000_000,
+        },
     ),
 }
 
