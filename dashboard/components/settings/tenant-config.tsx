@@ -658,8 +658,17 @@ export function BusinessNameSection({ form, setForm }: SectionProps) {
 }
 
 /**
- * Engine settings, behind a disclosure and deliberately far from persona. A
- * tenant owner should never need to open this; the platform default is fine.
+ * Engine settings. **Admin console only.**
+ *
+ * This was on the owner's Business page behind a disclosure. It is not any
+ * more: picking a model is not a decision a business owner is equipped to make,
+ * and a wrong answer costs quality or money with no signal that anything is
+ * wrong. The platform default is the supported configuration.
+ *
+ * It survives here because an operator pinning one tenant to a specific model
+ * during an incident is a real need, and because the per-tenant override in
+ * `resolve_llm` already exists and works. Rendered only by
+ * `AllConfigSections`, which only the admin tenant page uses.
  */
 export function ModelSection({ form, setForm }: SectionProps) {
   return (
@@ -672,8 +681,8 @@ export function ModelSection({ form, setForm }: SectionProps) {
           </summary>
 
           <p className="mt-3 text-xs text-muted-foreground">
-            Which model powers your AI rep. Leave on the platform default unless you have been
-            asked to change it.
+            Which model powers this tenant. Leave on the platform default unless you are pinning
+            this workspace deliberately, for example during a provider incident.
           </p>
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2">
