@@ -57,6 +57,25 @@ Scheduler and worker are **separate consumer processes** and must use **differen
 (`arq:scheduler` vs the default). If they share the queue, the scheduler grabs worker jobs
 (e.g. `ingest_knowledge_source`) and drops them as *function not found*.
 
+## Public access (live since 2026-09-06)
+
+`qonvo.org` is live, served from **this machine** through a **Cloudflare Tunnel**
+(`cloudflared tunnel run qonvo`, in the `cloudflared` tmux window). The tunnel dials
+outward, so nothing is port-forwarded and no public IP is needed — this box sits behind
+CGNAT and could never have been pointed at directly.
+
+| Host | Serves | Local target |
+|---|---|---|
+| `qonvo.org` | landing page + dashboard | `localhost:3002` (host node process) |
+| `api.qonvo.org` | FastAPI | `localhost:8000` |
+
+Routing lives in `~/.cloudflared/config.yml`. **The dashboard and API are now separate
+origins**, so `QONVO_CORS_ORIGINS` must contain `https://qonvo.org` or every browser call
+fails while curl keeps working.
+
+Moving to a VPS later changes only where DNS points; every application setting stays as
+it is. Runbook, including rollback: [`docs/GOING-LIVE-ON-A-DOMAIN.md`](docs/GOING-LIVE-ON-A-DOMAIN.md).
+
 ## Dev environment quirks on this VPS
 
 - Host port `3000` is held by an unrelated `evolution-api` container (user's, don't kill).
@@ -127,7 +146,7 @@ ports and `QONVO_EMAIL_PROVIDER=log`, so it can never mail a real customer.
 cd ~/qonvo && ./qonvo-redeploy.sh
 
 # Bring the whole stack up from scratch (after a reboot / tmux gone)
-cd ~/qonvo && ./qonvo-up.sh          # docker + tmux(dashboard, ngrok)
+cd ~/qonvo && ./qonvo-up.sh          # docker + tmux(dashboard, cloudflared) + a public health check
 
 # Backend tests (must stay green — 286 passing, 8 skipped)
 cd backend && uv run pytest -q && uv run ruff check
@@ -250,16 +269,22 @@ cd backend && QONVO_SYSTEM_DATABASE_URL=... QONVO_JWT_SECRET=... \
     from the browser and gets full JWKS signature + `aud`/`iss`/`exp` verification — never conflate
     the two.
   - **`AUTH_URL` must be set explicitly in `dashboard/.env.local`.** Auth.js host-derivation is
-    broken behind this tunnel: verified live that ngrok forwards `Host` *and* `X-Forwarded-Host`
+    broken behind a proxy: verified live that the tunnel forwards `Host` *and* `X-Forwarded-Host`
     as the public domain, yet Auth.js still built `https://localhost:3002/api/auth/callback/google`
     (it honoured `X-Forwarded-Proto` but not the host) → `redirect_uri_mismatch` from every device.
-    Pinning `AUTH_URL` fixes it. Consequence: SSO from `localhost:3002` finishes on the ngrok
+    Pinning `AUTH_URL` fixes it. Consequence: SSO from `localhost:3002` finishes on the public
     domain, so the cookie lands there — use email+password locally. **`AUTH_URL`,
     `QONVO_GOOGLE_OAUTH_REDIRECT_BASE`, `QONVO_DASHBOARD_BASE_URL` and the Cloud console redirect
-    URIs are all coupled to the tunnel hostname — change one, change all four.**
-  - The backend's redirect URI carries a **`/backend` prefix**
-    (`https://<host>/backend/api/integrations/oauth/callback`) because the tunnel fronts the
-    dashboard, which proxies `/backend/*` to the API. The Auth.js one has no prefix.
+    URIs are all coupled to the public hostname — change one, change all four.**
+  - **The two Google redirect URIs live on different hosts**, which is easy to get wrong:
+    integrations on the API host (`https://api.qonvo.org/api/integrations/oauth/callback`),
+    Sign in with Google on the dashboard host (`https://qonvo.org/api/auth/callback/google`).
+    The `/backend` prefix the integrations URI used to carry is **gone**: it existed only while
+    one tunnel host fronted the dashboard and proxied `/backend/*` to the API.
+  - **`.env` is read by docker as a literal env file, not by a shell.** Inline `#` comments after
+    a value and leading spaces become *part of the value* — proved with a throwaway container
+    after an edit produced `" https://api.qonvo.org #https://old-host"`. Comments go on their own
+    line. (`run-dashboard.sh` has the same constraint for `.env.local`.)
 - **Billing (2026-09-04)** ✅ — provider-agnostic subsystem shaped around a merchant of record
   (Paddle/Polar), shipped with a **manual adapter** so it works before any gateway account exists.
   Plan catalogue in code (`app/billing/plans.py`, entitlements only — **prices deliberately live
