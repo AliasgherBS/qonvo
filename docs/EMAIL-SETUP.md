@@ -58,6 +58,17 @@ tunnel or the existing CNAME records: email is MX and TXT, which are separate.
 
 ### Who does what
 
+> **Executed 2026-09-07.** Every DNS record below is live on `qonvo.org` and
+> verified. What actually happened differed from the plan in three ways, each
+> marked **[live]** where it appears.
+>
+> The big one: **Domain Connect handled almost all of it.** Zoho *and*
+> ZeptoMail both offer one-click Cloudflare authorization, so the verification
+> TXT, both DKIM records, the three MX records, the root SPF and the bounce
+> CNAME were all written by the vendor with correct names and DNS-only proxy
+> status. Only DMARC needed the script. Reach for the vendor's own flow first;
+> it knows values this document would have to guess.
+
 Vendor signup and payment are manual. Everything downstream of them is not.
 
 | Step | Who | How |
@@ -255,10 +266,13 @@ password-reset test, and a [mail-tester.com](https://www.mail-tester.com) run.
 6. Add Zoho's SPF and DKIM on the root (§5):
 
    ```bash
-   ./scripts/dns-email.sh spf  root "v=spf1 include:zoho.com ~all"
+   ./scripts/dns-email.sh spf  root "v=spf1 include:zohomail.com ~all"
    ./scripts/dns-email.sh dkim zmail._domainkey "<the value Zoho shows you>"
-   ./scripts/dns-email.sh txt  zoho-verification "<the token Zoho shows you>"
    ```
+
+   **[live]** The SPF include is **`zohomail.com`**, not `zoho.com`, and it is
+   data-centre specific. Use Domain Connect rather than typing it: the console
+   knows which one your account is on, and this document cannot.
 
 Test by mailing `hello@qonvo.org` from an outside account.
 
@@ -288,15 +302,32 @@ reputation hit is not.
 1. ZeptoMail → **Mail Agents** → create one, e.g. `qonvo-app`.
 2. **Domains** → add `send.qonvo.org`.
 3. Add the records it gives you in Cloudflare, **on the `send` subdomain**,
-   not the root. There are three, and the CNAME is easy to miss:
-   ```bash
-   ./scripts/dns-email.sh dkim  zmail._domainkey.send "<DKIM value>"
-   ./scripts/dns-email.sh cname bounce.send           "<CNAME target>"
-   ./scripts/dns-email.sh spf   send "v=spf1 include:zeptomail.zoho.com ~all"
+   not the root. ZeptoMail also offers one-click Cloudflare authorization, so
+   take it. There are exactly two:
+
+   | Type | Host | Value |
+   |---|---|---|
+   | TXT | `zmail._domainkey.send` | `k=rsa; p=...` |
+   | CNAME | `bounce-zem.send` | `cluster<n>.zeptomail.com` |
+
+   **[live] Do not add an SPF record on `send.qonvo.org`.** The earlier advice
+   to do so was wrong. SPF is checked against the *envelope* sender, which is
+   `bounce-zem.send.qonvo.org` -- and a TXT lookup there follows the CNAME
+   straight into ZeptoMail's own record:
+
    ```
-   The CNAME is how ZeptoMail collects bounces. Skip it and delivery still
-   works, so nothing looks broken -- you simply never learn which addresses are
-   dead.
+   TXT at bounce-zem.send.qonvo.org:
+     CNAME -> cluster89.zeptomail.com.
+     TXT   -> "v=spf1 include:zeptomail.net -all"
+   ```
+
+   The bounce CNAME *is* the SPF mechanism, which is why ZeptoMail does not ask
+   for a separate one. Adding a second would be a record nothing consults.
+   DMARC still aligns: the SPF domain is a subdomain of `qonvo.org`, and DKIM
+   signs as `send.qonvo.org`.
+
+   **[live]** ZeptoMail's DKIM value begins `k=rsa;` with **no `v=DKIM1;`
+   prefix**, unlike Zoho's. That is valid and not a copy error.
 4. Verify, then generate a **Send Mail token**.
 5. **Submit the Customer Validation form.** Until it is approved you are capped
    at **100 emails a day**, and the 10,000 free credits **expire after a
@@ -317,13 +348,21 @@ QONVO_EMAIL_REPLY_TO=support@qonvo.org
 QONVO_EMAIL_SMTP_HOST=smtp.zeptomail.com
 QONVO_EMAIL_SMTP_PORT=587
 QONVO_EMAIL_SMTP_USER=emailapikey
-QONVO_EMAIL_SMTP_PASSWORD=<the Send Mail token>
+QONVO_EMAIL_SMTP_PASSWORD=<the Send Mail token, without the "Zoho-enczapikey " prefix>
 QONVO_EMAIL_SMTP_STARTTLS=true
 ```
 
 The username is the literal string `emailapikey`; the token goes in the password
-field. Check the host against ZeptoMail's own setup screen, which shows the
-region-correct value.
+field.
+
+**[live]** ZeptoMail shows the same secret twice under different names. *Send
+Mail token* carries a `Zoho-enczapikey ` prefix and is for the HTTP API;
+*Password 1* is the same string without it and is what SMTP wants. Paste the
+prefix into `QONVO_EMAIL_SMTP_PASSWORD` and authentication fails with no useful
+error.
+
+Both 465 and 587 authenticate. **465 is the right choice on this host**: it is
+implicit SSL, and STARTTLS on 587 has been observed stalling here.
 
 `QONVO_EMAIL_PROVIDER=log` is the default and only writes to the log, which is
 how wiring is verified in dev without credentials. **Staging forces `log`** so it
@@ -415,22 +454,28 @@ forward-only addresses. For Polar:
 
 ## 7. Checklist
 
-- [ ] Cloudflare API token created, `./scripts/dns-email.sh check` runs clean
-- [ ] Cloudflare Email Routing **off**, if it was ever on
-- [ ] Zoho Mail Lite bought, 1 user `ali@qonvo.org`
+- [x] Cloudflare API token created, `./scripts/dns-email.sh check` runs clean
+- [x] Cloudflare Email Routing **off** (proved by there being no MX at all)
+- [x] Zoho Mail Lite selected, 1 user. **[live]** the seat is
+      `aliasghar.ezzy@qonvo.org`, which satisfies the person-not-a-role rule
+      just as well as `ali@` would
 - [ ] `hello@`, `support@`, `billing@`, `admin@` added as **aliases**, not users
-- [ ] Zoho MX records on the root, **DNS only** (grey cloud)
-- [ ] Zoho SPF + DKIM on the root
+- [x] Zoho MX records on the root, DNS only
+- [x] Zoho SPF (`include:zohomail.com`) + DKIM 2048-bit on the root
+- [ ] Zoho DKIM **status toggle** switched on
 - [ ] Inbound test mail arrives
 - [ ] Reply sent as `support@` and received correctly
-- [ ] ZeptoMail Mail Agent created, `send.qonvo.org` added and verified
-- [ ] ZeptoMail SPF + DKIM + **bounce CNAME** on the **`send`** subdomain
+- [x] ZeptoMail Mail Agent created, `send.qonvo.org` added and verified
+- [x] ZeptoMail DKIM + **bounce CNAME** on the **`send`** subdomain (no SPF -- see §4.1)
 - [ ] ZeptoMail Customer Validation form submitted (else 100/day)
-- [ ] DMARC `p=none` on both names, `rua` pointing somewhere you read
-- [ ] `QONVO_EMAIL_*` set, including `QONVO_EMAIL_REPLY_TO`, containers **force-recreated**
+- [x] DMARC `p=none` on both names
+- [x] `QONVO_EMAIL_*` set, including `QONVO_EMAIL_REPLY_TO`, containers force-recreated
+- [x] SMTP authenticates on 465 and 587; first message sent through the app's
+      own `send_email`, not a raw smtplib call
 - [ ] Password reset actually received
 - [ ] Reply to a Qonvo email lands in the Zoho inbox
 - [ ] mail-tester.com 9/10 or better
+- [ ] Zoho subscription **paid** before the 15-day trial ends
 - [ ] `billing@qonvo.org` used for Polar and every paid service
 
 ---
