@@ -618,20 +618,63 @@ not a pricing question, it is a "the feature does not work" question.
 | ElevenLabs Turbo/Flash v2.5 | $50 | $2.00 | **yes** |
 | MiniMax speech | $60–100 | $2.40–4.00 | limited |
 | ElevenLabs v3 / Multilingual v2 | $100 | $4.00 | **yes** |
-| **Uplift AI (Orator)** | **not published** | — | **yes, purpose-built** |
+| **Uplift AI** Starter ($5/mo) | ~$50 | ~$2.00 | **yes, purpose-built** |
+| **Uplift AI** Pro ($50/mo) | ~$33 | ~$1.33 | **yes, purpose-built** |
+| **Uplift AI** Growth ($300/mo) | ~$25 | ~$1.00 | **yes, purpose-built** |
 
-**Uplift AI is the one to evaluate first.** It is a Pakistani, Y Combinator
+**Uplift AI pricing, obtained 2026-09-06.** It is a Pakistani, Y Combinator
 backed voice startup ($3.5M seed, Indus Valley Capital) building specifically for
 Urdu, Sindhi and Balochi, with Punjabi and Saraiki announced. Khan Academy used
 its Orator model for 2,500 Urdu videos and Syngenta is building farmer-facing
-voice assistants on it. It claims "60x more cost-effective" than incumbents, but
-**pricing requires a sign-up** — the site returns 403 to automated fetches and
-the docs carry no rates. Ask them directly; a local vendor is also easier to pay
-from Pakistan than most of this table.
+voice assistants on it.
 
-The realistic comparison is **Uplift AI versus ElevenLabs versus OpenAI `tts-1`**
-for Urdu quality. ElevenLabs is 3–7x the price of `tts-1`; whether it is worth it
-is a listening test, not a spreadsheet.
+| Tier | $/month | Audio included | Voice replies/month | Effective per 100 |
+|---|---:|---:|---:|---:|
+| Free | $0 | 10 min | ~25 | — |
+| Starter | $5 | 100 min | ~250 | $2.00 |
+| Pro | $50 | 25 hours | ~3,750 | $1.33 |
+| Growth | $300 | 200 hours | ~30,000 | $1.00 |
+| Enterprise | custom/yr | on-prem, volume discounts | — | — |
+
+> Uplift bills **audio minutes**; this table bills **characters**. The bridge is
+> ~1,000 chars per minute of natural speech (150 wpm, ~6 chars/word), and a voice
+> reply is taken at 400 chars, as everywhere else in 6.3. Urdu script is more
+> compact per word than English, so the real figures are likely *better* than
+> shown. **Verify against a real sample before committing** — the whole
+> comparison rides on that conversion.
+
+**The "60x more cost-effective" claim is not against `tts-1`.** Measured on our
+own unit, Uplift is **more expensive than OpenAI `tts-1` at every tier**: $1.00
+per 100 replies at Growth against $0.60, and $2.00 at Starter. It comfortably
+beats ElevenLabs (Turbo $2.00, v3 $4.00), which is presumably the comparison the
+claim is drawn against.
+
+**The tier structure is the bigger problem at our scale.** It is a subscription
+with fixed monthly credits that *refresh* rather than roll over, so unused
+minutes are simply lost, and there is **nothing between $5 and $50**. Starter's
+100 minutes is about **one busy tenant**. Cross that line and the bill goes up
+10x for 15x headroom you will not use for months.
+
+That makes the economics scale-dependent in a way pay-as-you-go is not:
+
+| Voice-active tenants (200 replies each) | OpenAI `tts-1`, PAYG | Uplift Pro |
+|---:|---:|---:|
+| 5 | **$6/mo** | $50/mo |
+| 15 | **$18/mo** | $50/mo |
+| 18+ | $22/mo | **$50/mo, now competitive** |
+
+**Verdict: ship on OpenAI `tts-1`, evaluate Uplift on quality, not price.**
+`tts-1` is multilingual, pay-as-you-go, the cheapest Urdu-capable option in the
+table, and it solves the actual blocker (Orpheus cannot speak Urdu at all). Take
+Uplift's **free tier** and run a blind Urdu listening test against `tts-1`. Only
+switch if the quality gap is obvious *and* there are enough voice tenants to fill
+a tier, because below ~18 voice-active tenants you are buying minutes you will
+throw away.
+
+Two things worth asking them, since neither is on the pricing page: what happens
+on **overage** above a tier, and whether **pay-as-you-go** exists above Growth.
+If it does, most of this objection disappears. Contact is `founders@upliftai.org`,
+and a Pakistani vendor is materially easier to pay than most of this table (7.1).
 
 ### 6.4 Speech to text
 
@@ -833,7 +876,7 @@ more in complexity than it could possibly save.
 
 | Decision | Recommendation |
 |---|---|
-| **TTS (urgent)** | Orpheus English **cannot speak Urdu**. Evaluate Uplift AI first, then ElevenLabs and OpenAI `tts-1` |
+| **TTS (urgent)** | **Move to OpenAI `tts-1`.** Orpheus English cannot speak Urdu at all, and `tts-1` is multilingual, pay-as-you-go and the cheapest Urdu-capable option ($0.60/100 replies). Uplift AI is now priced (6.3) and is **dearer than `tts-1` at every tier**, with a $5→$50 cliff and credits that do not roll over. Trial its free tier for **quality**, revisit past ~18 voice tenants |
 | VPS | **Netcup VPS Lite 2 G12s, €6.65/mo.** Contabo wins on paper (~17% cheaper per core and per GB) but is widely reported as oversubscribed on I/O, which is the resource Postgres and pgvector actually need. Netcup takes PayPal, so it is buyable. **Contract auto-renews every 3 months unless cancelled a month before term end** (4.2) |
 | Backups | Contabo Auto Backup $4/mo now; extend `backup.sh` to push Postgres and WAHA offsite to R2 this month. The current offsite mirror covers MinIO, which is empty (4.3) |
 | Domain | Check `qonvo.com` first; otherwise `qonvo.org` at Cloudflare |
