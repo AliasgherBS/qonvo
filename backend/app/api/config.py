@@ -33,6 +33,10 @@ class ConfigUpdateRequest(BaseModel):
     llm_model: str | None = None
     payment_details: str | None = None
     voice_reply_mode: str | None = None  # "match" | "always" | "never"
+    # "match" or a language code (see app/agent/language.py). Script-aware:
+    # Urdu script and Roman Urdu are separate choices, because a model told
+    # "reply in Urdu" always picks the Arabic script.
+    reply_language_mode: str | None = None
     # Owner notification preference: alert the owner when the bot hands a
     # conversation off to a human. Stored in escalation_rules (no column).
     notify_on_handoff: bool | None = None
@@ -44,6 +48,18 @@ class ConfigUpdateRequest(BaseModel):
             return v
         if v not in {"match", "always", "never"}:
             raise ValueError("voice_reply_mode must be match, always, or never")
+        return v
+
+    @field_validator("reply_language_mode")
+    @classmethod
+    def _validate_reply_language_mode(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        from app.agent.language import SUPPORTED_REPLY_LANGUAGES, is_supported
+
+        if not is_supported(v):
+            allowed = ", ".join(lang.code for lang in SUPPORTED_REPLY_LANGUAGES)
+            raise ValueError(f"reply_language_mode must be one of: {allowed}")
         return v
 
     @field_validator("owner_alert_number")
@@ -81,6 +97,7 @@ class ConfigResponse(BaseModel):
     llm_model: str | None
     payment_details: str | None
     voice_reply_mode: str
+    reply_language_mode: str
     notify_on_handoff: bool
 
 
@@ -99,6 +116,9 @@ def _config_to_dict(row: TenantConfig) -> ConfigResponse:
         llm_model=row.llm_model,
         payment_details=row.payment_details,
         voice_reply_mode=((row.providers or {}).get("voice") or {}).get("mode") or "match",
+        reply_language_mode=(
+            ((row.providers or {}).get("language") or {}).get("mode") or "match"
+        ),
         # Default on: the owner is alerted on handoff unless they opt out.
         notify_on_handoff=(row.escalation_rules or {}).get("notify_on_handoff", True),
     )
@@ -108,6 +128,7 @@ def _apply_config_update(row: TenantConfig, body: ConfigUpdateRequest) -> None:
     data = body.model_dump(exclude_unset=True)
     # These two aren't columns — they live in JSON maps. Pop before the column loop.
     voice_mode = data.pop("voice_reply_mode", None)
+    language_mode = data.pop("reply_language_mode", None)
     notify_on_handoff = data.pop("notify_on_handoff", None)
     for field, value in data.items():
         setattr(row, field, value)
@@ -115,6 +136,10 @@ def _apply_config_update(row: TenantConfig, body: ConfigUpdateRequest) -> None:
         providers = dict(row.providers or {})
         providers["voice"] = {**(providers.get("voice") or {}), "mode": voice_mode}
         row.providers = providers  # reassign so SQLAlchemy flags the JSONB change
+    if language_mode is not None:
+        providers = dict(row.providers or {})
+        providers["language"] = {**(providers.get("language") or {}), "mode": language_mode}
+        row.providers = providers
     if notify_on_handoff is not None:
         # Merge into escalation_rules AFTER the column loop, so an escalation_rules
         # value in the same request doesn't clobber this key. Reassign for JSONB.

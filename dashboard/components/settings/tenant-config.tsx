@@ -16,6 +16,7 @@ import {
   type ConfigField,
   type LlmProvider,
   type TenantConfig,
+  REPLY_LANGUAGE_OPTIONS,
 } from "@/lib/api";
 import { useApi, useAuthToken } from "@/lib/use-api";
 import { cn } from "@/lib/utils";
@@ -30,6 +31,9 @@ import { cn } from "@/lib/utils";
  * same API payload keys, so no backend change was needed and nothing that
  * depends on those field names breaks.
  */
+
+/** Label for the free-text escape hatch. Never stored; see the select below. */
+const OTHER_PERSONA = "Other (write your own)";
 
 const PERSONA_OPTIONS = [
   "Friendly & warm",
@@ -262,6 +266,12 @@ function ConfigSkeleton() {
 /* ---------------------------------------------------------------- Behavior */
 
 export function PersonaSection({ form, setForm }: SectionProps) {
+  // A saved persona that is not one of the presets was written as free text, so
+  // the form opens in that mode rather than silently offering to overwrite it.
+  const [personaIsCustom, setPersonaIsCustom] = useState(
+    () => !!form.persona && !PERSONA_OPTIONS.includes(form.persona),
+  );
+
   return (
     <Card>
       <CardHeader>
@@ -277,15 +287,39 @@ export function PersonaSection({ form, setForm }: SectionProps) {
             <select
               id="persona"
               className={SELECT_CLASSES}
-              value={form.persona}
-              onChange={(e) => setForm({ ...form, persona: e.target.value })}
+              // "Other" is a UI state, not a stored value: choosing it clears the
+              // field so the textarea starts empty and whatever is typed is what
+              // gets saved. The column has always been free text; only the write
+              // path was locked to five presets, which is why every real
+              // personality had to be smuggled into Custom instructions.
+              value={personaIsCustom ? OTHER_PERSONA : form.persona}
+              onChange={(e) => {
+                const chosen = e.target.value;
+                if (chosen === OTHER_PERSONA) {
+                  setPersonaIsCustom(true);
+                  setForm({ ...form, persona: "" });
+                } else {
+                  setPersonaIsCustom(false);
+                  setForm({ ...form, persona: chosen });
+                }
+              }}
             >
-              {withCurrent(PERSONA_OPTIONS, form.persona).map((option) => (
+              {withCurrent(PERSONA_OPTIONS, personaIsCustom ? "" : form.persona).map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
               ))}
+              <option value={OTHER_PERSONA}>{OTHER_PERSONA}</option>
             </select>
+            {personaIsCustom ? (
+              <Textarea
+                id="persona-custom"
+                rows={3}
+                placeholder="Describe how your rep should come across. E.g. Warm but brisk, never pushy, always offers the nearest branch."
+                value={form.persona}
+                onChange={(e) => setForm({ ...form, persona: e.target.value })}
+              />
+            ) : null}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="tone">Tone</Label>
@@ -463,6 +497,26 @@ export function VoiceSection({ form, setForm }: SectionProps) {
             <option value="always">Always reply with voice</option>
             <option value="never">Text only</option>
           </select>
+        </div>
+
+        <div className="mt-5 space-y-1.5">
+          <Label htmlFor="reply-language-mode">Reply language</Label>
+          <select
+            id="reply-language-mode"
+            className={SELECT_CLASSES}
+            value={form.replyLanguageMode}
+            onChange={(e) => setForm({ ...form, replyLanguageMode: e.target.value })}
+          >
+            {REPLY_LANGUAGE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-muted-foreground">
+            Urdu and Roman Urdu are the same language in different scripts, so they are separate
+            choices here. Matching the customer matches their script too.
+          </p>
         </div>
       </CardContent>
     </Card>

@@ -22,6 +22,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.language import language_instruction
 from app.billing.service import get_subscription
 from app.billing.state import service_state
 from app.core import obs
@@ -35,6 +36,7 @@ from app.models.tenant import Tenant, TenantConfig
 from app.models.whatsapp import WhatsAppSession
 from app.providers.base import ChatMessage, LLMProvider, LLMResult, ToolCall
 from app.providers.registry import (
+    reply_language_mode,
     resolve_embedding,
     resolve_embedding_identity,
     resolve_llm,
@@ -295,6 +297,7 @@ def build_system_prompt(
     tone: str | None,
     custom_instructions: str | None,
     primary_language: str,
+    reply_language: str | None = None,
 ) -> str:
     """The stable half of the prompt — identical on every turn for a tenant.
 
@@ -314,9 +317,12 @@ def build_system_prompt(
     if custom_instructions:
         lines.append(custom_instructions)
     lines.append(GROUNDING_INSTRUCTION)
+    # A validated setting rather than a hope. Prose in the prompt was never
+    # deterministic about script, which is how an Urdu-script question came
+    # back in Roman Urdu.
+    lines.append(language_instruction(reply_language))
     lines.append(
-        "Always reply in the customer's language; default to "
-        f"{primary_language} only if the language is unclear."
+        f"If the customer's language is genuinely unclear, use {primary_language}."
     )
     lines.append(
         "Keep replies concise and conversational, in WhatsApp style — short "
@@ -1084,6 +1090,7 @@ async def _run_pipeline_inner(
             tone=tenant_config.tone if tenant_config else None,
             custom_instructions=tenant_config.custom_instructions if tenant_config else None,
             primary_language=tenant_config.primary_language if tenant_config else "en",
+            reply_language=reply_language_mode(tenant_config),
         )
         windowed = window_history(history_rows)
         images = await _images_as_data_uris(fragments, waha, bound)
