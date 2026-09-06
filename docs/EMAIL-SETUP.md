@@ -54,7 +54,51 @@ DNS and nothing else.
 
 **Prerequisite: already satisfied.** `qonvo.org` is live with DNS on Cloudflare,
 since the site is served through a Cloudflare Tunnel. Nothing here touches the
-tunnel or the existing A/CNAME records: email is MX and TXT, which are separate.
+tunnel or the existing CNAME records: email is MX and TXT, which are separate.
+
+### Who does what
+
+Vendor signup and payment are manual. Everything downstream of them is not.
+
+| Step | Who | How |
+|---|---|---|
+| Buy Zoho Mail Lite, sign up for ZeptoMail | **you** | card details, no API exists before an account does |
+| Create a Cloudflare API token | **you** | dashboard, 2 minutes, [§3.0](#30-the-cloudflare-token) |
+| Every DNS record | scripted | [`scripts/dns-email.sh`](../scripts/dns-email.sh) |
+| Zoho user + the four aliases | you, or API | 5 clicks, or the admin REST API if you want it reproducible |
+| ZeptoMail agent, domain, send token | you, or API | `POST /v1.1/domains`, `POST /v1.1/agents/{key}/apikeys` |
+| App wiring, recreate, tests | scripted | §4.2 |
+
+**The values that cannot be automated are the DKIM keys and the domain
+verification tokens.** They are generated per account, so no amount of tooling
+derives them: each vendor shows you a string and you hand it over. That is the
+one genuine serialisation point in this document.
+
+**There is no Zoho CLI.** Zoho's MCP server is for *mailbox* actions -- reading,
+sending, searching your inbox -- not admin provisioning, so it does not help
+with any of the setup here. Cloudflare does publish official MCP servers, but a
+scoped API token with `curl` is simpler for a handful of records and leaves a
+script behind rather than a conversation.
+
+### 3.0 The Cloudflare token
+
+`~/.cloudflared/cert.pem` is **not** enough. It holds only an Argo Tunnel token,
+and `cloudflared tunnel route dns` creates CNAMEs pointing at a tunnel -- it
+cannot write MX or TXT at all.
+
+Cloudflare dashboard -> **My Profile -> API Tokens -> Create Token -> "Edit zone
+DNS"**, scoped to `qonvo.org`. That template is `Zone:DNS:Edit`; add
+`Zone:Zone:Read` so the script can resolve the zone id.
+
+```bash
+export CLOUDFLARE_API_TOKEN=...
+./scripts/dns-email.sh check      # what exists, and what contradicts what
+```
+
+`check` reads only. It also refuses to be quiet about the two failures this
+document warns about: a second SPF record on one name, and MX pointing at more
+than one provider. The script writes **MX and TXT only** -- the tunnel CNAMEs
+that make the site reachable are outside what it can touch, by construction.
 
 ---
 
@@ -93,7 +137,8 @@ correspondence land somewhere findable for years.
 3. Create the single user `ali@qonvo.org`.
 4. Add `hello@`, `support@`, `billing@`, `admin@` as **aliases on that user**,
    not as new users. Zoho: *Users → the user → Mail Accounts → Email Aliases*.
-5. Add Zoho's **three MX records** to Cloudflare DNS on the root:
+5. Add Zoho's **three MX records** to Cloudflare DNS on the root.
+   `./scripts/dns-email.sh zoho-mx` writes exactly these:
 
    | Type | Name | Value | Priority |
    |---|---|---|---:|
@@ -101,8 +146,14 @@ correspondence land somewhere findable for years.
    | MX | `@` | `mx2.zoho.com` | 20 |
    | MX | `@` | `mx3.zoho.com` | 50 |
 
-   Set these to **DNS only** (grey cloud). Cloudflare cannot proxy mail.
-6. Add Zoho's SPF and DKIM on the root (§5).
+   Cloudflare never proxies MX, so there is no grey cloud to set.
+6. Add Zoho's SPF and DKIM on the root (§5):
+
+   ```bash
+   ./scripts/dns-email.sh spf  root "v=spf1 include:zoho.com ~all"
+   ./scripts/dns-email.sh dkim zmail._domainkey "<the value Zoho shows you>"
+   ./scripts/dns-email.sh txt  zoho-verification "<the token Zoho shows you>"
+   ```
 
 Test by mailing `hello@qonvo.org` from an outside account.
 
@@ -146,6 +197,7 @@ code change.
 ```bash
 QONVO_EMAIL_PROVIDER=smtp
 QONVO_EMAIL_FROM="Qonvo <noreply@send.qonvo.org>"
+QONVO_EMAIL_REPLY_TO=support@qonvo.org
 QONVO_EMAIL_SMTP_HOST=smtp.zeptomail.com
 QONVO_EMAIL_SMTP_PORT=587
 QONVO_EMAIL_SMTP_USER=emailapikey
@@ -171,11 +223,19 @@ Env files are read at container **create**, so `docker compose restart` keeps th
 old values and you will spend an hour debugging a change that never loaded.
 Then trigger a password reset and confirm it arrives.
 
-### 4.3 One thing worth fixing while you are here
+### 4.3 Replies
 
-`owner_alert` currently comes from `noreply@`, so an owner who hits reply on an
-escalation is answering a mailbox nobody reads. Set its **reply-to** to
-`support@qonvo.org`.
+`QONVO_EMAIL_REPLY_TO` above is doing real work. Everything Qonvo sends comes
+from `noreply@send.qonvo.org`, which has **no mailbox behind it** -- that is the
+point of a sending subdomain. Without a Reply-To, an owner who hits reply on an
+escalation is answering nothing: the mail leaves their client, and no one ever
+receives it.
+
+It applies to all four emails, not just `owner_alert`. A new owner replying to
+their welcome email with a question is lost exactly as thoroughly.
+
+Set it to `support@qonvo.org` -- an alias on the one Zoho mailbox, so it costs
+nothing and lands where you already read.
 
 ---
 
@@ -197,11 +257,19 @@ Two sending domains means two sets:
 | `qonvo.org` | Mail you type | Zoho |
 | `send.qonvo.org` | Mail the app sends | ZeptoMail |
 
-Start DMARC permissive on both:
+Start DMARC permissive on both. `./scripts/dns-email.sh dmarc` writes exactly
+these two:
 
 ```
 _dmarc.qonvo.org        TXT   v=DMARC1; p=none; rua=mailto:admin@qonvo.org
 _dmarc.send.qonvo.org   TXT   v=DMARC1; p=none; rua=mailto:admin@qonvo.org
+```
+
+ZeptoMail's own records go on the `send` name, never the root:
+
+```bash
+./scripts/dns-email.sh spf  send "v=spf1 include:zeptomail.zoho.com ~all"
+./scripts/dns-email.sh dkim zmail._domainkey.send "<the value ZeptoMail shows you>"
 ```
 
 Move to `p=quarantine` after a couple of weeks of clean reports, then `p=reject`.
@@ -231,6 +299,7 @@ forward-only addresses. For Polar:
 
 ## 7. Checklist
 
+- [ ] Cloudflare API token created, `./scripts/dns-email.sh check` runs clean
 - [ ] Cloudflare Email Routing **off**, if it was ever on
 - [ ] Zoho Mail Lite bought, 1 user `ali@qonvo.org`
 - [ ] `hello@`, `support@`, `billing@`, `admin@` added as **aliases**, not users
@@ -241,9 +310,9 @@ forward-only addresses. For Polar:
 - [ ] ZeptoMail Mail Agent created, `send.qonvo.org` added and verified
 - [ ] ZeptoMail SPF + DKIM on the **`send`** subdomain
 - [ ] DMARC `p=none` on both names, `rua` pointing somewhere you read
-- [ ] `QONVO_EMAIL_*` set, containers **force-recreated**
+- [ ] `QONVO_EMAIL_*` set, including `QONVO_EMAIL_REPLY_TO`, containers **force-recreated**
 - [ ] Password reset actually received
-- [ ] `owner_alert` reply-to set to `support@`
+- [ ] Reply to a Qonvo email lands in the Zoho inbox
 - [ ] mail-tester.com 9/10 or better
 - [ ] `billing@qonvo.org` used for Polar and every paid service
 

@@ -46,3 +46,100 @@ async def test_send_email_log_transport_returns_true(monkeypatch):
     # Default 'log' provider must never touch the network and always succeed.
     monkeypatch.setattr(E.settings, "email_provider", "log")
     assert await E.send_email("x@example.com", "Subj", "text body", html="<p>hi</p>") is True
+
+
+# --- Reply-To ------------------------------------------------------------------ #
+# Every Qonvo email is sent from a no-reply address on a sending subdomain that
+# has no mailbox behind it. Without Reply-To, an owner who hits reply to an
+# escalation is answering nothing: the mail leaves, and nobody receives it.
+# docs/EMAIL-SETUP.md §4.3.
+
+
+class _FakeSMTP:
+    """Captures the message instead of sending it."""
+
+    sent: list[object] = []
+
+    def __init__(self, host, port, timeout=None):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def starttls(self):
+        pass
+
+    def login(self, user, password):
+        pass
+
+    def send_message(self, msg):
+        type(self).sent.append(msg)
+
+
+def _smtp_capture(monkeypatch):
+    _FakeSMTP.sent = []
+    monkeypatch.setattr(E.settings, "email_provider", "smtp")
+    monkeypatch.setattr(E.settings, "email_smtp_host", "smtp.example.com")
+    monkeypatch.setattr(E.settings, "email_smtp_port", 587)
+    monkeypatch.setattr(E.settings, "email_smtp_user", None)
+    monkeypatch.setattr(E.smtplib, "SMTP", _FakeSMTP)
+    return _FakeSMTP
+
+
+async def test_smtp_sets_reply_to_from_settings(monkeypatch):
+    cap = _smtp_capture(monkeypatch)
+    monkeypatch.setattr(E.settings, "email_reply_to", "support@qonvo.org")
+
+    assert await E.send_email("owner@example.com", "Escalation", "body") is True
+    assert cap.sent[0]["Reply-To"] == "support@qonvo.org"
+
+
+async def test_smtp_omits_reply_to_when_unset(monkeypatch):
+    """An empty Reply-To header is worse than none: some clients honour it and
+    the reply goes nowhere at all."""
+    cap = _smtp_capture(monkeypatch)
+    monkeypatch.setattr(E.settings, "email_reply_to", None)
+
+    assert await E.send_email("owner@example.com", "Escalation", "body") is True
+    assert cap.sent[0]["Reply-To"] is None
+
+
+async def test_explicit_reply_to_beats_the_setting(monkeypatch):
+    cap = _smtp_capture(monkeypatch)
+    monkeypatch.setattr(E.settings, "email_reply_to", "support@qonvo.org")
+
+    await E.send_email("owner@example.com", "S", "b", reply_to="billing@qonvo.org")
+    assert cap.sent[0]["Reply-To"] == "billing@qonvo.org"
+
+
+async def test_resend_payload_carries_reply_to(monkeypatch):
+    captured: dict = {}
+
+    class _Resp:
+        def raise_for_status(self):
+            pass
+
+    class _FakeClient:
+        def __init__(self, timeout=None):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def post(self, url, headers=None, json=None):
+            captured.update(json or {})
+            return _Resp()
+
+    monkeypatch.setattr(E.settings, "email_provider", "resend")
+    monkeypatch.setattr(E.settings, "email_resend_api_key", "re_test")
+    monkeypatch.setattr(E.settings, "email_reply_to", "support@qonvo.org")
+    monkeypatch.setattr(E.httpx, "AsyncClient", _FakeClient)
+
+    assert await E.send_email("owner@example.com", "S", "b") is True
+    assert captured["reply_to"] == "support@qonvo.org"
