@@ -26,31 +26,51 @@ from app.models.tenant import TenantUser, User
 from app.services import email_templates as templates
 
 
-async def send_email(to: str, subject: str, body: str, html: str | None = None) -> bool:
+async def send_email(
+    to: str,
+    subject: str,
+    body: str,
+    html: str | None = None,
+    reply_to: str | None = None,
+) -> bool:
     """Send one email via the configured transport. Returns True on success.
 
     ``body`` is the plain-text part (always sent); ``html`` is an optional branded
     HTML alternative (multipart/alternative). Clients that can render HTML show it;
     the rest fall back to the text.
+
+    ``reply_to`` defaults to ``QONVO_EMAIL_REPLY_TO``. Every email Qonvo sends
+    comes from a no-reply address on a sending subdomain with no mailbox behind
+    it, so without this a reply is silently discarded: the sender sees it leave,
+    and nobody ever receives it.
     """
     provider = (settings.email_provider or "log").lower()
+    reply_to = reply_to or settings.email_reply_to
     try:
         if provider == "resend" and settings.email_resend_api_key:
-            return await _send_resend(to, subject, body, html)
+            return await _send_resend(to, subject, body, html, reply_to)
         if provider == "smtp" and settings.email_smtp_host:
-            return await asyncio.to_thread(_send_smtp, to, subject, body, html)
+            return await asyncio.to_thread(_send_smtp, to, subject, body, html, reply_to)
         # Default/dev: log transport — proves the wiring without external creds.
-        logger.bind(to=to).info(f"[email:log] {subject}\n{body}")
+        logger.bind(to=to).info(f"[email:log] {subject} (reply-to: {reply_to or '-'})\n{body}")
         return True
     except Exception as exc:  # noqa: BLE001 — alert delivery must never raise
         logger.warning(f"email send failed ({provider}): {exc}")
         return False
 
 
-async def _send_resend(to: str, subject: str, body: str, html: str | None = None) -> bool:
+async def _send_resend(
+    to: str,
+    subject: str,
+    body: str,
+    html: str | None = None,
+    reply_to: str | None = None,
+) -> bool:
     payload: dict = {"from": settings.email_from, "to": [to], "subject": subject, "text": body}
     if html:
         payload["html"] = html
+    if reply_to:
+        payload["reply_to"] = reply_to
     async with httpx.AsyncClient(timeout=15) as client:
         resp = await client.post(
             "https://api.resend.com/emails",
@@ -61,11 +81,19 @@ async def _send_resend(to: str, subject: str, body: str, html: str | None = None
     return True
 
 
-def _send_smtp(to: str, subject: str, body: str, html: str | None = None) -> bool:
+def _send_smtp(
+    to: str,
+    subject: str,
+    body: str,
+    html: str | None = None,
+    reply_to: str | None = None,
+) -> bool:
     msg = EmailMessage()
     msg["From"] = settings.email_from
     msg["To"] = to
     msg["Subject"] = subject
+    if reply_to:
+        msg["Reply-To"] = reply_to
     msg.set_content(body)
     if html:
         msg.add_alternative(html, subtype="html")

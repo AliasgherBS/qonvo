@@ -195,6 +195,11 @@ class Settings(BaseSettings):
     # Transport: "log" (dev — just logs), "resend" (HTTP API), or "smtp".
     email_provider: str = "log"
     email_from: str = "Qonvo <alerts@qonvo.local>"
+    #: Where a reply should go. ``email_from`` is a no-reply sender on a sending
+    #: subdomain that has no mailbox behind it, so without this every reply to a
+    #: Qonvo email is delivered nowhere and nobody is told. Set it to a monitored
+    #: address (docs/EMAIL-SETUP.md §4.3).
+    email_reply_to: str | None = None
     email_resend_api_key: str | None = None
     email_smtp_host: str | None = None
     email_smtp_port: int = 587

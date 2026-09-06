@@ -334,14 +334,35 @@ $1.35/month for half the lock-in and is the better of the two if you commit at
 all. Best of the three: **run monthly at $9.00 until the load test exists.**
 $1.80/month is cheap optionality.
 
-**And §7.2 points the same way.** Contabo takes PayPal, which is exactly the
-send-only mode a Pakistani account has. Netcup leans SEPA with German KYC, so it
-may not be buyable at all. Better value *and* easier to buy is not a close call.
+**Then the tiebreaker moved.** Two things settled it for Netcup instead:
 
-Netcup keeps two genuine edges, neither decisive here: a faster port (750 Mbps
-against 300 Mbit/s) and cleaner storage growth (Local Block Storage to 4 TB,
-versus Contabo's one-way upgrade and manual repartition). If disk I/O or
-throughput ever becomes the measured bottleneck, that is when to revisit.
+- **Contabo's delivered performance does not match its spec sheet.** The
+  consistent operator report is oversubscribed nodes, slow disk I/O and thin
+  support. Price per core is meaningless if the cores are contended, and Postgres
+  plus pgvector is exactly the workload that suffers. The table above prices
+  advertised capacity; it cannot price what actually arrives.
+- **Netcup takes PayPal**, so §7.2's original worry does not apply. Cards
+  (Visa/Mastercard/Amex) work too. Expect a verification step on the first order
+  (below), not a rejection.
+
+Netcup also carries the faster port (750 Mbps against 300 Mbit/s) and cleaner
+storage growth (Local Block Storage to 4 TB, against Contabo's one-way upgrade
+and manual repartition). **Netcup VPS Lite 2 G12s at €6.65 is the buy**, and the
+~$1.80/month it costs against Contabo's larger box is worth paying for hardware
+that behaves.
+
+#### Two things to know before ordering
+
+**The contract auto-renews.** Minimum term and billing period are both 3 months,
+and it renews for another 3 unless cancelled **at least one month before the term
+ends**. So on a 3-month contract the cancellation window closes at the end of
+month 2. This is not cancel-anytime; diary the date on the day you order.
+
+**First order triggers prepayment or KYC.** After the first order Netcup asks you
+to either prepay or verify identity, and its risk system decides which. Manual
+KYC means uploading a government ID and sometimes a proof of address. You get
+**14 days** to complete it. Budget for the delay rather than ordering the evening
+before you need the box.
 
 One more distinction the earlier table blurred: **VPS Lite is shared cores, RS is
 dedicated.** Both sit on the same EPYC 9645 hardware; only the guarantee differs.
@@ -420,23 +441,34 @@ Two different jobs get conflated under "email", and they are bought separately.
 A mailbox cannot send bulk transactional mail without wrecking its reputation,
 and a transactional API cannot receive anything. You need one of each.
 
-#### The cheapest stack that actually works: $0/month
+#### What we are buying: about $1/month
 
 | Job | Choice | Cost |
 |---|---|---:|
-| Receive on `@qonvo.org` | **Cloudflare Email Routing** | **$0** |
-| Reply as `@qonvo.org` | Gmail *Send mail as* over the provider's SMTP | $0 |
-| Send transactional | **Brevo** 300/day, or **Resend** 3,000/month | $0 |
+| Mailbox, aliases, receive and reply | **Zoho Mail Lite**, 1 user | **$1/mo** yearly |
+| Send the app's four transactional mails | **ZeptoMail** | 10,000 free, then **$2.50/10,000** |
+| DNS | Cloudflare | $0 |
 
-Cloudflare Email Routing is free with **200 addresses and 200 destinations per
-domain**, no message-count limit, plus a catch-all. It forwards into the Gmail
-you already use. It is **forward-only** — it cannot send — which is why replies
-go out through Gmail's *Send mail as* pointed at an SMTP relay. Brevo hands you
-free SMTP credentials that serve as that relay and as the app's transactional
-sender, so one free account covers both.
+**Why not the $0 option.** Cloudflare Email Routing is free and good, but it only
+*forwards*: no mailbox, no storage, and it cannot send, so replying as `support@`
+needs a relay bolted on. It is also either/or with a real mailbox, since **MX
+points at exactly one provider**. For a traditional SaaS setup with real
+addresses, $1/month buys receive, store, send and reply in one place.
 
-That is genuinely $0/month on top of the domain, and it is enough until you are
-sending thousands of mails a day or want an inbox that is not your personal one.
+**Why ZeptoMail and not Brevo.** Brevo's free tier is 300/day forever against
+ZeptoMail's one-off 10,000, which reads more generous until you find it **stamps
+the Brevo logo on every email**. Removing it needs Starter plus an add-on, about
+**$20/month**. ZeptoMail is pay-as-you-go with no branding, and at Qonvo's volume
+costs roughly $2.50 every six months. It also **refuses promotional mail by
+design**, which enforces the transactional/marketing reputation split below at
+the vendor level instead of by discipline.
+
+**Known risk, worth recording.** Operators running ZeptoMail for years report
+that some Zoho sending IPs get blacklisted and Zoho does not auto-retry from a
+clean one. Most report good delivery. If it disappoints, **Amazon SES at $0.10
+per 1,000** is cheaper still and the best regarded of the affordable options; the
+cost is a sandbox you must exit. Because app mail lives on `send.qonvo.org`, that
+swap never touches the mailbox.
 
 #### What each tier costs when you outgrow free
 
@@ -444,12 +476,13 @@ sending thousands of mails a day or want an inbox that is not your personal one.
 |---|---|---:|
 | Cloudflare Email Routing | Forwarding only, no mailbox | **$0** |
 | Zoho Mail Free | Real mailbox, 5 users, 5 GB, **webmail only, no IMAP/POP**, and no longer offered to new signups in every region | $0 |
-| **Zoho Mail Lite** | Real mailbox with IMAP/POP, 5 GB | **$1/user/mo** billed yearly, $1.25 monthly |
+| **Zoho Mail Lite** *(chosen)* | Real mailbox with IMAP/POP, 5 GB, unlimited aliases | **$1/user/mo** billed yearly |
+| **ZeptoMail** *(chosen)* | Transactional only, no branding, pay-as-you-go | 10,000 free, then **$2.50/10,000** |
 | Migadu Micro | Unlimited domains, mailboxes and aliases; limits are on daily volume | $19/yr |
 | Purelymail | Unlimited domains and accounts, 10 GB | from $49/yr |
 | Google Workspace | The default nobody gets fired for | $7/user/mo |
 | Microsoft 365 Business Basic | Same, with Office | $6/user/mo |
-| Brevo | Transactional API + SMTP, **300/day (~9,000/mo)** free, marketing too | $0 |
+| Brevo | Transactional + marketing, 300/day free, **but its logo on every email**; ~$20/mo to remove | $0 |
 | Resend | Transactional API, 3,000/mo but **capped at 100/day**, 3 domains | $0 |
 | Resend Pro | 50,000/mo, no daily cap, 10 domains | $20/mo, $0.90 per extra 1,000 |
 | Amazon SES | Cheapest at scale, most setup | **$0.10 per 1,000** |
@@ -597,20 +630,63 @@ not a pricing question, it is a "the feature does not work" question.
 | ElevenLabs Turbo/Flash v2.5 | $50 | $2.00 | **yes** |
 | MiniMax speech | $60–100 | $2.40–4.00 | limited |
 | ElevenLabs v3 / Multilingual v2 | $100 | $4.00 | **yes** |
-| **Uplift AI (Orator)** | **not published** | — | **yes, purpose-built** |
+| **Uplift AI** Starter ($5/mo) | ~$50 | ~$2.00 | **yes, purpose-built** |
+| **Uplift AI** Pro ($50/mo) | ~$33 | ~$1.33 | **yes, purpose-built** |
+| **Uplift AI** Growth ($300/mo) | ~$25 | ~$1.00 | **yes, purpose-built** |
 
-**Uplift AI is the one to evaluate first.** It is a Pakistani, Y Combinator
+**Uplift AI pricing, obtained 2026-09-06.** It is a Pakistani, Y Combinator
 backed voice startup ($3.5M seed, Indus Valley Capital) building specifically for
 Urdu, Sindhi and Balochi, with Punjabi and Saraiki announced. Khan Academy used
 its Orator model for 2,500 Urdu videos and Syngenta is building farmer-facing
-voice assistants on it. It claims "60x more cost-effective" than incumbents, but
-**pricing requires a sign-up** — the site returns 403 to automated fetches and
-the docs carry no rates. Ask them directly; a local vendor is also easier to pay
-from Pakistan than most of this table.
+voice assistants on it.
 
-The realistic comparison is **Uplift AI versus ElevenLabs versus OpenAI `tts-1`**
-for Urdu quality. ElevenLabs is 3–7x the price of `tts-1`; whether it is worth it
-is a listening test, not a spreadsheet.
+| Tier | $/month | Audio included | Voice replies/month | Effective per 100 |
+|---|---:|---:|---:|---:|
+| Free | $0 | 10 min | ~25 | — |
+| Starter | $5 | 100 min | ~250 | $2.00 |
+| Pro | $50 | 25 hours | ~3,750 | $1.33 |
+| Growth | $300 | 200 hours | ~30,000 | $1.00 |
+| Enterprise | custom/yr | on-prem, volume discounts | — | — |
+
+> Uplift bills **audio minutes**; this table bills **characters**. The bridge is
+> ~1,000 chars per minute of natural speech (150 wpm, ~6 chars/word), and a voice
+> reply is taken at 400 chars, as everywhere else in 6.3. Urdu script is more
+> compact per word than English, so the real figures are likely *better* than
+> shown. **Verify against a real sample before committing** — the whole
+> comparison rides on that conversion.
+
+**The "60x more cost-effective" claim is not against `tts-1`.** Measured on our
+own unit, Uplift is **more expensive than OpenAI `tts-1` at every tier**: $1.00
+per 100 replies at Growth against $0.60, and $2.00 at Starter. It comfortably
+beats ElevenLabs (Turbo $2.00, v3 $4.00), which is presumably the comparison the
+claim is drawn against.
+
+**The tier structure is the bigger problem at our scale.** It is a subscription
+with fixed monthly credits that *refresh* rather than roll over, so unused
+minutes are simply lost, and there is **nothing between $5 and $50**. Starter's
+100 minutes is about **one busy tenant**. Cross that line and the bill goes up
+10x for 15x headroom you will not use for months.
+
+That makes the economics scale-dependent in a way pay-as-you-go is not:
+
+| Voice-active tenants (200 replies each) | OpenAI `tts-1`, PAYG | Uplift Pro |
+|---:|---:|---:|
+| 5 | **$6/mo** | $50/mo |
+| 15 | **$18/mo** | $50/mo |
+| 18+ | $22/mo | **$50/mo, now competitive** |
+
+**Verdict: ship on OpenAI `tts-1`, evaluate Uplift on quality, not price.**
+`tts-1` is multilingual, pay-as-you-go, the cheapest Urdu-capable option in the
+table, and it solves the actual blocker (Orpheus cannot speak Urdu at all). Take
+Uplift's **free tier** and run a blind Urdu listening test against `tts-1`. Only
+switch if the quality gap is obvious *and* there are enough voice tenants to fill
+a tier, because below ~18 voice-active tenants you are buying minutes you will
+throw away.
+
+Two things worth asking them, since neither is on the pricing page: what happens
+on **overage** above a tier, and whether **pay-as-you-go** exists above Growth.
+If it does, most of this objection disappears. Contact is `founders@upliftai.org`,
+and a Pakistani vendor is materially easier to pay than most of this table (7.1).
 
 ### 6.4 Speech to text
 
@@ -693,7 +769,7 @@ and PKR transfer — basic VPS, but no currency problem at all.
 | Provider | Buying from Pakistan |
 |---|---|
 | **Contabo** | **Easiest.** Card **and PayPal**, and PayPal's send-only mode is exactly what you have. No crypto |
-| **Netcup** | Best value, but German KYC and SEPA-leaning payment. Confirm before relying on it |
+| **Netcup** | **Buyable. Takes PayPal** and Visa/Mastercard/Amex. First order triggers prepay-or-KYC (ID upload, 14 days to complete), which is a delay, not a blocker |
 | **Hetzner** | **Highest risk.** ID verification is strict and opaque for non-EU customers, with Pakistani users specifically reporting rejections and no clear appeal (`cda-review@hetzner.com` is the escalation) |
 
 **Revised recommendation: start on Contabo.** Netcup's dedicated cores are the
@@ -765,7 +841,7 @@ the disk they are protecting.
 | Domain (.org at cost, amortised) | $0.71 |
 | Offsite backup (optional, recommended) | ~$4 |
 | WAHA | **$0** — everything moved into the free Core in 2026.6.1, no session limit |
-| Email (Cloudflare Routing + Brevo free tier) | **$0** — see 5.1; $1/mo if you want a real mailbox |
+| Email (Zoho Mail Lite + ZeptoMail) | **~$1** — see 5.1 |
 | Monitoring (self-hosted) | $0 |
 | **Fixed total** | **~$12/month** |
 | AI, per tenant | +$0.49 text-only floor / +$1.64 current / +$2.70 Urdu-capable voice |
@@ -812,8 +888,8 @@ more in complexity than it could possibly save.
 
 | Decision | Recommendation |
 |---|---|
-| **TTS (urgent)** | Orpheus English **cannot speak Urdu**. Evaluate Uplift AI first, then ElevenLabs and OpenAI `tts-1` |
-| VPS | **Contabo Cloud VPS 6, monthly at $9.00.** Best value per core and per GB, and the easiest to buy from Pakistan (4.2, 7.2). Skip Cloud VPS 4: 100 GB is under the floor. Do **not** prepay 24 months before a load test exists. Netcup VPS Lite 2 at €6.65 is the fallback if Contabo disappoints on I/O |
+| **TTS (urgent)** | **Move to OpenAI `tts-1`.** Orpheus English cannot speak Urdu at all, and `tts-1` is multilingual, pay-as-you-go and the cheapest Urdu-capable option ($0.60/100 replies). Uplift AI is now priced (6.3) and is **dearer than `tts-1` at every tier**, with a $5→$50 cliff and credits that do not roll over. Trial its free tier for **quality**, revisit past ~18 voice tenants |
+| VPS | **Netcup VPS Lite 2 G12s, €6.65/mo.** Contabo wins on paper (~17% cheaper per core and per GB) but is widely reported as oversubscribed on I/O, which is the resource Postgres and pgvector actually need. Netcup takes PayPal, so it is buyable. **Contract auto-renews every 3 months unless cancelled a month before term end** (4.2) |
 | Backups | Contabo Auto Backup $4/mo now; extend `backup.sh` to push Postgres and WAHA offsite to R2 this month. The current offsite mirror covers MinIO, which is empty (4.3) |
 | Domain | Check `qonvo.com` first; otherwise `qonvo.org` at Cloudflare |
 | LLM | Any cheap-tier model works; pick on reliability. $1.48/tenant separates cheapest from Claude Haiku |
@@ -823,7 +899,7 @@ more in complexity than it could possibly save.
 | Database | Self-hosted; get backups offsite this month |
 | Price table | Correct Gemini to $0.15/$1.25 |
 | Payments in | **Answered: Polar lists Pakistan as a supported payout country**, via Stripe Connect Express. Paddle does not block Pakistan either. Confirm the receiving method before building on it |
-| Email | Cloudflare Email Routing + Brevo, $0. Add Zoho Mail Lite at $1/user/mo only when a forwarded address is refused or you want a non-personal inbox |
+| Email | **Zoho Mail Lite $1/mo** (one user, role addresses as free aliases) + **ZeptoMail** for app mail (10,000 free, then $2.50/10,000). Not Brevo: its free tier brands every email. Fallback if deliverability disappoints is Amazon SES (5.1) |
 | Load test | Do one before promising concurrency |
 | **Cloudflare Containers** | **Evaluated and rejected** (4.1). 10-20x the VPS cost, 20 GB ceiling against 160 GB needed, and all disk is ephemeral, which loses Postgres and every WAHA session on sleep |
 
