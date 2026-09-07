@@ -189,6 +189,66 @@ async def overview(
     }
 
 
+@router.get("/usage/fleet")
+async def fleet_usage(
+    claims: TokenClaims = Depends(require_admin),
+    db: AsyncSession = Depends(get_system_db),
+) -> list[dict]:
+    """Every tenant's meters, worst first.
+
+    This is the screen that catches a runaway tenant before the invoice does,
+    which only works if the ordering does the noticing. Sorted by ``worst_state``
+    and then by the highest single ratio, so the tenant most likely to be a
+    problem is at the top without anyone having to scan.
+
+    Uses the same ``tenant_usage`` the owner's own page uses. Deliberately N+1
+    rather than one clever aggregate: a second implementation of these numbers
+    is exactly what §4.3 warns against, and the operator's copy would be the one
+    that drifted. Fleet size is small, and when it is not, the fix is a cache
+    over this call rather than a different query.
+    """
+    from app.services.usage import tenant_usage
+
+    tenant_ids = (await db.execute(select(Tenant.id, Tenant.name))).all()
+    rows = []
+    for tenant_id, name in tenant_ids:
+        usage = await tenant_usage(db, tenant_id)
+        row = usage.as_dict()
+        row["tenant_name"] = name
+        rows.append(row)
+
+    severity = {"over": 0, "near": 1, "ok": 2}
+    rows.sort(
+        key=lambda r: (
+            severity.get(r["worst_state"], 3),
+            -max(
+                m["ratio"]
+                for m in (
+                    r["messages"],
+                    r["voice_minutes"],
+                    r["seats"],
+                    r["knowledge_sources"],
+                    r["knowledge_chars"],
+                    r["knowledge_upload_mb"],
+                )
+            ),
+        )
+    )
+    return rows
+
+
+@router.get("/tenants/{tenant_id}/usage")
+async def tenant_usage_detail(
+    tenant_id: UUID,
+    claims: TokenClaims = Depends(require_admin),
+    db: AsyncSession = Depends(get_system_db),
+) -> dict:
+    """One tenant's meters, identical to what its owner sees."""
+    from app.services.usage import tenant_usage
+
+    return (await tenant_usage(db, tenant_id)).as_dict()
+
+
 @router.get("/tenants")
 async def list_tenants(
     claims: TokenClaims = Depends(require_admin),

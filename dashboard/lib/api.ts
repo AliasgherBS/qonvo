@@ -846,6 +846,87 @@ function mapActivation(dto: ActivationDto): Activation {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Usage against entitlement (owner + admin read the same shape)
+// ---------------------------------------------------------------------------
+
+export interface UsageMeter {
+  used: number;
+  allowed: number;
+  remaining: number;
+  ratio: number;
+  /** Decided by the backend, deliberately. A component comparing ratio to 0.8
+      itself would be a second place the threshold lives. */
+  state: "ok" | "near" | "over";
+}
+
+export interface TenantUsage {
+  tenantId: string;
+  tenantName?: string;
+  plan: string;
+  periodStart: string;
+  periodEnd: string;
+  messages: UsageMeter;
+  voiceMinutes: UsageMeter;
+  seats: UsageMeter;
+  knowledgeSources: UsageMeter;
+  knowledgeChars: UsageMeter;
+  knowledgeUploadMb: UsageMeter;
+  trialDaysLeft: number | null;
+  repActive: boolean;
+  /** The most severe meter, so a fleet list can sort by it. */
+  worstState: "ok" | "near" | "over";
+}
+
+interface TenantUsageDto {
+  tenant_id: string;
+  tenant_name?: string;
+  plan: string;
+  period_start: string;
+  period_end: string;
+  messages: UsageMeter;
+  voice_minutes: UsageMeter;
+  seats: UsageMeter;
+  knowledge_sources: UsageMeter;
+  knowledge_chars: UsageMeter;
+  knowledge_upload_mb: UsageMeter;
+  trial_days_left: number | null;
+  rep_active: boolean;
+  worst_state: "ok" | "near" | "over";
+}
+
+function mapUsage(dto: TenantUsageDto): TenantUsage {
+  return {
+    tenantId: dto.tenant_id,
+    tenantName: dto.tenant_name,
+    plan: dto.plan,
+    periodStart: dto.period_start,
+    periodEnd: dto.period_end,
+    messages: dto.messages,
+    voiceMinutes: dto.voice_minutes,
+    seats: dto.seats,
+    knowledgeSources: dto.knowledge_sources,
+    knowledgeChars: dto.knowledge_chars,
+    knowledgeUploadMb: dto.knowledge_upload_mb,
+    trialDaysLeft: dto.trial_days_left,
+    repActive: dto.rep_active,
+    worstState: dto.worst_state,
+  };
+}
+
+export const usage = {
+  /** The owner's own tenant. */
+  mine: (opts: CallOpts = {}) =>
+    apiFetch<TenantUsageDto>("/api/billing/usage", opts).then(mapUsage),
+};
+
+export const adminFleetUsage = {
+  list: (opts: CallOpts = {}) =>
+    apiFetch<TenantUsageDto[]>("/api/admin/usage/fleet", opts).then((r) => r.map(mapUsage)),
+  forTenant: (tenantId: string, opts: CallOpts = {}) =>
+    apiFetch<TenantUsageDto>(`/api/admin/tenants/${tenantId}/usage`, opts).then(mapUsage),
+};
+
 export const activation = {
   get: (opts: CallOpts = {}) =>
     apiFetch<ActivationDto>("/api/activation", opts).then(mapActivation),

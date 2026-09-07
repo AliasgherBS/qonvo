@@ -165,7 +165,7 @@ async def ingest_knowledge_source(ctx: dict[str, Any], source_id: str, tenant_id
     (parses, chunks, embeds). Sets source.status ready/error accordingly.
     """
     from app.agent.ingestion import extract_text, fetch_url_text, ingest_source
-    from app.api.knowledge_limits import check_room_for
+    from app.api.knowledge_limits import check_room_for, source_chars
     from app.core.limits import LimitExceeded
     from app.models.knowledge import KnowledgeSource
     from app.models.tenant import TenantConfig
@@ -203,7 +203,9 @@ async def ingest_knowledge_source(ctx: dict[str, Any], source_id: str, tenant_id
                     db,
                     UUID(tenant_id),
                     added_chars=len(text),
-                    replacing_chars=len(source.content or ""),
+                    # The chunks about to be replaced. A re-ingest of the same
+                    # document must not be charged twice.
+                    replacing_chars=await source_chars(db, source.id),
                 )
             except LimitExceeded as err:
                 # A refused ingest is a visible error on the source rather than
