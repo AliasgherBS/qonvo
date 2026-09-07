@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.storage import purge_source_files, source_dir
 from app.api.deps import get_arq, get_db, require_tenant
-from app.api.knowledge_limits import as_http_detail, check_room_for, usage_for
+from app.api.knowledge_limits import as_http_detail, check_room_for, source_chars, usage_for
 from app.core.limits import MAX_TEXT_ENTRY_CHARS, MAX_UPLOAD_BYTES, LimitExceeded, exceeded
 from app.models.enums import KnowledgeSourceType
 from app.models.knowledge import KnowledgeSource
@@ -191,10 +191,11 @@ async def update_source(
                 db,
                 tenant_id,
                 added_chars=len(body.content),
-                # What this edit removes. Without it, shrinking a source while
-                # already at the cap would be refused for exceeding a total the
-                # edit itself reduces.
-                replacing_chars=len(row.content or ""),
+                # What this edit removes: the chunks this source currently
+                # occupies, which re-ingestion will delete and rebuild. Not
+                # len(row.content), which is NULL for anything uploaded or
+                # fetched and would credit nothing.
+                replacing_chars=await source_chars(db, row.id),
             )
         except LimitExceeded as err:
             raise HTTPException(

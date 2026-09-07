@@ -22,10 +22,10 @@ from app.core.limits import (
     entitlement,
     exceeded,
 )
-from app.models.knowledge import KnowledgeSource
+from app.models.knowledge import KnowledgeChunk, KnowledgeSource
 from app.models.tenant import TenantConfig
 
-__all__ = ["KnowledgeUsage", "check_room_for", "usage_for"]
+__all__ = ["KnowledgeUsage", "check_room_for", "source_chars", "usage_for"]
 
 #: Fallbacks for a tenant whose entitlements predate these keys. The trial
 #: figures, so a missing entitlement is restrictive-but-usable rather than
@@ -88,18 +88,46 @@ class KnowledgeUsage:
         }
 
 
+async def source_chars(db: AsyncSession, source_id: uuid.UUID) -> int:
+    """Characters this one source currently occupies, as chunks.
+
+    Needed so an edit is charged only its delta. Measured from chunks for the
+    same reason the total is: for an uploaded file, ``sources.content`` is NULL
+    and the text only exists as chunks.
+    """
+    return int(
+        (
+            await db.execute(
+                select(
+                    func.coalesce(func.sum(func.length(KnowledgeChunk.content)), 0)
+                ).where(KnowledgeChunk.source_id == source_id)
+            )
+        ).scalar_one()
+        or 0
+    )
+
+
 async def usage_for(db: AsyncSession, tenant_id: uuid.UUID) -> KnowledgeUsage:
     """Count what this tenant currently holds, against what its plan allows.
 
-    Characters are summed from stored content. A source still being fetched
-    contributes nothing yet, which is why the worker re-checks after it has the
-    text rather than relying on this number alone.
+    Characters come from ``knowledge_chunks``, not ``knowledge_sources.content``.
+    That distinction is not pedantic: for an uploaded file or a fetched URL,
+    ``content`` is NULL and the text exists only as chunks, so summing the
+    source column reported **zero** for a tenant with a real knowledge base.
+    Found by reading the live fleet endpoint, which showed 2 sources and 0
+    characters against 7,775 characters genuinely stored.
+
+    Chunks are also the honest measure of what this cap protects: they are the
+    rows in pgvector, and chunking overlap means they slightly exceed the source
+    text, so the cap binds on what is stored rather than on what was submitted.
+
+    A source still being fetched contributes nothing yet, which is why the
+    worker re-checks once it has the text.
     """
     counted = (
         await db.execute(
             select(
                 func.count(KnowledgeSource.id),
-                func.coalesce(func.sum(func.length(func.coalesce(KnowledgeSource.content, ""))), 0),
                 # Upload size is written into meta at upload time rather than
                 # stat()-ing the volume: the API and the worker are different
                 # containers, and a number that depends on which one is asking
@@ -116,6 +144,14 @@ async def usage_for(db: AsyncSession, tenant_id: uuid.UUID) -> KnowledgeUsage:
         )
     ).one()
 
+    chars = (
+        await db.execute(
+            select(func.coalesce(func.sum(func.length(KnowledgeChunk.content)), 0)).where(
+                KnowledgeChunk.tenant_id == tenant_id
+            )
+        )
+    ).scalar_one()
+
     entitlements = (
         await db.execute(
             select(TenantConfig.entitlements).where(TenantConfig.tenant_id == tenant_id)
@@ -124,8 +160,8 @@ async def usage_for(db: AsyncSession, tenant_id: uuid.UUID) -> KnowledgeUsage:
 
     return KnowledgeUsage(
         sources=int(counted[0] or 0),
-        chars=int(counted[1] or 0),
-        upload_bytes=int(counted[2] or 0),
+        chars=int(chars or 0),
+        upload_bytes=int(counted[1] or 0),
         max_sources=entitlement(entitlements, KNOWLEDGE_SOURCES_KEY, DEFAULT_MAX_SOURCES),
         max_chars=entitlement(entitlements, KNOWLEDGE_CHARS_KEY, DEFAULT_MAX_CHARS),
         max_upload_bytes=entitlement(

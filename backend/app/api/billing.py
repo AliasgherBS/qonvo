@@ -64,6 +64,22 @@ class CheckoutResponse(BaseModel):
     instructions: str | None
 
 
+@router.get("/usage")
+async def billing_usage(
+    tenant_id: UUID = Depends(require_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Every meter for this tenant.
+
+    Reads ``services.usage.tenant_usage``, which is also what the admin console
+    reads. That is the point of §4.3: one computation, so an owner and an
+    operator looking at the same tenant cannot be shown different numbers.
+    """
+    from app.services.usage import tenant_usage
+
+    return (await tenant_usage(db, tenant_id)).as_dict()
+
+
 @router.get("", response_model=BillingStatus)
 async def billing_status(
     tenant_id: UUID = Depends(require_tenant),
