@@ -62,6 +62,21 @@ class BillingEvent:
     #: before it there is no ``subscriptions`` row, so the provider's own ids
     #: match nothing and the tenant is unresolvable without this.
     tenant_id: str | None = None
+    #: What the customer was actually charged, in minor units, as reported by
+    #: the provider. Not a price: prices live with the merchant of record and
+    #: never in this repo. This is a fact about a payment that already happened,
+    #: which is a different thing, and it is what lets a confirmation email say
+    #: something true without the provider's number being duplicated anywhere.
+    amount_cents: int | None = None
+    currency: str | None = None
+    #: The provider's own invoice reference. Quoted so a customer can match our
+    #: email to the receipt the provider issued, never so we can issue one: the
+    #: merchant of record is the seller and the invoice is theirs.
+    invoice_number: str | None = None
+    #: Why this payment happened. ``subscription_create`` is a new plan;
+    #: a cycle is a renewal, and telling someone monthly that their card worked
+    #: is noise the provider's own receipt already covers.
+    billing_reason: str | None = None
     current_period_end: datetime | None = None
 
 
