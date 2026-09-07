@@ -27,8 +27,70 @@ const PUBLIC_PREFIXES = [
 // Matched exactly, not by prefix — "/" as a prefix would make the whole app public.
 const PUBLIC_EXACT = ["/"];
 
+/**
+ * Query parameters that are credentials and must never persist in a URL.
+ *
+ * Polar appends `customer_session_token` to whatever `success_url` it is given,
+ * so a paying customer lands on `/billing?customer_session_token=polar_cst_...`
+ * with a live bearer token in the address bar. From there it leaks into browser
+ * history, the `Referer` header of every outbound link, any analytics that
+ * records the path, and our own access logs.
+ *
+ * That token is scoped to one customer's billing portal and expires, so this is
+ * not catastrophic. It is still a credential in a URL, which should never be
+ * true, and we do not need it: portal sessions are minted on demand from the
+ * API instead.
+ */
+const ALWAYS_SENSITIVE = [
+  "customer_session_token",
+  "customer_session",
+  "session_token",
+  "access_token",
+  "id_token",
+  "api_key",
+  "apikey",
+  "secret",
+];
+
+/**
+ * `token` is the awkward one, and stripping it blindly breaks the product.
+ *
+ * Our own password-reset and team-invite emails link to
+ * `/reset-password?token=...` and `/accept-invite?token=...`, and both pages
+ * read it with `useSearchParams`. Removing it there would silently break every
+ * reset and every invitation, which is a worse outcome than the leak this is
+ * trying to prevent.
+ *
+ * Those two are single-use by design: a reset token carries a fingerprint of
+ * the current password hash, so using it invalidates it. A URL that stops
+ * working once used is a different risk from one that keeps working.
+ */
+const TOKEN_PARAM_ALLOWED_ON = ["/reset-password", "/accept-invite"];
+
+function sensitiveParams(pathname: string): string[] {
+  const allowed = TOKEN_PARAM_ALLOWED_ON.some((prefix) => pathname.startsWith(prefix));
+  return allowed ? ALWAYS_SENSITIVE : [...ALWAYS_SENSITIVE, "token"];
+}
+
 export default auth((req) => {
   const { nextUrl } = req;
+
+  // Before anything else, including the auth check: a credential in a URL
+  // should not survive one request, and an auth redirect would otherwise carry
+  // the whole query string with it to /login.
+  //
+  // /api/auth is exempt because Auth.js round-trips its own parameters through
+  // these routes and rewriting them mid-flow breaks sign-in.
+  if (!nextUrl.pathname.startsWith("/api/auth")) {
+    const leaked = sensitiveParams(nextUrl.pathname).filter((key) =>
+      nextUrl.searchParams.has(key),
+    );
+    if (leaked.length > 0) {
+      const clean = new URL(nextUrl.href);
+      for (const key of leaked) clean.searchParams.delete(key);
+      return NextResponse.redirect(clean);
+    }
+  }
 
   // Browsers refuse to persist cookies for the `0.0.0.0` host (it's a bind-all
   // address, not a real hostname), so a session cookie set here is silently
