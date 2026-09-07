@@ -34,7 +34,12 @@ from typing import Any
 import httpx
 
 from app.billing.plans import plan_for_price_id
-from app.billing.providers.base import BillingEvent, Checkout, InvalidWebhookSignature
+from app.billing.providers.base import (
+    BillingEvent,
+    Checkout,
+    InvalidWebhookSignature,
+    Payment,
+)
 from app.core.config import settings
 from app.core.logging import logger
 
@@ -144,6 +149,89 @@ class PolarProvider:
             if mapped == plan_key:
                 return price_id
         return None
+
+    # --- the customer's own billing page ----------------------------------- #
+    def portal_url(self, *, customer_id: str, return_url: str | None = None) -> str | None:
+        """Mint an authenticated link to Polar's customer portal.
+
+        Cancelling, changing a card, switching plan and downloading an invoice
+        all happen there rather than here, and that is the point of selling
+        through a merchant of record: Polar owns the subscription and the tax
+        document. Rebuilding a cancel button on our side would give two systems
+        an opinion about the same subscription, and ours would be the one that
+        was wrong after a dunning retry.
+
+        The session token expires, so this is minted per click rather than
+        stored.
+        """
+        if not settings.polar_access_token:
+            return None
+        try:
+            response = httpx.post(
+                f"{self._api}/customer-sessions/",
+                headers={"Authorization": f"Bearer {settings.polar_access_token}"},
+                json={"customer_id": customer_id},
+                timeout=20,
+            )
+            response.raise_for_status()
+            return response.json().get("customer_portal_url")
+        except Exception as exc:  # noqa: BLE001 - the page must still render
+            logger.warning(f"polar portal session failed: {exc}")
+            return None
+
+    def payments(self, *, customer_id: str, limit: int = 20) -> list[Payment]:
+        """This customer's orders, newest first, from Polar's own ledger.
+
+        Read from Polar rather than from our billing_events, deliberately.
+        Their record knows about refunds and about anything charged before our
+        webhook existed; ours only knows what it was told. A payment history
+        that disagrees with the card statement is worse than none.
+        """
+        if not settings.polar_access_token:
+            return []
+        try:
+            response = httpx.get(
+                f"{self._api}/orders/",
+                headers={"Authorization": f"Bearer {settings.polar_access_token}"},
+                params={"customer_id": customer_id, "limit": limit},
+                timeout=20,
+            )
+            response.raise_for_status()
+            items = response.json().get("items") or []
+        except Exception as exc:  # noqa: BLE001 - the page must still render
+            logger.warning(f"polar order history failed: {exc}")
+            return []
+
+        out: list[Payment] = []
+        for order in items:
+            when = _parse_time(order.get("created_at"))
+            if when is None:
+                continue
+            refunded = _int_or_none(order.get("refunded_amount")) or 0
+            out.append(
+                Payment(
+                    date=when,
+                    amount_cents=_int_or_none(order.get("total_amount")) or 0,
+                    currency=_str_or_none(order.get("currency")) or "usd",
+                    # A refund is the fact a customer most wants confirmed, and
+                    # Polar reports it as an amount on the order rather than as
+                    # a status, so it would otherwise read as an ordinary paid
+                    # line.
+                    status="refunded" if refunded else (order.get("status") or "unknown"),
+                    invoice_number=_str_or_none(order.get("invoice_number")),
+                    description=((order.get("product") or {}).get("name")),
+                    # Only when Polar has actually generated the document.
+                    # is_invoice_generated is False until someone asks for it,
+                    # and a link to a PDF that does not exist is worse than no
+                    # link.
+                    invoice_url=(
+                        f"{self._api}/orders/{order['id']}/invoice"
+                        if order.get("is_invoice_generated")
+                        else None
+                    ),
+                )
+            )
+        return out
 
     # --- webhooks ---------------------------------------------------------- #
     @staticmethod

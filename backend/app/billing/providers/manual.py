@@ -9,7 +9,12 @@ second implementation rather than a hypothetical one.
 
 from __future__ import annotations
 
-from app.billing.providers.base import BillingEvent, Checkout, InvalidWebhookSignature
+from app.billing.providers.base import (
+    BillingEvent,
+    Checkout,
+    InvalidWebhookSignature,
+    Payment,
+)
 
 
 class ManualProvider:
@@ -22,6 +27,16 @@ class ManualProvider:
                 f"{plan_key} plan and we'll switch it over for you."
             )
         )
+
+    def portal_url(self, *, customer_id: str, return_url: str | None = None) -> str | None:
+        # No gateway, so no portal. The billing page falls back to telling the
+        # owner to message us, which is what "manual" means.
+        return None
+
+    def payments(self, *, customer_id: str, limit: int = 20) -> list[Payment]:
+        # An operator recorded the plan by hand; there is no payment ledger to
+        # read. Returning [] rather than raising lets the page render the rest.
+        return []
 
     def parse_event(self, headers: dict[str, str], raw: bytes) -> BillingEvent | None:
         # There is no signing scheme, so nothing arriving here can be shown to

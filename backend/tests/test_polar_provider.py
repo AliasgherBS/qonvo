@@ -452,3 +452,143 @@ def test_checkout_sends_the_tenant_id_so_there_is_something_to_echo():
 
     source = inspect.getsource(PolarProvider.checkout)
     assert '"tenant_id": tenant_id' in source
+
+
+# --- payment history and the portal ---------------------------------------------- #
+# Read from the provider rather than from our own billing_events, deliberately:
+# their ledger knows about refunds and about anything charged before our webhook
+# existed. A history that disagrees with the customer's card statement is worse
+# than no history.
+def _orders_response(items):
+    class _R:
+        status_code = 200
+
+        def raise_for_status(self):
+            pass
+
+        @staticmethod
+        def json():
+            return {"items": items}
+
+    return _R()
+
+
+def test_a_refund_is_surfaced_as_a_status_not_hidden_in_the_amount(monkeypatch):
+    """Polar reports a refund as an amount on the order, not as a status, so a
+    refunded line would otherwise read as an ordinary paid one. It is the fact a
+    customer most wants confirmed."""
+    monkeypatch.setattr(settings, "polar_access_token", "polar_oat_x")
+    import app.billing.providers.polar as module
+
+    monkeypatch.setattr(
+        module.httpx,
+        "get",
+        lambda *a, **k: _orders_response(
+            [
+                {
+                    "id": "o1",
+                    "created_at": "2026-09-07T00:00:00Z",
+                    "total_amount": 1800,
+                    "currency": "usd",
+                    "status": "paid",
+                    "refunded_amount": 1800,
+                    "invoice_number": "INV-1",
+                }
+            ]
+        ),
+    )
+
+    [payment] = PolarProvider().payments(customer_id="cus_1")
+    assert payment.status == "refunded"
+    assert payment.amount_cents == 1800  # what was charged, unchanged
+
+
+def test_no_invoice_link_until_the_provider_has_generated_one(monkeypatch):
+    """is_invoice_generated stays False until someone asks for the document, and
+    a link to a PDF that does not exist is worse than a reference the customer
+    can quote. Observed on the real order: gen=False."""
+    monkeypatch.setattr(settings, "polar_access_token", "polar_oat_x")
+    import app.billing.providers.polar as module
+
+    monkeypatch.setattr(
+        module.httpx,
+        "get",
+        lambda *a, **k: _orders_response(
+            [
+                {
+                    "id": "o1",
+                    "created_at": "2026-09-07T00:00:00Z",
+                    "total_amount": 1800,
+                    "currency": "usd",
+                    "status": "paid",
+                    "invoice_number": "INV-1",
+                    "is_invoice_generated": False,
+                }
+            ]
+        ),
+    )
+
+    [payment] = PolarProvider().payments(customer_id="cus_1")
+    assert payment.invoice_url is None
+    assert payment.invoice_number == "INV-1"  # still quotable
+
+
+def test_history_survives_a_provider_outage(monkeypatch):
+    """The billing page has to render. Someone checking what they paid during an
+    outage should see a plan and meters, not a stack trace."""
+    monkeypatch.setattr(settings, "polar_access_token", "polar_oat_x")
+    import app.billing.providers.polar as module
+
+    def boom(*a, **k):
+        raise RuntimeError("polar is down")
+
+    monkeypatch.setattr(module.httpx, "get", boom)
+    monkeypatch.setattr(module.httpx, "post", boom)
+
+    assert PolarProvider().payments(customer_id="cus_1") == []
+    assert PolarProvider().portal_url(customer_id="cus_1") is None
+
+
+def test_neither_works_without_a_token_and_neither_raises(monkeypatch):
+    monkeypatch.setattr(settings, "polar_access_token", None)
+
+    assert PolarProvider().payments(customer_id="cus_1") == []
+    assert PolarProvider().portal_url(customer_id="cus_1") is None
+
+
+def test_an_order_with_an_unparseable_date_is_skipped_rather_than_crashing(monkeypatch):
+    monkeypatch.setattr(settings, "polar_access_token", "polar_oat_x")
+    import app.billing.providers.polar as module
+
+    monkeypatch.setattr(
+        module.httpx,
+        "get",
+        lambda *a, **k: _orders_response(
+            [
+                {"id": "bad", "created_at": "not a date", "total_amount": 1},
+                {"id": "ok", "created_at": "2026-09-07T00:00:00Z", "total_amount": 1800,
+                 "currency": "usd", "status": "paid"},
+            ]
+        ),
+    )
+
+    payments = PolarProvider().payments(customer_id="cus_1")
+    assert len(payments) == 1
+    assert payments[0].amount_cents == 1800
+
+
+def test_cancelling_is_the_providers_job_not_ours():
+    """The merchant of record owns the subscription. A cancel button of our own
+    would give two systems an opinion about the same subscription, and ours
+    would be the one that was wrong after a dunning retry.
+
+    Asserted against the router's registered paths rather than by grepping the
+    source. The first version of this grepped for "/cancel" and matched a
+    comment containing "past_due/canceled", which is the second time in this
+    session a source-text assertion has caught prose instead of code."""
+    from app.api.billing import router
+
+    paths = {route.path for route in router.routes}
+
+    assert not any("cancel" in path for path in paths), paths
+    assert "/api/billing/portal" in paths

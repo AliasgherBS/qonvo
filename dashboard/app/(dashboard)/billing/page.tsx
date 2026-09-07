@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PaymentHistory } from "@/components/billing/payment-history";
 import { UsageMeters } from "@/components/usage-meters";
 import { billing, usage as usageApi } from "@/lib/api";
 import { CONTACT } from "@/lib/contact";
@@ -129,6 +130,8 @@ export default function BillingPage() {
               ) : null}
             </CardContent>
           </Card>
+
+          <PaymentHistory />
 
           <Card>
             <CardHeader>

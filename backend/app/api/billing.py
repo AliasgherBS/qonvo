@@ -25,6 +25,7 @@ from app.billing.plans import PLANS
 from app.billing.providers.registry import resolve_billing_provider
 from app.billing.service import get_subscription
 from app.billing.state import service_state
+from app.models.billing import Subscription
 from app.models.tenant import Tenant, TenantConfig
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
@@ -62,6 +63,73 @@ class CheckoutRequest(BaseModel):
 class CheckoutResponse(BaseModel):
     url: str | None
     instructions: str | None
+
+
+@router.get("/payments")
+async def payment_history(
+    tenant_id: UUID = Depends(require_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> list[dict]:
+    """This tenant's payments, newest first.
+
+    Read from the provider rather than from our own ``billing_events``. Their
+    ledger is the authoritative one: it knows about refunds and about anything
+    charged before our webhook existed, and ours only knows what it was told.
+    A history that disagrees with the customer's card statement is worse than
+    no history.
+
+    Empty rather than an error when there is nothing to read, which is the
+    normal state for a tenant still on the trial.
+    """
+    customer_id = (
+        await db.execute(
+            select(Subscription.provider_customer_id).where(Subscription.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if not customer_id:
+        return []
+
+    payments = resolve_billing_provider().payments(customer_id=customer_id)
+    return [
+        {
+            "date": p.date.isoformat(),
+            "amount_cents": p.amount_cents,
+            "currency": p.currency,
+            "status": p.status,
+            "invoice_number": p.invoice_number,
+            "description": p.description,
+            "invoice_url": p.invoice_url,
+        }
+        for p in payments
+    ]
+
+
+@router.post("/portal")
+async def billing_portal(
+    tenant_id: UUID = Depends(require_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """A link to the provider's billing portal, minted fresh.
+
+    Cancelling, changing a card and downloading an invoice all live there. That
+    is not laziness: the merchant of record owns the subscription and issues the
+    tax document, so a cancel button of our own would give two systems an
+    opinion about the same subscription, and ours would be the one that was
+    wrong after a dunning retry.
+
+    POST rather than GET because it creates a session, and the token expires,
+    so it is minted per click rather than stored.
+    """
+    customer_id = (
+        await db.execute(
+            select(Subscription.provider_customer_id).where(Subscription.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if not customer_id:
+        return {"url": None, "reason": "no_subscription"}
+
+    url = resolve_billing_provider().portal_url(customer_id=customer_id)
+    return {"url": url, "reason": None if url else "unavailable"}
 
 
 @router.get("/usage")

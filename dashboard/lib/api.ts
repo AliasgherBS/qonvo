@@ -934,6 +934,57 @@ function mapUsage(dto: TenantUsageDto): TenantUsage {
   };
 }
 
+export interface PaymentRow {
+  date: string;
+  amountCents: number;
+  currency: string;
+  status: string;
+  invoiceNumber: string | null;
+  description: string | null;
+  invoiceUrl: string | null;
+}
+
+interface PaymentRowDto {
+  date: string;
+  amount_cents: number;
+  currency: string;
+  status: string;
+  invoice_number: string | null;
+  description: string | null;
+  invoice_url: string | null;
+}
+
+export const payments = {
+  /**
+   * Read from the payment provider, not from our own event ledger. Theirs knows
+   * about refunds and about anything charged before our webhook existed.
+   */
+  list: (opts: CallOpts = {}) =>
+    apiFetch<PaymentRowDto[]>("/api/billing/payments", opts).then((rows) =>
+      rows.map(
+        (d): PaymentRow => ({
+          date: d.date,
+          amountCents: d.amount_cents,
+          currency: d.currency,
+          status: d.status,
+          invoiceNumber: d.invoice_number,
+          description: d.description,
+          invoiceUrl: d.invoice_url,
+        }),
+      ),
+    ),
+
+  /**
+   * A fresh link into the provider's billing portal: cancel, change card,
+   * download invoices. POST because it mints a session, and the token expires.
+   */
+  portal: (opts: CallOpts = {}) =>
+    apiFetch<{ url: string | null; reason: string | null }>("/api/billing/portal", {
+      ...opts,
+      method: "POST",
+    }),
+};
+
 export const usage = {
   /** The owner's own tenant. */
   mine: (opts: CallOpts = {}) =>
