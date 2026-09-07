@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from app.billing.providers.base import BillingProvider
 from app.billing.providers.manual import ManualProvider
+from app.billing.providers.polar import PolarProvider
 from app.core.config import settings
 
 
@@ -17,6 +18,7 @@ class UnknownBillingProvider(RuntimeError):
 
 _PROVIDERS: dict[str, type] = {
     ManualProvider.key: ManualProvider,
+    PolarProvider.key: PolarProvider,
 }
 
 

@@ -219,6 +219,16 @@ class Settings(BaseSettings):
     # How long a past_due subscription keeps answering while the provider
     # retries the card. A failed payment must not silence a business same-day.
     billing_grace_days: int = 7
+    # --- Polar (spec §7) ---
+    # Sandbox and production are separate worlds: a production token does not
+    # work against the sandbox API and vice versa, which is a confusing 401
+    # rather than a helpful error.
+    polar_server: str = "sandbox"
+    polar_access_token: str | None = None
+    # Its own key rather than reusing billing_webhook_secret, so a second
+    # provider can be configured beside it without one clobbering the other.
+    # Falls back to billing_webhook_secret when unset.
+    polar_webhook_secret: str | None = None
     metrics_enabled: bool = True
 
     # --- Agent pipeline (DESIGN.md §5.4) ---
