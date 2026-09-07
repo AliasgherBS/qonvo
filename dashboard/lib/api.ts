@@ -796,15 +796,35 @@ export interface OnboardingStep {
   description: string;
   done: boolean;
   required: boolean;
+  /** Where to go to satisfy the step. Every item is a link. */
+  href: string;
 }
 
 export interface OnboardingStatus {
   steps: OnboardingStep[];
   complete: boolean;
+  /** Required steps only, so an optional item cannot make progress look worse. */
+  doneCount: number;
+  totalCount: number;
+}
+
+interface OnboardingStatusDto {
+  steps: OnboardingStep[];
+  complete: boolean;
+  done_count: number;
+  total_count: number;
 }
 
 export const onboarding = {
-  get: (opts: CallOpts = {}) => apiFetch<OnboardingStatus>("/api/onboarding", opts),
+  get: (opts: CallOpts = {}) =>
+    apiFetch<OnboardingStatusDto>("/api/onboarding", opts).then(
+      (d): OnboardingStatus => ({
+        steps: d.steps,
+        complete: d.complete,
+        doneCount: d.done_count,
+        totalCount: d.total_count,
+      }),
+    ),
 };
 
 // ---------------------------------------------------------------------------

@@ -21,6 +21,7 @@ import { usePathname } from "next/navigation";
 import { Logo } from "@/components/logo";
 import type { Role } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { HelpMenu } from "@/components/help-menu";
 
 /**
  * Grouped, not a flat list of nine.
@@ -103,7 +104,10 @@ export function Sidebar({ role }: { role: Role }) {
         )}
       </nav>
 
-      <p className="px-3 text-xs text-muted-foreground">Never miss a customer.</p>
+      <div className="space-y-2">
+        <HelpMenu />
+        <p className="px-3 text-xs text-muted-foreground">Never miss a customer.</p>
+      </div>
     </aside>
   );
 }
@@ -123,6 +127,10 @@ function NavLink({
     <Link
       href={href}
       aria-current={active ? "page" : undefined}
+      // The tour finds its targets by this, rather than by href. An attribute
+      // says "something points at me" in the diff; a selector living in another
+      // file goes stale silently the next time a route is renamed.
+      data-tour={`nav:${href}`}
       className={cn(
         "flex items-center gap-3 rounded-full px-3 py-2 text-sm font-semibold transition-colors",
         active ? "bg-primary/15 text-primary-strong" : "text-foreground hover:bg-surface-muted",

@@ -82,7 +82,7 @@ export function RepSwitch() {
   ].filter(Boolean) as { label: string; href: string }[];
 
   return (
-    <div className="mb-4 rounded-2xl border border-border bg-surface p-4">
+    <div data-tour="rep-switch" className="mb-4 rounded-2xl border border-border bg-surface p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           {state.repActive ? (
