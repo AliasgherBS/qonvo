@@ -25,6 +25,7 @@ from typing import Any
 __all__ = [
     "KNOWLEDGE_CHARS_KEY",
     "KNOWLEDGE_SOURCES_KEY",
+    "KNOWLEDGE_UPLOAD_BYTES_KEY",
     "MAX_CUSTOM_INSTRUCTIONS",
     "MAX_PAYMENT_DETAILS",
     "MAX_PERSONA",
@@ -49,16 +50,35 @@ MAX_PERSONA = 500
 MAX_PAYMENT_DETAILS = 1_000
 
 # --- Knowledge, charged at ingestion and stored ---------------------------- #
-#: A 10 MB PDF is already thousands of chunks. This is also the guard that
-#: stops one request holding a large file in memory in the API process.
-MAX_UPLOAD_BYTES = 10 * 1024 * 1024
+#: Deliberately conservative, and not for the reason the other caps are.
+#: A large document does not cost more to *answer* from, because retrieval only
+#: ever puts the relevant chunks in the prompt. What it does is block the
+#: ingestion queue: parsing and embedding a huge PDF is slow, single-threaded
+#: per source, and every other tenant's upload waits behind it. Five megabytes
+#: is already several hundred pages of text.
+#:
+#: It is also the bound on what one request holds in memory in the API process.
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 
 #: One pasted text entry, roughly twenty pages.
 MAX_TEXT_ENTRY_CHARS = 50_000
 
 #: Entitlement keys, so plans.py owns the per-plan figures.
+#:
+#: Three separate bounds, because they constrain three different resources and
+#: conflating them would price one of them wrongly:
+#:
+#: * ``knowledge_sources`` bounds the ingestion queue.
+#: * ``knowledge_chars`` bounds pgvector. Generous on purpose: retrieval means
+#:   only the relevant chunks reach a prompt, so a large corpus costs storage
+#:   and a one-off embedding, never a bigger bill per reply.
+#: * ``knowledge_upload_bytes`` bounds the disk volume. Raw uploads are kept
+#:   after ingestion, so the file and its chunks are both stored. Keeping the
+#:   original is what makes re-ingestion possible when chunking or the embedding
+#:   model changes, and this is the cap that stops that being unbounded.
 KNOWLEDGE_SOURCES_KEY = "knowledge_sources"
 KNOWLEDGE_CHARS_KEY = "knowledge_chars"
+KNOWLEDGE_UPLOAD_BYTES_KEY = "knowledge_upload_bytes"
 
 
 class LimitExceeded(ValueError):

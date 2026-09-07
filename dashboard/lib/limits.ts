@@ -25,4 +25,4 @@ export const MAX_PAYMENT_DETAILS = 1000;
 export const MAX_TEXT_ENTRY_CHARS = 50000;
 
 /** One uploaded file. Also the bound on what a single request holds in memory. */
-export const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;

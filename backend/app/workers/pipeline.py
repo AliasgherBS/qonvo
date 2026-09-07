@@ -23,6 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.language import language_instruction
+from app.agent.voice_allowance import VOICE_QUOTA_NOTICE, period_start, voice_allowance
 from app.billing.service import get_subscription
 from app.billing.state import service_state
 from app.core import obs
@@ -1181,6 +1182,38 @@ async def _run_pipeline_inner(
         reply_voice = should_reply_voice(
             voice_reply_mode(tenant_config), inbound_had_voice=inbound_had_voice
         )
+
+        # --- Gate: voice allowance (spec §1.5) ---
+        # Degrade, never fail. The reply still goes out; it goes out as text.
+        # Checked here rather than before the model call on purpose: the answer
+        # is worth the same either way, and refusing earlier would turn an
+        # exhausted voice allowance into a silent conversation.
+        voice_quota_note = ""
+        if reply_voice:
+            allowance = await voice_allowance(
+                db, tenant_uuid, now=now, tenant_config=tenant_config
+            )
+            if allowance.exhausted:
+                reply_voice = False
+                bound.info(
+                    f"voice paused: {allowance.used_minutes}/{allowance.allowed_minutes} min used"
+                )
+                # Said once per period, not once per message. Without the
+                # dedupe every voice note for the rest of the month carries an
+                # apology, which reads worse than the limit itself.
+                already_told = any(
+                    m.meta.get("auto_reply") == "voice_quota"
+                    and m.created_at is not None
+                    and m.created_at.date() >= period_start(now)
+                    for m in history_rows
+                )
+                if not already_told:
+                    voice_quota_note = f"\n\n{VOICE_QUOTA_NOTICE}"
+                    await _notify_voice_quota(bound, tenant_uuid, allowance)
+
+        if voice_quota_note:
+            reply_text = f"{reply_text}{voice_quota_note}"
+
         audio_b64 = (
             await _synthesize_reply(reply_text, tenant_config, bound) if reply_voice else None
         )
@@ -1364,6 +1397,43 @@ async def _refresh_summary_text(
         result.text.strip() or (prior_summary or ""),
         CallUsage(result.prompt_tokens, result.completion_tokens),
     )
+
+
+async def _notify_voice_quota(
+    bound: Any,
+    tenant_id: uuid.UUID,
+    allowance: Any,
+) -> None:
+    """Tell the owner their voice allowance ran out. Once per period.
+
+    In its own transaction, like the outage alert and for the same reason: this
+    runs inside the turn's session, and if the turn later rolls back the
+    notification would go with it. That trap has cost this codebase inbound
+    messages, usage rows and an outage alert already.
+
+    Best effort throughout. A missing notification must never cost a customer
+    their reply, which is the entire point of degrading rather than failing.
+    """
+    from app.models.enums import NotificationType
+    from app.services.notifications import notify
+
+    try:
+        async with tenant_session(tenant_id) as alert_db:
+            await notify(
+                alert_db,
+                tenant_id=tenant_id,
+                type=NotificationType.disconnect,
+                title="Voice replies are paused",
+                body=(
+                    f"Your rep has used its {allowance.allowed_minutes} voice minutes "
+                    "for this month, so it is answering by text until the plan renews. "
+                    "Nothing else has changed: customers still get replies, and voice "
+                    "notes they send are still understood. Upgrade for more voice."
+                ),
+                send_gateway=None,
+            )
+    except Exception as exc:  # noqa: BLE001 - never cost the customer a reply
+        bound.warning(f"could not raise voice-quota notification: {exc}")
 
 
 async def _handle_provider_outage(

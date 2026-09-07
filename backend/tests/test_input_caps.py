@@ -104,11 +104,12 @@ def test_one_pasted_entry_is_capped(model):
     assert f"{MAX_TEXT_ENTRY_CHARS:,}" in err.value.errors()[0]["msg"]
 
 
-def test_the_upload_cap_is_a_memory_bound_not_only_a_cost_one():
-    """`await file.read()` pulls the whole upload into the API process before
-    anything can object, so this number is what stands between one request and
-    the container."""
-    assert MAX_UPLOAD_BYTES == 10 * 1024 * 1024
+def test_the_upload_cap_is_about_the_queue_and_memory_not_the_bill():
+    """A large document does not cost more to answer from: retrieval only ever
+    puts the relevant chunks in a prompt. What it does is block the ingestion
+    queue behind one slow parse, and `file.read()` would hold it all in the API
+    process. Both reasons argue for a small number, unlike knowledge_chars."""
+    assert MAX_UPLOAD_BYTES == 5 * 1024 * 1024
 
 
 # --- per-plan allowances -------------------------------------------------------- #
