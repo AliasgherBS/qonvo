@@ -13,6 +13,22 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 
+class InvalidWebhookSignature(Exception):
+    """This delivery could not be authenticated.
+
+    Distinct from ``parse_event`` returning None, and the distinction is
+    operational rather than cosmetic. A provider sends more event types than we
+    act on, so "authentic but not interesting" is the common case and must
+    answer 200: a provider that keeps getting errors eventually disables the
+    endpoint, and then billing stops silently.
+
+    A bad signature has to stay loud, though. Answering 200 to it would make a
+    wrong signing secret look like a working integration in the provider's
+    delivery log, and nobody would find out until a customer paid and got
+    nothing.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class Checkout:
     """Where to send an owner who wants to upgrade.
@@ -53,12 +69,14 @@ class BillingProvider(Protocol):
         ...
 
     def parse_event(self, headers: dict[str, str], raw: bytes) -> BillingEvent | None:
-        """Verify and normalise a webhook, or None if it is not authentic.
+        """Verify and normalise a webhook.
 
-        Returning None rather than raising keeps signature schemes out of the
-        route: it answers 401 without knowing how anything is signed.
+        Returns None for an authentic delivery this adapter does not act on, and
+        raises ``InvalidWebhookSignature`` when it cannot be authenticated. The
+        route needs those to mean different things and still knows nothing about
+        how anything is signed.
         """
         ...
 
 
-__all__ = ["BillingEvent", "BillingProvider", "Checkout"]
+__all__ = ["BillingEvent", "BillingProvider", "Checkout", "InvalidWebhookSignature"]

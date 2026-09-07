@@ -34,7 +34,7 @@ from typing import Any
 import httpx
 
 from app.billing.plans import plan_for_price_id
-from app.billing.providers.base import BillingEvent, Checkout
+from app.billing.providers.base import BillingEvent, Checkout, InvalidWebhookSignature
 from app.core.config import settings
 from app.core.logging import logger
 
@@ -215,19 +215,25 @@ class PolarProvider:
 
     def parse_event(self, headers: dict[str, str], raw: bytes) -> BillingEvent | None:
         if not self._verify(headers, raw):
-            return None
+            raise InvalidWebhookSignature("polar webhook signature did not verify")
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
-            return None
+            # Signed by us and still unparseable means the payload format is
+            # wrong, which in practice means the endpoint was configured with
+            # Polar's Discord or Slack format instead of Raw. Worth a loud log,
+            # since it is authentic and completely unusable.
+            logger.warning("polar webhook verified but body is not JSON: check the format is Raw")
+            raise InvalidWebhookSignature("polar webhook body is not JSON") from None
 
         event_type = payload.get("type")
         if not isinstance(event_type, str):
             return None
         if event_type not in _STATUS_BY_EVENT and event_type not in _PASSTHROUGH_EVENTS:
-            # Polar sends more than we act on. Ignoring the rest is not an
-            # error, and returning None would make the route answer 401 to a
-            # perfectly authentic delivery.
+            # Polar sends far more than we act on, so this is the common case,
+            # not an edge one. It returns None rather than raising, and the
+            # route answers 200: an error here would let one extra ticked
+            # checkbox in the Polar dashboard get the endpoint disabled.
             logger.info(f"polar event ignored: {event_type}")
             return None
 

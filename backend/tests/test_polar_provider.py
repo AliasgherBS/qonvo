@@ -18,7 +18,7 @@ import json
 import time
 
 import pytest
-from app.billing.providers.base import BillingProvider
+from app.billing.providers.base import BillingProvider, InvalidWebhookSignature
 from app.billing.providers.polar import (
     TIMESTAMP_TOLERANCE_SECONDS,
     PolarProvider,
@@ -94,7 +94,8 @@ def test_a_wrong_secret_is_rejected(polar):
     body = _body("subscription.created")
     headers = _sign(b"not-the-secret", body)
 
-    assert polar.parse_event(headers, body) is None
+    with pytest.raises(InvalidWebhookSignature):
+        polar.parse_event(headers, body)
 
 
 def test_a_tampered_body_is_rejected(polar):
@@ -104,7 +105,8 @@ def test_a_tampered_body_is_rejected(polar):
     headers = _sign(RAW_SECRET.encode(), body)
 
     tampered = body.replace(b"subscription.created", b"subscription.revoked")
-    assert polar.parse_event(headers, tampered) is None
+    with pytest.raises(InvalidWebhookSignature):
+        polar.parse_event(headers, tampered)
 
 
 def test_an_old_delivery_is_rejected_even_with_a_valid_signature(polar):
@@ -113,7 +115,8 @@ def test_an_old_delivery_is_rejected_even_with_a_valid_signature(polar):
     body = _body("subscription.created")
     headers = _sign(RAW_SECRET.encode(), body, timestamp=old)
 
-    assert polar.parse_event(headers, body) is None
+    with pytest.raises(InvalidWebhookSignature):
+        polar.parse_event(headers, body)
 
 
 def test_a_future_timestamp_is_rejected_too(polar):
@@ -122,7 +125,8 @@ def test_a_future_timestamp_is_rejected_too(polar):
     body = _body("subscription.created")
     headers = _sign(RAW_SECRET.encode(), body, timestamp=future)
 
-    assert polar.parse_event(headers, body) is None
+    with pytest.raises(InvalidWebhookSignature):
+        polar.parse_event(headers, body)
 
 
 @pytest.mark.parametrize("missing", ["webhook-id", "webhook-timestamp", "webhook-signature"])
@@ -131,7 +135,8 @@ def test_a_missing_header_is_rejected(polar, missing):
     headers = _sign(RAW_SECRET.encode(), body)
     headers.pop(missing)
 
-    assert polar.parse_event(headers, body) is None
+    with pytest.raises(InvalidWebhookSignature):
+        polar.parse_event(headers, body)
 
 
 def test_no_configured_secret_means_nothing_is_authentic(monkeypatch):
@@ -143,7 +148,8 @@ def test_no_configured_secret_means_nothing_is_authentic(monkeypatch):
     body = _body("subscription.created")
     headers = _sign(RAW_SECRET.encode(), body)
 
-    assert PolarProvider().parse_event(headers, body) is None
+    with pytest.raises(InvalidWebhookSignature):
+        PolarProvider().parse_event(headers, body)
 
 
 def test_rotation_works_because_any_signature_may_match(polar):
@@ -162,14 +168,18 @@ def test_an_unknown_signature_version_is_ignored_not_trusted(polar):
     headers = _sign(RAW_SECRET.encode(), body)
     headers["webhook-signature"] = headers["webhook-signature"].replace("v1,", "v2,")
 
-    assert polar.parse_event(headers, body) is None
+    with pytest.raises(InvalidWebhookSignature):
+        polar.parse_event(headers, body)
 
 
 def test_malformed_json_with_a_valid_signature_is_still_rejected(polar):
+    """In practice this means the endpoint was configured with Polar's Discord
+    or Slack format instead of Raw: authentic, and completely unusable."""
     raw = b"{not json"
     headers = _sign(RAW_SECRET.encode(), raw)
 
-    assert polar.parse_event(headers, raw) is None
+    with pytest.raises(InvalidWebhookSignature):
+        polar.parse_event(headers, raw)
 
 
 # --- event mapping --------------------------------------------------------------- #
@@ -222,10 +232,12 @@ def test_a_payment_failure_asserts_no_plan(polar):
     assert event.plan_key is None
 
 
-def test_an_event_we_do_not_act_on_is_ignored_rather_than_refused(polar):
-    """Returning None makes the route answer 401, which would be wrong for an
-    authentic delivery we simply do not care about."""
+def test_an_event_we_do_not_act_on_returns_none_rather_than_raising(polar):
+    """None means "verified, not actionable", and the route answers 200 to it.
+    Raising here would let one extra ticked checkbox in the Polar dashboard get
+    the endpoint disabled for repeated errors."""
     body = _body("customer.created", id="cus_1")
+
     assert polar.parse_event(_sign(RAW_SECRET.encode(), body), body) is None
 
 

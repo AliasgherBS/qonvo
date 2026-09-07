@@ -9,7 +9,7 @@ second implementation rather than a hypothetical one.
 
 from __future__ import annotations
 
-from app.billing.providers.base import BillingEvent, Checkout
+from app.billing.providers.base import BillingEvent, Checkout, InvalidWebhookSignature
 
 
 class ManualProvider:
@@ -24,8 +24,10 @@ class ManualProvider:
         )
 
     def parse_event(self, headers: dict[str, str], raw: bytes) -> BillingEvent | None:
-        # Nothing signs manual events; the admin endpoint is the only way in.
-        return None
+        # There is no signing scheme, so nothing arriving here can be shown to
+        # be authentic. Raising rather than returning None is the honest answer:
+        # None now means "verified, not actionable", which this cannot claim.
+        raise InvalidWebhookSignature("the manual adapter accepts no webhooks")
 
 
 __all__ = ["ManualProvider"]
