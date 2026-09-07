@@ -517,10 +517,15 @@ function SourcesTable({
   if (!sources || sources.length === 0) {
     return (
       <div className="p-5">
+        {/* The most valuable empty state in the product: this is the screen
+            where a rep stops saying "I do not know" and starts being useful.
+            So it names what to upload rather than describing the feature.
+            "Add a manual entry above to start grounding replies" told an owner
+            what the page does, which they could already see. */}
         <EmptyState
           icon={<BookOpen className="h-5 w-5" />}
-          title="No knowledge sources yet"
-          description="Upload a document or add a manual entry above to start grounding replies."
+          title="Your rep does not know anything yet"
+          description="Until you add something here it will tell customers it cannot help. Start with whatever you get asked most: a price list, your opening hours, a returns or booking policy, or your website."
         />
       </div>
     );
