@@ -139,14 +139,29 @@ def test_it_names_what_they_had_before_so_the_change_is_legible():
     assert f"up from the trial's {trial:,}" in text
 
 
-def test_it_points_at_the_provider_for_the_receipt():
-    """The invoice is theirs. Saying so stops someone waiting for one from us,
-    and stops us looking like we forgot."""
+def test_it_does_not_narrate_the_payment_provider_at_the_customer():
+    """An earlier draft explained that the receipt would arrive separately from
+    Polar. It read as a company distancing itself from its own invoice, and it
+    was not reliably true either: Polar generates the invoice document only on
+    request, so a customer told to wait for one might wait forever.
+
+    Naming the plumbing is our problem to hide, not theirs to understand."""
     _, text, html = _rendered()
 
     for content in (text, html):
-        assert "Polar" in content
-        assert "receipt" in content.lower()
+        assert "Polar" not in content
+        assert "payment provider" not in content.lower()
+
+
+def test_it_points_at_the_billing_page_for_the_history():
+    """Somewhere to go, rather than something to wait for. The billing page has
+    the full history and the link into the provider's portal, so one
+    destination answers "where is my receipt" and "how do I cancel"."""
+    _, text, html = _rendered()
+
+    assert "https://qonvo.org/billing" in text
+    assert "https://qonvo.org/billing" in html
+    assert "payment history" in text.lower()
 
 
 def test_the_amount_is_quoted_from_the_event_not_from_a_price_list():

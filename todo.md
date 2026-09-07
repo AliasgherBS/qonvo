@@ -26,3 +26,15 @@
 13) look into domain, hosting (in terms of AI), uplift.ai for urdu and regional language (for cool paki demo)
 
 14) 
+
+
+-----------------------------------------------------------------------------------------------------------------------------------
+
+
+
+1) to verify that errors are handled gracefully from waha being unavaialble or any other service disruption, bot should be paused with an email sent or something of sorts making sure no destructive thing is happended, specially check for cases till when waha stays connected, if recoonect is needed, it should prompt the user for it, also if connection dies how should admin handle it, the pause, start, restart buttons, etc, like check every possible common possible cases we can think of, test it and make sure our sys is robust in that sense.
+
+2) a contnious learning approach, a harness maybe to learn with mistakes overtime, so we can market thsi angle too, that it evolves overtime
+2.1) knowledge gaps can be resolved by providing option to answer those question then and there so they are added as info into the knowledge so it can be referenced next time
+
+3) 

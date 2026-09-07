@@ -80,12 +80,50 @@ class BillingEvent:
     current_period_end: datetime | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class Payment:
+    """One line of payment history, normalised.
+
+    Read from the provider rather than from our own ledger. Their record is the
+    authoritative one: it knows about refunds, partial refunds and charges made
+    outside our webhook's lifetime, and ours only knows what it was told after
+    we wired the webhook up. Showing a customer a payment history that
+    disagrees with their card statement is worse than showing none.
+    """
+
+    date: datetime
+    amount_cents: int
+    currency: str
+    status: str
+    invoice_number: str | None = None
+    description: str | None = None
+    #: Where the provider will serve the invoice document, when it has one. The
+    #: merchant of record issues it, so this is a link and never something we
+    #: generate.
+    invoice_url: str | None = None
+
+
 @runtime_checkable
 class BillingProvider(Protocol):
     key: str
 
     def checkout(self, *, tenant_id: str, plan_key: str) -> Checkout:
         """Where to send an owner upgrading to ``plan_key``."""
+        ...
+
+    def portal_url(self, *, customer_id: str, return_url: str | None = None) -> str | None:
+        """An authenticated link to the provider's own billing portal.
+
+        None when the provider has no portal. Cancelling, changing a card and
+        downloading an invoice all live there deliberately: the merchant of
+        record owns the subscription lifecycle and the tax document, so
+        rebuilding those here would mean two systems believing different things
+        about the same subscription.
+        """
+        ...
+
+    def payments(self, *, customer_id: str, limit: int = 20) -> list[Payment]:
+        """Payment history for this customer, newest first. Empty when unknown."""
         ...
 
     def parse_event(self, headers: dict[str, str], raw: bytes) -> BillingEvent | None:
@@ -99,4 +137,10 @@ class BillingProvider(Protocol):
         ...
 
 
-__all__ = ["BillingEvent", "BillingProvider", "Checkout", "InvalidWebhookSignature"]
+__all__ = [
+    "BillingEvent",
+    "BillingProvider",
+    "Checkout",
+    "InvalidWebhookSignature",
+    "Payment",
+]

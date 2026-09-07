@@ -403,20 +403,28 @@ def plan_upgraded(
 ) -> tuple[str, str, str]:
     """Confirmation that a paid plan is now active.
 
-    Deliberately **not** a receipt. Qonvo sells through a merchant of record, so
-    the provider is the seller of record: it collects the tax, it issues the
-    invoice, and it emails its own confirmation with a portal link to download
-    both. Sending a second document for one sale would be wrong, not merely
-    redundant.
+    This is the confirmation a customer gets. It states what they were charged
+    and the invoice reference, then points at the billing page, where the full
+    history and the provider's own portal live.
 
-    What is missing from the provider's receipt is everything about the product.
-    It says a business paid $18; it cannot say their allowance just went from
-    300 messages to 5,000. That is what this is for, and it is why the numbers
-    come from the plan catalogue rather than being written here.
+    It deliberately does not narrate our payment provider at them. An earlier
+    draft explained that the receipt would arrive separately from Polar, which
+    read as a company distancing itself from its own invoice, and was not even
+    reliably true: Polar only generates the invoice document on request. Naming
+    the plumbing is our problem to hide, not the customer's to understand.
 
-    The amount is quoted only as a reference, from the figure the provider
-    reported for a payment that already happened. That is not the same as a
-    price living in this repo, and prices still do not.
+    It is still not itself a receipt. The merchant of record is the seller, it
+    collects the tax, and the invoice is legally theirs, which is why the
+    billing page links to their portal to download it rather than us issuing a
+    second document for one sale.
+
+    What their receipt cannot say is anything about the product: it says a
+    business paid $18, not that their allowance went from 300 messages to 5,000.
+    That is what this is for, and why the numbers come from the plan catalogue.
+
+    The amount is quoted from the figure the provider reported for a payment
+    that already happened. That is not a price living in this repo, and prices
+    still do not.
     """
     plan = PLANS.get(plan_key)
     entitlements = plan.entitlements if plan else {}
@@ -446,9 +454,7 @@ def plan_upgraded(
         + "".join(f"  - {label}: {detail}\n" for label, detail in whats_new)
         + (f"\nCharged: {charged}\n" if charged else "")
         + (f"Invoice: {invoice_number}\n" if invoice_number else "")
-        + "\nYour receipt and invoice come from Polar, our payment provider, in a "
-        "separate email. You can download them any time from the link in it.\n\n"
-        f"See your usage: {dashboard_url}/billing\n\n"
+        + f"\nYour plan, usage and full payment history: {dashboard_url}/billing\n\n"
         "If anything is unclear or you want a hand making the most of the extra "
         "room, just reply to this email. A person reads it.\n\n"
         "The Qonvo team"
@@ -462,11 +468,8 @@ def plan_upgraded(
         if invoice_number:
             bits.append(f"invoice <strong>{invoice_number}</strong>")
         reference = _volt_note(
-            "Your receipt",
-            ", ".join(bits)
-            + ". The receipt and invoice come from <strong>Polar</strong>, our payment "
-            "provider, in a separate email, and can be downloaded any time from the "
-            "link in it.",
+            "This payment",
+            ", ".join(bits) + ". Your full payment history is on your billing page.",
         )
 
     body = (
