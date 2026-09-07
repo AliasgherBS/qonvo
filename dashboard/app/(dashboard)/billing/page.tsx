@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ManagePlan } from "@/components/billing/manage-plan";
 import { PaymentHistory } from "@/components/billing/payment-history";
 import { UsageMeters } from "@/components/usage-meters";
 import { billing, usage as usageApi } from "@/lib/api";
@@ -122,12 +123,10 @@ export default function BillingPage() {
                   ))}
                 </dl>
               )}
-              {data.subscription?.currentPeriodEnd ? (
-                <p className="text-sm text-muted-foreground">
-                  {data.subscription.cancelAtPeriodEnd ? "Ends" : "Renews"} on{" "}
-                  {new Date(data.subscription.currentPeriodEnd).toLocaleDateString()}.
-                </p>
-              ) : null}
+              {/* Replaces a bare "Renews on <date>" line. Same fact, plus what
+                  happens next and a way to change it, which is the part a
+                  hosted provider portal cannot phrase in our words. */}
+              <ManagePlan status={data} onChanged={status.refetch} />
             </CardContent>
           </Card>
 

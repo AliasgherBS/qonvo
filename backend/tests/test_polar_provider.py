@@ -577,18 +577,108 @@ def test_an_order_with_an_unparseable_date_is_skipped_rather_than_crashing(monke
     assert payments[0].amount_cents == 1800
 
 
-def test_cancelling_is_the_providers_job_not_ours():
-    """The merchant of record owns the subscription. A cancel button of our own
-    would give two systems an opinion about the same subscription, and ours
-    would be the one that was wrong after a dunning retry.
+def test_cancelling_does_not_write_our_own_subscription_row():
+    """This assertion replaced a stricter one, and the change was deliberate.
 
-    Asserted against the router's registered paths rather than by grepping the
-    source. The first version of this grepped for "/cancel" and matched a
-    comment containing "past_due/canceled", which is the second time in this
-    session a source-text assertion has caught prose instead of code."""
+    It used to say we must have no cancel route at all, on the grounds that a
+    button of ours would give two systems an opinion about the same
+    subscription. That was overstated: calling the provider's API keeps them the
+    system of record and makes us a client, which is what every mature billing
+    UI does.
+
+    The invariant that actually prevents disagreement is narrower and is what is
+    asserted now. The cancel endpoint calls the provider and returns; it does
+    not touch the subscriptions table. The provider's webhook writes that, so a
+    failure at their end cannot leave us showing "cancelled" for a subscription
+    that is still billing."""
+    import inspect
+
+    from app.api import billing
+
+    for name in ("cancel_subscription", "resume_subscription"):
+        source = inspect.getsource(getattr(billing, name))
+        assert "set_cancellation" in source, name
+        # Reads the id, writes nothing.
+        assert "update(" not in source, name
+        assert "db.add(" not in source, name
+        assert "commit" not in source, name
+
+
+def test_the_portal_is_still_offered_for_what_is_genuinely_theirs():
+    """Changing a card and downloading an invoice stay with the merchant of
+    record. Only the cancellation moved."""
     from app.api.billing import router
 
     paths = {route.path for route in router.routes}
-
-    assert not any("cancel" in path for path in paths), paths
     assert "/api/billing/portal" in paths
+
+
+# --- a scheduled cancellation is not a stopped subscription ---------------------- #
+# Found by reading the database rather than trusting a 200. After a real cancel
+# our row said status=canceled, cancel_at_period_end=false while Polar said
+# active, true. service_state got it right and kept the rep answering (it allows
+# "canceled" while now < period_end), so nothing broke for the customer, but the
+# billing page offered to cancel a subscription that was already cancelled.
+def test_the_payload_status_beats_the_event_type_map(polar):
+    """subscription.canceled carries status="active". Polar means "a
+    cancellation is scheduled", not "it has stopped"."""
+    body = _body(
+        "subscription.canceled",
+        id="sub_1",
+        status="active",
+        cancel_at_period_end=True,
+        current_period_end="2026-10-07T00:00:00Z",
+    )
+    event = polar.parse_event(_sign(RAW_SECRET.encode(), body), body)
+
+    assert event.status == "active"
+    assert event.cancel_at_period_end is True
+
+
+def test_revoked_is_the_one_that_actually_stops_it(polar):
+    body = _body("subscription.revoked", id="sub_1", status="canceled")
+    event = polar.parse_event(_sign(RAW_SECRET.encode(), body), body)
+
+    assert event.status == "canceled"
+
+
+def test_the_event_map_still_covers_a_payload_with_no_status(polar):
+    """The map is the backstop, not dead code: not every event carries one."""
+    body = _body("subscription.past_due", id="sub_1")
+    event = polar.parse_event(_sign(RAW_SECRET.encode(), body), body)
+
+    assert event.status == "past_due"
+
+
+def test_an_unrecognised_status_falls_back_rather_than_being_written(polar):
+    """An unknown value in that column is not in _LIVE_STATUSES, so writing it
+    verbatim would silence a paying tenant."""
+    body = _body("subscription.active", id="sub_1", status="something_new")
+    event = polar.parse_event(_sign(RAW_SECRET.encode(), body), body)
+
+    assert event.status == "active"  # from the map, not the payload
+
+
+def test_resuming_persists_false_rather_than_being_dropped():
+    """`if event.cancel_at_period_end` would drop False, leaving the dashboard
+    showing "ends on" after somebody had already resumed. It has to be an
+    explicit None check."""
+    from app.billing.providers.base import BillingEvent
+    from app.billing.service import subscription_fields_from_event
+
+    resumed = subscription_fields_from_event(
+        BillingEvent(
+            provider="polar",
+            event_id="e1",
+            type="subscription.uncanceled",
+            status="active",
+            cancel_at_period_end=False,
+        )
+    )
+    assert resumed["cancel_at_period_end"] is False
+
+    # And an event that says nothing about it must not overwrite what is stored.
+    silent = subscription_fields_from_event(
+        BillingEvent(provider="polar", event_id="e2", type="order.paid")
+    )
+    assert "cancel_at_period_end" not in silent

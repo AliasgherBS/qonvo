@@ -190,6 +190,38 @@ cd backend && QONVO_SYSTEM_DATABASE_URL=... QONVO_JWT_SECRET=... \
   them up, you need `npm run build`. Server-side vars (`AUTH_URL`, `AUTH_GOOGLE_*`)
   only need a restart.
 
+## Security posture (audited 2026-09-07)
+
+Full findings: [`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md).
+
+- **`.env` was tracked once** (`4a48a52`, untracked in `a80ca3a`). A removed file
+  stays in history, so ten still-live secrets were readable by anyone who could
+  clone. All rotated by [`scripts/rotate-secrets.sh`](scripts/rotate-secrets.sh).
+  **The values in git history are now worthless; they have not been erased.** A
+  history rewrite is the only way to do that and it invalidates every clone, so
+  it belongs before the repo is ever public, not today.
+- **Never put a secret in a tracked file, including a doc or a test fixture.**
+  `.env`, `.env.staging` and `dashboard/.env.local` are gitignored; only the
+  `.example` templates are tracked.
+- Both hosts now send security headers, set in **application** middleware rather
+  than the proxy so they survive the move from Cloudflare Tunnel to Caddy.
+  `script-src` keeps `'unsafe-inline'` because Next inlines its hydration
+  bootstrap and `ThemeScript` runs pre-paint; nonces are the real fix.
+- **Middleware strips credential query parameters**, because Polar appends
+  `customer_session_token` to its success URL. `token` is exempt on
+  `/reset-password` and `/accept-invite` only, since our own emails link there
+  and stripping it breaks every reset and invitation.
+- The WAHA webhook HMAC is **per session** (`secrets.token_urlsafe(32)`, stored
+  on the session row). `QONVO_WAHA_HMAC_SECRET` is only the fallback for a row
+  with none.
+- Rotating `QONVO_FERNET_KEY` requires re-encrypting
+  `integrations.encrypted_credentials` first
+  ([`backend/scripts/reencrypt_fernet.py`](backend/scripts/reencrypt_fernet.py)).
+  Swapping the key alone leaves every tenant's Google token undecryptable, and
+  it fails silently: the next booking attempt, for an owner who has no idea.
+- Still open: no rate limiting on auth endpoints, load testing never run,
+  backups local-only.
+
 ## Session status right now
 
 - Phase 0 (foundation) ✅ and Phase 1 (base offering: RAG + grounded replies + auth + inbox

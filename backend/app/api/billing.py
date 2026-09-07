@@ -13,10 +13,11 @@ from __future__ import annotations
 
 import datetime as dt
 import math
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -102,6 +103,96 @@ async def payment_history(
         }
         for p in payments
     ]
+
+
+class CancelRequest(BaseModel):
+    """Why they are leaving, optionally.
+
+    Both fields are optional and neither gates the cancellation. A form that
+    demands a reason before letting somebody leave is a dark pattern, and the
+    answer it extracts is not one worth having.
+    """
+
+    # Polar validates this against its own enum, so an unrecognised value would
+    # fail the whole request. Constrained here so a bad value is a 422 naming
+    # the field rather than an opaque provider error.
+    reason: Literal[
+        "too_expensive",
+        "missing_features",
+        "switched_service",
+        "unused",
+        "customer_service",
+        "low_quality",
+        "too_complex",
+        "other",
+    ] | None = None
+    comment: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/cancel")
+async def cancel_subscription(
+    body: CancelRequest,
+    tenant_id: UUID = Depends(require_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Schedule cancellation at the end of the paid period.
+
+    End of period, never immediate. The customer has paid for this month, and
+    taking it away the moment they click is both unkind and the thing that
+    turns a cancellation into a refund request.
+
+    The provider stays the system of record: this calls its API and its webhook
+    writes our row, so the button living here does not give two systems an
+    opinion about the same subscription.
+    """
+    row = (
+        await db.execute(
+            select(Subscription.provider_subscription_id, Subscription.status).where(
+                Subscription.tenant_id == tenant_id
+            )
+        )
+    ).one_or_none()
+    if row is None or not row.provider_subscription_id:
+        return {"ok": False, "reason": "no_subscription"}
+
+    ok = resolve_billing_provider().set_cancellation(
+        subscription_id=row.provider_subscription_id,
+        cancel=True,
+        reason=body.reason,
+        comment=body.comment,
+    )
+    # The row is not written here. The provider's webhook does that, so a
+    # failure at their end cannot leave us showing "cancelled" for a
+    # subscription that is still billing.
+    return {"ok": ok, "reason": None if ok else "provider_unavailable"}
+
+
+@router.post("/resume")
+async def resume_subscription(
+    tenant_id: UUID = Depends(require_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Undo a scheduled cancellation.
+
+    A real undo rather than a new subscription: verified against the sandbox
+    that clearing ``cancel_at_period_end`` also clears ``ends_at`` and
+    ``canceled_at``. Worth offering, because the window between clicking cancel
+    and the period ending is exactly when somebody changes their mind.
+    """
+    subscription_id = (
+        await db.execute(
+            select(Subscription.provider_subscription_id).where(
+                Subscription.tenant_id == tenant_id
+            )
+        )
+    ).scalar_one_or_none()
+    if not subscription_id:
+        return {"ok": False, "reason": "no_subscription"}
+
+    ok = resolve_billing_provider().set_cancellation(
+        subscription_id=subscription_id, cancel=False
+    )
+    return {"ok": ok, "reason": None if ok else "provider_unavailable"}
 
 
 @router.post("/portal")
