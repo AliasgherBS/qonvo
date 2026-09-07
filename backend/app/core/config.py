@@ -195,6 +195,11 @@ class Settings(BaseSettings):
     # Transport: "log" (dev — just logs), "resend" (HTTP API), or "smtp".
     email_provider: str = "log"
     email_from: str = "Qonvo <alerts@qonvo.local>"
+    #: Where a reply should go. ``email_from`` is a no-reply sender on a sending
+    #: subdomain that has no mailbox behind it, so without this every reply to a
+    #: Qonvo email is delivered nowhere and nobody is told. Set it to a monitored
+    #: address (docs/EMAIL-SETUP.md §4.3).
+    email_reply_to: str | None = None
     email_resend_api_key: str | None = None
     email_smtp_host: str | None = None
     email_smtp_port: int = 587
@@ -214,6 +219,16 @@ class Settings(BaseSettings):
     # How long a past_due subscription keeps answering while the provider
     # retries the card. A failed payment must not silence a business same-day.
     billing_grace_days: int = 7
+    # --- Polar (spec §7) ---
+    # Sandbox and production are separate worlds: a production token does not
+    # work against the sandbox API and vice versa, which is a confusing 401
+    # rather than a helpful error.
+    polar_server: str = "sandbox"
+    polar_access_token: str | None = None
+    # Its own key rather than reusing billing_webhook_secret, so a second
+    # provider can be configured beside it without one clobbering the other.
+    # Falls back to billing_webhook_secret when unset.
+    polar_webhook_secret: str | None = None
     metrics_enabled: bool = True
 
     # --- Agent pipeline (DESIGN.md §5.4) ---
@@ -222,11 +237,75 @@ class Settings(BaseSettings):
     summary_refresh_turns: int = 10
     tool_loop_max_iterations: int = 5
     # Per-provider-per-model USD price per 1K tokens: {provider: {model: {input, output}}}.
+    # Audio is billed in different units from tokens: STT per minute of audio,
+    # TTS per million characters. Rates verified 2026-09-06. A model missing
+    # here records $0.00 for every voice turn, which is exactly how voice spend
+    # went untracked, so keep the model you actually run in this table.
+    stt_pricing: dict[str, dict[str, dict[str, float]]] = Field(
+        default_factory=lambda: {
+            "groq": {
+                "whisper-large-v3": {"per_minute": 0.00185},
+                "whisper-large-v3-turbo": {"per_minute": 0.00067},
+            },
+            "openai": {
+                "whisper-1": {"per_minute": 0.006},
+                "gpt-4o-transcribe": {"per_minute": 0.006},
+                "gpt-4o-mini-transcribe": {"per_minute": 0.003},
+                "gpt-transcribe": {"per_minute": 0.0045},
+            },
+        }
+    )
+    tts_pricing: dict[str, dict[str, dict[str, float]]] = Field(
+        default_factory=lambda: {
+            "groq": {
+                # English only — it cannot speak Urdu, which matters more than
+                # its price for this market.
+                "canopylabs/orpheus-v1-english": {"per_1m_chars": 22.0},
+                "canopylabs/orpheus-v1-arabic-saudi": {"per_1m_chars": 40.0},
+                "playai-tts": {"per_1m_chars": 50.0},
+            },
+            "openai": {
+                "tts-1": {"per_1m_chars": 15.0},
+                "tts-1-hd": {"per_1m_chars": 30.0},
+            },
+            "elevenlabs": {
+                "eleven_flash_v2_5": {"per_1m_chars": 50.0},
+                "eleven_multilingual_v2": {"per_1m_chars": 100.0},
+            },
+        }
+    )
     llm_pricing: dict[str, dict[str, dict[str, float]]] = Field(
         default_factory=lambda: {
+            # $/1K tokens. "cached_input" is what a provider charges for the
+            # part of the prompt served from its automatic prompt cache — around
+            # a tenth of the input rate, and a large share of every request once
+            # the prompt is ordered for caching (see build_system_prompt).
+            # Rates verified 2026-09-06.
             "openai": {
-                "gpt-4o-mini": {"input": 0.00015, "output": 0.0006},
-                "gpt-4o": {"input": 0.0025, "output": 0.01},
+                "gpt-5.4-nano": {
+                    "input": 0.0002,
+                    "cached_input": 0.00002,
+                    "output": 0.00125,
+                },
+                "gpt-5-nano": {
+                    "input": 0.00005,
+                    "cached_input": 0.000005,
+                    "output": 0.0004,
+                },
+                "gpt-5.6-luna": {"input": 0.0002, "cached_input": 0.00002, "output": 0.0012},
+                "gpt-5.6-terra": {"input": 0.002, "cached_input": 0.0002, "output": 0.012},
+                # Sol is on promotional pricing at least until 2026-11-21;
+                # revisit then. (Corrected from 0.005/0.03, which a third-party
+                # summary reported but OpenAI's own page contradicts.)
+                "gpt-5.6-sol": {"input": 0.004, "cached_input": 0.0004, "output": 0.02},
+                "gpt-5-mini": {"input": 0.00025, "cached_input": 0.000025, "output": 0.002},
+                # NOTE the cache discount is NOT uniform: the gpt-5 family gets
+                # 90% off cached input, gpt-4.1 gets 75%, and gpt-4o-mini only
+                # 50%. Assuming a flat tenth would under-report the 4o models.
+                "gpt-4.1-nano": {"input": 0.0001, "cached_input": 0.000025, "output": 0.0004},
+                "gpt-4.1-mini": {"input": 0.0004, "cached_input": 0.0001, "output": 0.0016},
+                "gpt-4o-mini": {"input": 0.00015, "cached_input": 0.000075, "output": 0.0006},
+                "gpt-4o": {"input": 0.0025, "cached_input": 0.00125, "output": 0.01},
                 "text-embedding-3-small": {"input": 0.00002, "output": 0.0},
             },
             "openrouter": {
@@ -240,7 +319,16 @@ class Settings(BaseSettings):
                 # records $0.00 (it returns 0 on a pricing miss).
                 "gemini-1.5-flash": {"input": 0.000075, "output": 0.0003},
                 "gemini-2.0-flash": {"input": 0.0001, "output": 0.0004},
-                "gemini-2.5-flash": {"input": 0.0003, "output": 0.0025},
+                # Corrected 2026-09-06: this was 0.0003/0.0025, the OpenRouter
+                # rate, so every turn was billed at twice what Google charges.
+                "gemini-2.5-flash": {
+                    "input": 0.00015,
+                    "cached_input": 0.000015,
+                    "output": 0.00125,
+                },
+                "gemini-2.5-flash-lite": {"input": 0.0001, "output": 0.0004},
+                "gemini-3.5-flash": {"input": 0.00075, "output": 0.0045},
+                "gemini-3.1-pro": {"input": 0.002, "output": 0.012},
                 "gemini-embedding-001": {"input": 0.00015, "output": 0.0},
             },
         }

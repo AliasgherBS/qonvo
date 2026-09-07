@@ -13,6 +13,7 @@ from app.waha.send_gateway import SessionPacing
 from app.workers import pipeline
 from app.workers.pipeline import (
     build_system_prompt,
+    build_turn_prompt,
     business_hours_closed_reply,
     compute_cost,
     is_hard_quota_exceeded,
@@ -36,10 +37,11 @@ def test_bot_active_never_paused():
     [
         ConversationState.paused_by_agent,
         ConversationState.paused_by_owner,
-        ConversationState.needs_human,
     ],
 )
 def test_paused_states_block_without_ttl(state):
+    """needs_human is deliberately absent: see
+    test_an_escalated_conversation_keeps_answering."""
     assert is_paused(state, None, now=NOW) is True
 
 
@@ -100,6 +102,9 @@ def test_quota_exceeded_at_threshold():
 
 
 # --- grounding prompt assembly --------------------------------------------------- #
+# The prompt is split in two so the system half can be served from a provider's
+# automatic prompt cache: persona and rules are stable, knowledge and the
+# question are not. See tests/test_prompt_caching.py for the ordering property.
 def test_prompt_includes_grounding_instruction_and_business_name():
     prompt = build_system_prompt(
         business_name="Acme Cafe",
@@ -107,7 +112,6 @@ def test_prompt_includes_grounding_instruction_and_business_name():
         tone="Warm",
         custom_instructions="Always mention our loyalty card.",
         primary_language="en",
-        context_block="[1] We open at 9am.",
     )
     assert "Acme Cafe" in prompt
     assert "Friendly and upbeat." in prompt
@@ -116,19 +120,29 @@ def test_prompt_includes_grounding_instruction_and_business_name():
     assert "ONLY using the business knowledge" in prompt
     assert "human_handoff" in prompt
     assert "customer's language" in prompt
-    assert "[1] We open at 9am." in prompt
+
+
+def test_retrieved_knowledge_reaches_the_model_in_the_turn():
+    turn = build_turn_prompt(
+        context_block="[1] We open at 9am.",
+        conversation_summary=None,
+        message="what time do you open?",
+    )
+    assert "[1] We open at 9am." in turn
+    assert "what time do you open?" in turn
 
 
 def test_prompt_notes_missing_knowledge_when_context_empty():
+    turn = build_turn_prompt(context_block="", conversation_summary=None, message="hi")
+    assert "No relevant business knowledge was found" in turn
+
     prompt = build_system_prompt(
         business_name=None,
         persona=None,
         tone=None,
         custom_instructions=None,
         primary_language="en",
-        context_block="",
     )
-    assert "No relevant business knowledge was found" in prompt
     assert "this business" in prompt
 
 
@@ -188,7 +202,11 @@ async def test_tool_loop_executes_capture_lead_then_returns_final_answer():
     assert result.prompt_tokens == 30
     assert result.completion_tokens == 13
     assert dispatched == [tool_call]
-    assert result.tool_results == [{"status": "captured", "message": "ok"}]
+    # The tool name is carried alongside the result so callers (the escalation
+    # report) can tell which tool produced it.
+    assert result.tool_results == [
+        {"status": "captured", "message": "ok", "_tool": "capture_lead"}
+    ]
     # The transcript carries the assistant tool-call message and the tool reply.
     roles = [m.role for m in result.transcript]
     assert roles == ["system", "user", "assistant", "tool"]
@@ -271,3 +289,160 @@ async def test_bot_voice_reply_is_sent_with_the_session_pacing():
     await pipeline._send_voice(logger, gateway, "s1", "1@c.us", "YWJj", pacing)
 
     assert gateway.pacing == pacing
+
+
+# --- cached-token pricing ---------------------------------------------------- #
+# Providers bill a cached prefix at roughly a tenth of the input rate. Measured
+# on gpt-5-nano: 2,048 of 2,161 prompt tokens served from cache. Ignoring that
+# over-reports cost by several times once caching is working.
+_RATES = {"openai": {"m": {"input": 0.0002, "cached_input": 0.00002, "output": 0.00125}}}
+
+
+def test_cost_bills_cached_tokens_at_the_cached_rate():
+    full = compute_cost("openai", "m", 10_000, 1_000, pricing=_RATES)
+    mostly_cached = compute_cost(
+        "openai", "m", 10_000, 1_000, cached_tokens=9_000, pricing=_RATES
+    )
+
+    # 1k fresh + 9k cached + 1k output, versus 10k fresh + 1k output.
+    assert mostly_cached < full
+    assert mostly_cached == pytest.approx(
+        (1_000 / 1000) * 0.0002 + (9_000 / 1000) * 0.00002 + (1_000 / 1000) * 0.00125
+    )
+
+
+def test_cost_without_a_cached_rate_falls_back_to_the_input_rate():
+    """A model whose cached rate we have not recorded must not be billed at
+    zero for its cached half -- silently under-reporting is worse than a
+    slightly high number."""
+    rates = {"openai": {"m": {"input": 0.0002, "output": 0.00125}}}
+
+    assert compute_cost("openai", "m", 10_000, 0, cached_tokens=9_000, pricing=rates) == (
+        pytest.approx((10_000 / 1000) * 0.0002)
+    )
+
+
+def test_cached_tokens_cannot_exceed_the_prompt():
+    """Defensive: a provider reporting nonsense must not produce a negative bill."""
+    cost = compute_cost("openai", "m", 100, 0, cached_tokens=9_999, pricing=_RATES)
+
+    assert cost >= 0
+
+
+# --- every billed call must be recorded --------------------------------------- #
+# The chat completion was the only call feeding usage_counters. Four others are
+# billed and were invisible: the summary refresh, the per-query embedding, the
+# ingestion embeddings, and voice. The first two are token-priced and covered
+# here; voice needs its own per-character/per-second rates.
+async def test_summary_refresh_reports_what_it_cost():
+    """It sends the whole windowed transcript, so it is not a rounding error:
+    fired every 10 turns against a 4,000-token window, it adds roughly a tenth
+    to a tenant's token bill and was recorded as zero."""
+
+    class _Llm:
+        async def generate(self, *_a, **_k):
+            from app.providers.base import LLMResult
+
+            return LLMResult(text="Customer asked about hours.", prompt_tokens=3800,
+                             completion_tokens=40)
+
+    text, usage = await pipeline.refresh_summary_with_usage(
+        _Llm(), prior_summary=None, recent=[], model="m"
+    )
+
+    assert text == "Customer asked about hours."
+    assert usage.prompt_tokens == 3800
+    assert usage.completion_tokens == 40
+
+
+async def test_summary_refresh_failure_costs_nothing_and_keeps_the_old_summary():
+    class _Broken:
+        async def generate(self, *_a, **_k):
+            raise RuntimeError("provider down")
+
+    text, usage = await pipeline.refresh_summary_with_usage(
+        _Broken(), prior_summary="the old one", recent=[], model="m"
+    )
+
+    assert text == "the old one"
+    assert usage.prompt_tokens == 0 and usage.completion_tokens == 0
+
+
+# --- escalation must not take the rep offline --------------------------------- #
+# human_handoff set state=needs_human and never set paused_until, and is_paused
+# treated any non-active state as paused. should_auto_resume requires a
+# paused_until, so the conversation stayed paused forever: every later message
+# from that customer was stored and silently dropped. Owner takeover is
+# different on purpose -- it sets a 6h TTL.
+def test_an_escalated_conversation_keeps_answering():
+    """needs_human means flagged and notified, not muted."""
+    assert is_paused(ConversationState.needs_human, None, now=NOW) is False
+
+
+def test_a_human_taking_over_still_silences_the_bot():
+    """The states that mean a person has the wheel must keep pausing."""
+    assert is_paused(ConversationState.paused_by_agent, None, now=NOW) is True
+    assert is_paused(ConversationState.paused_by_owner, None, now=NOW) is True
+
+
+def test_takeover_still_auto_resumes_when_its_ttl_expires():
+    expired = NOW - timedelta(hours=7)
+    assert is_paused(ConversationState.paused_by_owner, expired, now=NOW) is False
+    assert is_paused(ConversationState.paused_by_owner, NOW + timedelta(hours=1), now=NOW) is True
+
+
+def test_an_open_escalation_is_described_to_the_model():
+    """So it defers on the escalated topic instead of re-escalating it, and
+    keeps answering everything else."""
+    turn = build_turn_prompt(
+        context_block="Open 9 to 7.",
+        conversation_summary=None,
+        message="any update on my refund?",
+        open_handoff_reason="Customer wants a refund for a ruined colour treatment.",
+    )
+
+    assert "ruined colour treatment" in turn
+    assert "already" in turn.lower()
+
+
+def test_a_turn_with_no_open_escalation_says_nothing_about_one():
+    turn = build_turn_prompt(
+        context_block="Open 9 to 7.", conversation_summary=None, message="what time do you open?"
+    )
+
+    assert "escalat" not in turn.lower()
+
+
+# --- what the owner needs to see about escalations ---------------------------- #
+def test_tool_results_name_the_tool_that_ran():
+    """Without the name, nothing downstream can tell an escalation from a
+    booking, and the escalation report has no source."""
+    from app.workers.pipeline import escalation_from_tool_results
+
+    results = [
+        {"_tool": "book_appointment", "status": "booked"},
+        {"_tool": "human_handoff", "status": "escalated", "message": "team notified"},
+    ]
+
+    assert escalation_from_tool_results(results) == {
+        "status": "escalated",
+        "message": "team notified",
+        "_tool": "human_handoff",
+    }
+
+
+def test_no_escalation_is_reported_when_none_happened():
+    from app.workers.pipeline import escalation_from_tool_results
+
+    assert escalation_from_tool_results([{"_tool": "capture_lead", "status": "captured"}]) is None
+    assert escalation_from_tool_results([]) is None
+
+
+def test_a_repeat_escalation_is_not_reported_as_a_new_one():
+    """already_escalated means the topic was raised before; counting it again
+    would inflate the report and make one problem look like many."""
+    from app.workers.pipeline import escalation_from_tool_results
+
+    results = [{"_tool": "human_handoff", "status": "already_escalated"}]
+
+    assert escalation_from_tool_results(results) is None

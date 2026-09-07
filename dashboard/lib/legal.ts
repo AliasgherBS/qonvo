@@ -21,9 +21,14 @@ export const LEGAL = {
   /** Same address, or a dedicated one, for data-deletion and access requests. */
   privacyEmail: CONTACT.email,
   /** Public origin these pages are served from. */
-  siteUrl: "https://sesame-denial-dumpling.ngrok-free.dev",
-  /** Shown at the top of both documents. */
-  lastUpdated: "15 August 2026",
+  siteUrl: "https://qonvo.org",
+  /**
+   * Shown at the top of both documents. Bump it whenever the substance changes,
+   * which includes the contact address: it is where data access and deletion
+   * requests are sent, so a stale one is a policy that points users at an
+   * address nobody reads.
+   */
+  lastUpdated: "7 September 2026",
   /**
    * Google Search Console HTML-tag verification token. Rendered into <head> on
    * every page via the root layout's metadata. Google re-checks periodically, so

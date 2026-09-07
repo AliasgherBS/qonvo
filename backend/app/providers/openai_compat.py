@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.providers.base import (
     ChatMessage,
     EmbeddingProvider,
+    EmbeddingUsage,
     LLMProvider,
     LLMResult,
     ToolCall,
@@ -201,14 +202,31 @@ class OpenAICompatProvider(LLMProvider, EmbeddingProvider):
         # the provider — ``or 0`` covers all three (a .get default only covers
         # a missing key).
         usage = data.get("usage") or {}
+        # OpenAI and Gemini both report the cached share of the prompt here, and
+        # bill it at ~10% of the input rate. Same defensive parsing: the details
+        # object can be missing or null.
+        details = usage.get("prompt_tokens_details") or {}
         return LLMResult(
             text=msg.get("content") or "",
             tool_calls=_parse_tool_calls(msg.get("tool_calls")),
             prompt_tokens=usage.get("prompt_tokens") or 0,
             completion_tokens=usage.get("completion_tokens") or 0,
+            cached_tokens=details.get("cached_tokens") or 0,
         )
 
     async def embed(self, texts: list[str], *, model: str | None = None) -> list[list[float]]:
+        vectors, _usage = await self.embed_with_usage(texts, model=model)
+        return vectors
+
+    async def embed_with_usage(
+        self, texts: list[str], *, model: str | None = None
+    ) -> tuple[list[list[float]], EmbeddingUsage]:
+        """Embed, and report the tokens billed for it.
+
+        Embeddings are cheap per call but constant: one per inbound message for
+        retrieval, plus one per chunk at ingestion. Returning only the vectors
+        meant all of that was billed and recorded as nothing.
+        """
         # Pin the output dimension to the pgvector column width — models default
         # to different sizes (e.g. gemini-embedding-001 → 3072, ours is 1536).
         from app.models.knowledge import EMBEDDING_DIM
@@ -216,7 +234,14 @@ class OpenAICompatProvider(LLMProvider, EmbeddingProvider):
         payload = {"model": model or self._model, "input": texts, "dimensions": EMBEDDING_DIM}
         data = await self._post("/embeddings", payload)
         items = sorted(data.get("data", []), key=lambda item: item.get("index", 0))
-        return [item["embedding"] for item in items]
+        # Not every OpenAI-compatible provider returns usage on embeddings;
+        # reporting zero is honest, where a token estimate would be a guess
+        # dressed up as a measurement.
+        usage = data.get("usage") or {}
+        return (
+            [item["embedding"] for item in items],
+            EmbeddingUsage(prompt_tokens=usage.get("prompt_tokens") or 0),
+        )
 
 
-__all__ = ["OpenAICompatProvider", "ProviderError", "ProviderTimeout"]
+__all__ = ["EmbeddingUsage", "OpenAICompatProvider", "ProviderError", "ProviderTimeout"]

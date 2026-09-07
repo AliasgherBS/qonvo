@@ -5,6 +5,8 @@
  * Answers open with a direct one-sentence response before elaborating, which
  * is what makes them quotable by AI search. Keep that shape when editing.
  */
+import { trialTerms } from "@/lib/plan";
+
 export const FAQ = [
   {
     q: "Does it use my own WhatsApp number?",
@@ -36,7 +38,7 @@ export const FAQ = [
   },
   {
     q: "What are the limits during the free trial?",
-    a: "The trial runs 14 days or 300 customer messages, whichever comes first. No card is required to start.",
+    a: `The trial runs ${trialTerms}. No card is required to start.`,
   },
   {
     q: "How long does setup take?",

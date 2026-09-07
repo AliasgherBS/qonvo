@@ -249,6 +249,12 @@ async def provision_tenant(
         status="active",
         plan="trial",
         trial_ends_at=dt.datetime.now(dt.UTC) + dt.timedelta(days=TRIAL_DAYS),
+        # Stated rather than left to the column default, which is the same
+        # value. warmup_stage was dead code for exactly this reason: a model
+        # default is not a default when the caller always supplies the field,
+        # and the next person to add a keyword here would not know this one was
+        # load-bearing. The rep starts off; the owner turns it on when ready.
+        rep_active=False,
     )
     db.add(tenant)
     await db.flush()

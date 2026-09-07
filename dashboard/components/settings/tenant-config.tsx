@@ -9,6 +9,8 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { CharCounter } from "@/components/settings/char-counter";
+import { MAX_CUSTOM_INSTRUCTIONS, MAX_PAYMENT_DETAILS } from "@/lib/limits";
 import { useToast } from "@/components/ui/toast";
 import {
   config,
@@ -16,6 +18,8 @@ import {
   type ConfigField,
   type LlmProvider,
   type TenantConfig,
+  OTHER_REPLY_LANGUAGE,
+  REPLY_LANGUAGE_PRESETS,
 } from "@/lib/api";
 import { useApi, useAuthToken } from "@/lib/use-api";
 import { cn } from "@/lib/utils";
@@ -30,6 +34,9 @@ import { cn } from "@/lib/utils";
  * same API payload keys, so no backend change was needed and nothing that
  * depends on those field names breaks.
  */
+
+/** Label for the free-text escape hatch. Never stored; see the select below. */
+const OTHER_PERSONA = "Other (write your own)";
 
 const PERSONA_OPTIONS = [
   "Friendly & warm",
@@ -109,6 +116,24 @@ export type SectionProps = {
  * config section uses this, so each page owns exactly one save button and the
  * user never wonders which fields a given Save applies to.
  */
+/**
+ * Teaches by example rather than describing the field.
+ *
+ * "Anything else your rep should keep in mind" invites a paragraph of facts,
+ * which is the wrong content in the wrong place: facts belong in Knowledge,
+ * where they can change without touching behaviour, and where they are only
+ * retrieved when relevant instead of billed on every reply.
+ *
+ * Modelled on the instruction set that survived the live grounding test.
+ */
+const CUSTOM_INSTRUCTIONS_PLACEHOLDER = `Rules your rep must always follow. Be specific and short.
+
+Example:
+- Never quote a price. Say it depends on the branch and offer to check.
+- If you do not know, say so and offer to pass the customer to the team.
+- Match the customer's language. Reply in Roman Urdu if they write Roman Urdu.
+- Never promise a booking time without checking the calendar first.`;
+
 export function TenantConfigPage({
   title,
   description,
@@ -262,6 +287,12 @@ function ConfigSkeleton() {
 /* ---------------------------------------------------------------- Behavior */
 
 export function PersonaSection({ form, setForm }: SectionProps) {
+  // A saved persona that is not one of the presets was written as free text, so
+  // the form opens in that mode rather than silently offering to overwrite it.
+  const [personaIsCustom, setPersonaIsCustom] = useState(
+    () => !!form.persona && !PERSONA_OPTIONS.includes(form.persona),
+  );
+
   return (
     <Card>
       <CardHeader>
@@ -277,15 +308,39 @@ export function PersonaSection({ form, setForm }: SectionProps) {
             <select
               id="persona"
               className={SELECT_CLASSES}
-              value={form.persona}
-              onChange={(e) => setForm({ ...form, persona: e.target.value })}
+              // "Other" is a UI state, not a stored value: choosing it clears the
+              // field so the textarea starts empty and whatever is typed is what
+              // gets saved. The column has always been free text; only the write
+              // path was locked to five presets, which is why every real
+              // personality had to be smuggled into Custom instructions.
+              value={personaIsCustom ? OTHER_PERSONA : form.persona}
+              onChange={(e) => {
+                const chosen = e.target.value;
+                if (chosen === OTHER_PERSONA) {
+                  setPersonaIsCustom(true);
+                  setForm({ ...form, persona: "" });
+                } else {
+                  setPersonaIsCustom(false);
+                  setForm({ ...form, persona: chosen });
+                }
+              }}
             >
-              {withCurrent(PERSONA_OPTIONS, form.persona).map((option) => (
+              {withCurrent(PERSONA_OPTIONS, personaIsCustom ? "" : form.persona).map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
               ))}
+              <option value={OTHER_PERSONA}>{OTHER_PERSONA}</option>
             </select>
+            {personaIsCustom ? (
+              <Textarea
+                id="persona-custom"
+                rows={3}
+                placeholder="Describe how your rep should come across. E.g. Warm but brisk, never pushy, always offers the nearest branch."
+                value={form.persona}
+                onChange={(e) => setForm({ ...form, persona: e.target.value })}
+              />
+            ) : null}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="tone">Tone</Label>
@@ -343,11 +398,17 @@ export function PersonaSection({ form, setForm }: SectionProps) {
           <Label htmlFor="custom-instructions">Custom instructions</Label>
           <Textarea
             id="custom-instructions"
-            rows={4}
+            rows={7}
             value={form.customInstructions}
             onChange={(e) => setForm({ ...form, customInstructions: e.target.value })}
-            placeholder="Anything else your AI rep should always keep in mind."
+            placeholder={CUSTOM_INSTRUCTIONS_PLACEHOLDER}
           />
+          <CharCounter value={form.customInstructions} max={MAX_CUSTOM_INSTRUCTIONS} />
+          <p className="text-xs text-muted-foreground">
+            Rules, not facts. Prices, hours and policies belong in Knowledge, where they can be
+            updated without touching how your rep behaves. Every word here is read on every
+            single reply, so short and specific beats thorough.
+          </p>
         </div>
       </CardContent>
     </Card>
@@ -434,6 +495,12 @@ export function HoursSection({ form, setForm }: SectionProps) {
  * infrastructure the owner should have to reason about.
  */
 export function VoiceSection({ form, setForm }: SectionProps) {
+  // A saved language that is not one of the two presets was typed, so the form
+  // opens in that mode rather than silently offering to replace it.
+  const [languageIsCustom, setLanguageIsCustom] = useState(
+    () => !!form.replyLanguageMode && !["match", "en"].includes(form.replyLanguageMode),
+  );
+
   return (
     <Card>
       <CardHeader>
@@ -463,6 +530,54 @@ export function VoiceSection({ form, setForm }: SectionProps) {
             <option value="always">Always reply with voice</option>
             <option value="never">Text only</option>
           </select>
+        </div>
+
+        <div className="mt-5 space-y-1.5">
+          <Label htmlFor="reply-language-mode">Reply language</Label>
+          <select
+            id="reply-language-mode"
+            className={SELECT_CLASSES}
+            // "Other" is a UI state, not a stored value: choosing it clears the
+            // field so the text input starts empty and what gets typed is what
+            // gets saved.
+            value={languageIsCustom ? OTHER_REPLY_LANGUAGE : form.replyLanguageMode}
+            onChange={(e) => {
+              const chosen = e.target.value;
+              if (chosen === OTHER_REPLY_LANGUAGE) {
+                setLanguageIsCustom(true);
+                setForm({ ...form, replyLanguageMode: "" });
+              } else {
+                setLanguageIsCustom(false);
+                setForm({ ...form, replyLanguageMode: chosen });
+              }
+            }}
+          >
+            {REPLY_LANGUAGE_PRESETS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+            <option value={OTHER_REPLY_LANGUAGE}>Other (type a language)</option>
+          </select>
+          {languageIsCustom ? (
+            <>
+              <Input
+                id="reply-language-custom"
+                placeholder="Roman Urdu"
+                value={form.replyLanguageMode}
+                onChange={(e) => setForm({ ...form, replyLanguageMode: e.target.value })}
+              />
+              <p className="text-xs text-muted-foreground">
+                Any language your AI model can write. Name the script if it matters: Urdu and
+                Roman Urdu are the same language written two ways, and asking for Urdu will get
+                you Urdu script.
+              </p>
+            </>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              Matching the customer matches their script too, so Roman Urdu gets Roman Urdu back.
+            </p>
+          )}
         </div>
       </CardContent>
     </Card>
@@ -533,6 +648,7 @@ export function PaymentsSection({ form, setForm }: SectionProps) {
               "Bank: HBL\nTitle: Glow Salon\nAccount / IBAN: PK..\nJazzCash/Easypaisa: 03XX-XXXXXXX"
             }
           />
+          <CharCounter value={form.paymentDetails} max={MAX_PAYMENT_DETAILS} />
           <p className="text-xs text-muted-foreground">
             Leave blank to keep the payment option off. The bot only offers it when this is set.
           </p>
@@ -569,8 +685,17 @@ export function BusinessNameSection({ form, setForm }: SectionProps) {
 }
 
 /**
- * Engine settings, behind a disclosure and deliberately far from persona. A
- * tenant owner should never need to open this; the platform default is fine.
+ * Engine settings. **Admin console only.**
+ *
+ * This was on the owner's Business page behind a disclosure. It is not any
+ * more: picking a model is not a decision a business owner is equipped to make,
+ * and a wrong answer costs quality or money with no signal that anything is
+ * wrong. The platform default is the supported configuration.
+ *
+ * It survives here because an operator pinning one tenant to a specific model
+ * during an incident is a real need, and because the per-tenant override in
+ * `resolve_llm` already exists and works. Rendered only by
+ * `AllConfigSections`, which only the admin tenant page uses.
  */
 export function ModelSection({ form, setForm }: SectionProps) {
   return (
@@ -583,8 +708,8 @@ export function ModelSection({ form, setForm }: SectionProps) {
           </summary>
 
           <p className="mt-3 text-xs text-muted-foreground">
-            Which model powers your AI rep. Leave on the platform default unless you have been
-            asked to change it.
+            Which model powers this tenant. Leave on the platform default unless you are pinning
+            this workspace deliberately, for example during a provider incident.
           </p>
 
           <div className="mt-4 grid gap-4 sm:grid-cols-2">

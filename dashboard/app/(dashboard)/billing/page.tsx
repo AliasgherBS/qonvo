@@ -5,7 +5,10 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { billing } from "@/lib/api";
+import { ManagePlan } from "@/components/billing/manage-plan";
+import { PaymentHistory } from "@/components/billing/payment-history";
+import { UsageMeters } from "@/components/usage-meters";
+import { billing, usage as usageApi } from "@/lib/api";
 import { CONTACT } from "@/lib/contact";
 import { useApi, useAuthToken } from "@/lib/use-api";
 
@@ -32,6 +35,7 @@ export default function BillingPage() {
   const token = useAuthToken();
   const status = useApi(() => billing.get({ token }), [token]);
   const plans = useApi(() => billing.plans({ token }), [token]);
+  const meters = useApi(() => usageApi.mine({ token }), [token]);
   const [pending, setPending] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -95,24 +99,38 @@ export default function BillingPage() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <dl className="grid gap-4 sm:grid-cols-2">
-                {Object.entries(data.entitlements).map(([key, value]) => (
-                  <div key={key}>
-                    <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      {ENTITLEMENT_LABELS[key] ?? key}
-                    </dt>
-                    <dd className="mt-1 font-semibold">{value.toLocaleString()}</dd>
-                  </div>
-                ))}
-              </dl>
-              {data.subscription?.currentPeriodEnd ? (
-                <p className="text-sm text-muted-foreground">
-                  {data.subscription.cancelAtPeriodEnd ? "Ends" : "Renews"} on{" "}
-                  {new Date(data.subscription.currentPeriodEnd).toLocaleDateString()}.
-                </p>
-              ) : null}
+              {/* Meters rather than a list of allowances. "5,000 messages a
+                  month" answers a question nobody asked; "1,240 of 5,000, resets
+                  1 Oct" answers the one they did. Falls back to the plain list
+                  if the usage call fails, so a slow query never leaves this card
+                  blank. */}
+              {meters.data ? (
+                <UsageMeters usage={meters.data} />
+              ) : meters.loading ? (
+                <div className="space-y-4">
+                  <Skeleton className="h-10 w-full" />
+                  <Skeleton className="h-10 w-full" />
+                </div>
+              ) : (
+                <dl className="grid gap-4 sm:grid-cols-2">
+                  {Object.entries(data.entitlements).map(([key, value]) => (
+                    <div key={key}>
+                      <dt className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                        {ENTITLEMENT_LABELS[key] ?? key}
+                      </dt>
+                      <dd className="mt-1 font-semibold">{value.toLocaleString()}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+              {/* Replaces a bare "Renews on <date>" line. Same fact, plus what
+                  happens next and a way to change it, which is the part a
+                  hosted provider portal cannot phrase in our words. */}
+              <ManagePlan status={data} onChanged={status.refetch} />
             </CardContent>
           </Card>
+
+          <PaymentHistory />
 
           <Card>
             <CardHeader>

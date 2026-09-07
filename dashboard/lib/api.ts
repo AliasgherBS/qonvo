@@ -454,16 +454,43 @@ function mapKnowledgeSource(dto: KnowledgeSourceDto): KnowledgeSource {
   };
 }
 
+/**
+ * Why the rep could not handle a question. The kinds are not cosmetic:
+ * a retrieval_miss is fixed by adding knowledge, an answer_miss is not:
+ * there, the knowledge exists and does not answer the question.
+ */
+/**
+ * The three reply-language choices. "other" is a UI state, not a stored value:
+ * picking it reveals a text field, and whatever is typed is what gets saved.
+ * The list of languages is deliberately not enumerated here -- which ones work
+ * is a property of the model in use, not of Qonvo, so a fixed menu would be us
+ * guessing on the model's behalf and going stale as it improves.
+ */
+export const REPLY_LANGUAGE_PRESETS = [
+  { value: "match", label: "Match the customer" },
+  { value: "en", label: "English" },
+] as const;
+
+export const OTHER_REPLY_LANGUAGE = "other";
+
+export type KnowledgeGapKind = "retrieval_miss" | "answer_miss" | "escalation";
+
 interface KnowledgeGapDto {
   id: string;
   question: string;
+  kind: KnowledgeGapKind;
+  reason: string | null;
   count: number;
+  last_asked: string | null;
 }
 
 export interface KnowledgeGap {
   id: string;
   question: string;
+  kind: KnowledgeGapKind;
+  reason: string | null;
   count: number;
+  lastAsked: string | null;
 }
 
 export const knowledge = {
@@ -517,7 +544,19 @@ export const knowledge = {
   deleteSource: (id: string, opts: CallOpts = {}) =>
     apiFetch<void>(`/api/knowledge/sources/${id}`, { method: "DELETE", ...opts }),
 
-  gaps: (opts: CallOpts = {}) => apiFetch<KnowledgeGapDto[]>("/api/knowledge/gaps", opts),
+  gaps: (opts: CallOpts = {}) =>
+    apiFetch<KnowledgeGapDto[]>("/api/knowledge/gaps", opts).then((items) =>
+      items.map(
+        (d): KnowledgeGap => ({
+          id: d.id,
+          question: d.question,
+          kind: d.kind,
+          reason: d.reason,
+          count: d.count,
+          lastAsked: d.last_asked,
+        }),
+      ),
+    ),
 };
 
 // ---------------------------------------------------------------------------
@@ -643,6 +682,7 @@ interface TenantConfigDto {
   llm_model: string | null;
   payment_details: string | null;
   voice_reply_mode: VoiceReplyMode | null;
+  reply_language_mode: string | null;
   notify_on_handoff: boolean;
 }
 
@@ -663,6 +703,8 @@ export interface TenantConfig {
   llmModel: string;
   paymentDetails: string;
   voiceReplyMode: VoiceReplyMode;
+  /** "match", or a language code. Script-aware: "ur" and "ur-Latn" differ. */
+  replyLanguageMode: string;
   notifyOnHandoff: boolean;
 }
 
@@ -683,6 +725,7 @@ function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
     llmModel: dto.llm_model ?? "",
     paymentDetails: dto.payment_details ?? "",
     voiceReplyMode: dto.voice_reply_mode ?? "match",
+    replyLanguageMode: dto.reply_language_mode ?? "match",
     notifyOnHandoff: dto.notify_on_handoff ?? true,
   };
 }
@@ -710,6 +753,7 @@ function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
     llm_model: cfg.llmModel,
     payment_details: cfg.paymentDetails || null,
     voice_reply_mode: cfg.voiceReplyMode,
+    reply_language_mode: cfg.replyLanguageMode,
     notify_on_handoff: cfg.notifyOnHandoff,
   };
 }
@@ -752,15 +796,250 @@ export interface OnboardingStep {
   description: string;
   done: boolean;
   required: boolean;
+  /** Where to go to satisfy the step. Every item is a link. */
+  href: string;
 }
 
 export interface OnboardingStatus {
   steps: OnboardingStep[];
   complete: boolean;
+  /** Required steps only, so an optional item cannot make progress look worse. */
+  doneCount: number;
+  totalCount: number;
+}
+
+interface OnboardingStatusDto {
+  steps: OnboardingStep[];
+  complete: boolean;
+  done_count: number;
+  total_count: number;
 }
 
 export const onboarding = {
-  get: (opts: CallOpts = {}) => apiFetch<OnboardingStatus>("/api/onboarding", opts),
+  get: (opts: CallOpts = {}) =>
+    apiFetch<OnboardingStatusDto>("/api/onboarding", opts).then(
+      (d): OnboardingStatus => ({
+        steps: d.steps,
+        complete: d.complete,
+        doneCount: d.done_count,
+        totalCount: d.total_count,
+      }),
+    ),
+};
+
+// ---------------------------------------------------------------------------
+// Activation: the rep's account-level on/off switch
+// ---------------------------------------------------------------------------
+
+export interface ActivationReadiness {
+  whatsappConnected: boolean;
+  hasGrounding: boolean;
+  businessNameSet: boolean;
+}
+
+export interface Activation {
+  repActive: boolean;
+  /** Advisory. Shown as what is missing, never used to refuse the switch. */
+  readiness: ActivationReadiness;
+  ready: boolean;
+}
+
+interface ActivationDto {
+  rep_active: boolean;
+  readiness: {
+    whatsapp_connected: boolean;
+    has_grounding: boolean;
+    business_name_set: boolean;
+  };
+  ready: boolean;
+}
+
+function mapActivation(dto: ActivationDto): Activation {
+  return {
+    repActive: dto.rep_active,
+    readiness: {
+      whatsappConnected: dto.readiness.whatsapp_connected,
+      hasGrounding: dto.readiness.has_grounding,
+      businessNameSet: dto.readiness.business_name_set,
+    },
+    ready: dto.ready,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Usage against entitlement (owner + admin read the same shape)
+// ---------------------------------------------------------------------------
+
+export interface UsageMeter {
+  used: number;
+  allowed: number;
+  remaining: number;
+  ratio: number;
+  /** Decided by the backend, deliberately. A component comparing ratio to 0.8
+      itself would be a second place the threshold lives. */
+  state: "ok" | "near" | "over";
+}
+
+export interface TenantUsage {
+  tenantId: string;
+  tenantName?: string;
+  plan: string;
+  periodStart: string;
+  periodEnd: string;
+  messages: UsageMeter;
+  voiceMinutes: UsageMeter;
+  seats: UsageMeter;
+  knowledgeSources: UsageMeter;
+  knowledgeChars: UsageMeter;
+  knowledgeUploadMb: UsageMeter;
+  trialDaysLeft: number | null;
+  repActive: boolean;
+  /** The most severe meter, so a fleet list can sort by it. */
+  worstState: "ok" | "near" | "over";
+}
+
+interface TenantUsageDto {
+  tenant_id: string;
+  tenant_name?: string;
+  plan: string;
+  period_start: string;
+  period_end: string;
+  messages: UsageMeter;
+  voice_minutes: UsageMeter;
+  seats: UsageMeter;
+  knowledge_sources: UsageMeter;
+  knowledge_chars: UsageMeter;
+  knowledge_upload_mb: UsageMeter;
+  trial_days_left: number | null;
+  rep_active: boolean;
+  worst_state: "ok" | "near" | "over";
+}
+
+function mapUsage(dto: TenantUsageDto): TenantUsage {
+  return {
+    tenantId: dto.tenant_id,
+    tenantName: dto.tenant_name,
+    plan: dto.plan,
+    periodStart: dto.period_start,
+    periodEnd: dto.period_end,
+    messages: dto.messages,
+    voiceMinutes: dto.voice_minutes,
+    seats: dto.seats,
+    knowledgeSources: dto.knowledge_sources,
+    knowledgeChars: dto.knowledge_chars,
+    knowledgeUploadMb: dto.knowledge_upload_mb,
+    trialDaysLeft: dto.trial_days_left,
+    repActive: dto.rep_active,
+    worstState: dto.worst_state,
+  };
+}
+
+export interface PaymentRow {
+  date: string;
+  amountCents: number;
+  currency: string;
+  status: string;
+  invoiceNumber: string | null;
+  description: string | null;
+  invoiceUrl: string | null;
+}
+
+interface PaymentRowDto {
+  date: string;
+  amount_cents: number;
+  currency: string;
+  status: string;
+  invoice_number: string | null;
+  description: string | null;
+  invoice_url: string | null;
+}
+
+export const CANCELLATION_REASONS = [
+  { value: "too_expensive", label: "Too expensive" },
+  { value: "missing_features", label: "Missing something I need" },
+  { value: "switched_service", label: "Switched to something else" },
+  { value: "unused", label: "Not using it enough" },
+  { value: "low_quality", label: "It did not work well enough" },
+  { value: "too_complex", label: "Too hard to set up or use" },
+  { value: "customer_service", label: "Support let me down" },
+  { value: "other", label: "Something else" },
+] as const;
+
+export type CancellationReason = (typeof CANCELLATION_REASONS)[number]["value"];
+
+export const subscription = {
+  /** Schedules cancellation for the end of the paid period, never immediately. */
+  cancel: (
+    payload: { reason?: CancellationReason; comment?: string } = {},
+    opts: CallOpts = {},
+  ) =>
+    apiFetch<{ ok: boolean; reason: string | null }>("/api/billing/cancel", {
+      ...opts,
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  /** Undoes a scheduled cancellation. A real undo, not a new subscription. */
+  resume: (opts: CallOpts = {}) =>
+    apiFetch<{ ok: boolean; reason: string | null }>("/api/billing/resume", {
+      ...opts,
+      method: "POST",
+    }),
+};
+
+export const payments = {
+  /**
+   * Read from the payment provider, not from our own event ledger. Theirs knows
+   * about refunds and about anything charged before our webhook existed.
+   */
+  list: (opts: CallOpts = {}) =>
+    apiFetch<PaymentRowDto[]>("/api/billing/payments", opts).then((rows) =>
+      rows.map(
+        (d): PaymentRow => ({
+          date: d.date,
+          amountCents: d.amount_cents,
+          currency: d.currency,
+          status: d.status,
+          invoiceNumber: d.invoice_number,
+          description: d.description,
+          invoiceUrl: d.invoice_url,
+        }),
+      ),
+    ),
+
+  /**
+   * A fresh link into the provider's billing portal: cancel, change card,
+   * download invoices. POST because it mints a session, and the token expires.
+   */
+  portal: (opts: CallOpts = {}) =>
+    apiFetch<{ url: string | null; reason: string | null }>("/api/billing/portal", {
+      ...opts,
+      method: "POST",
+    }),
+};
+
+export const usage = {
+  /** The owner's own tenant. */
+  mine: (opts: CallOpts = {}) =>
+    apiFetch<TenantUsageDto>("/api/billing/usage", opts).then(mapUsage),
+};
+
+export const adminFleetUsage = {
+  list: (opts: CallOpts = {}) =>
+    apiFetch<TenantUsageDto[]>("/api/admin/usage/fleet", opts).then((r) => r.map(mapUsage)),
+  forTenant: (tenantId: string, opts: CallOpts = {}) =>
+    apiFetch<TenantUsageDto>(`/api/admin/tenants/${tenantId}/usage`, opts).then(mapUsage),
+};
+
+export const activation = {
+  get: (opts: CallOpts = {}) =>
+    apiFetch<ActivationDto>("/api/activation", opts).then(mapActivation),
+  set: (repActive: boolean, opts: CallOpts = {}) =>
+    apiFetch<ActivationDto>("/api/activation", {
+      ...opts,
+      method: "PUT",
+      body: JSON.stringify({ rep_active: repActive }),
+    }).then(mapActivation),
 };
 
 // ---------------------------------------------------------------------------

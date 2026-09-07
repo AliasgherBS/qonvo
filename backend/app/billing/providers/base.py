@@ -13,6 +13,22 @@ from datetime import datetime
 from typing import Protocol, runtime_checkable
 
 
+class InvalidWebhookSignature(Exception):
+    """This delivery could not be authenticated.
+
+    Distinct from ``parse_event`` returning None, and the distinction is
+    operational rather than cosmetic. A provider sends more event types than we
+    act on, so "authentic but not interesting" is the common case and must
+    answer 200: a provider that keeps getting errors eventually disables the
+    endpoint, and then billing stops silently.
+
+    A bad signature has to stay loud, though. Answering 200 to it would make a
+    wrong signing secret look like a working integration in the provider's
+    delivery log, and nobody would find out until a customer paid and got
+    nothing.
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class Checkout:
     """Where to send an owner who wants to upgrade.
@@ -41,7 +57,55 @@ class BillingEvent:
     plan_key: str | None = None
     subscription_id: str | None = None
     customer_id: str | None = None
+    #: Whether the subscription is scheduled to end. Distinct from ``status``,
+    #: and the distinction is the whole point: a scheduled cancellation is still
+    #: ``active`` and still billing until the period end. Without this the
+    #: dashboard shows "renews on" to somebody who has already cancelled.
+    cancel_at_period_end: bool | None = None
+    #: Which tenant this is about, when the provider echoes back the metadata we
+    #: sent at checkout. Load-bearing for the *first* event of a subscription:
+    #: before it there is no ``subscriptions`` row, so the provider's own ids
+    #: match nothing and the tenant is unresolvable without this.
+    tenant_id: str | None = None
+    #: What the customer was actually charged, in minor units, as reported by
+    #: the provider. Not a price: prices live with the merchant of record and
+    #: never in this repo. This is a fact about a payment that already happened,
+    #: which is a different thing, and it is what lets a confirmation email say
+    #: something true without the provider's number being duplicated anywhere.
+    amount_cents: int | None = None
+    currency: str | None = None
+    #: The provider's own invoice reference. Quoted so a customer can match our
+    #: email to the receipt the provider issued, never so we can issue one: the
+    #: merchant of record is the seller and the invoice is theirs.
+    invoice_number: str | None = None
+    #: Why this payment happened. ``subscription_create`` is a new plan;
+    #: a cycle is a renewal, and telling someone monthly that their card worked
+    #: is noise the provider's own receipt already covers.
+    billing_reason: str | None = None
     current_period_end: datetime | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Payment:
+    """One line of payment history, normalised.
+
+    Read from the provider rather than from our own ledger. Their record is the
+    authoritative one: it knows about refunds, partial refunds and charges made
+    outside our webhook's lifetime, and ours only knows what it was told after
+    we wired the webhook up. Showing a customer a payment history that
+    disagrees with their card statement is worse than showing none.
+    """
+
+    date: datetime
+    amount_cents: int
+    currency: str
+    status: str
+    invoice_number: str | None = None
+    description: str | None = None
+    #: Where the provider will serve the invoice document, when it has one. The
+    #: merchant of record issues it, so this is a link and never something we
+    #: generate.
+    invoice_url: str | None = None
 
 
 @runtime_checkable
@@ -52,13 +116,56 @@ class BillingProvider(Protocol):
         """Where to send an owner upgrading to ``plan_key``."""
         ...
 
-    def parse_event(self, headers: dict[str, str], raw: bytes) -> BillingEvent | None:
-        """Verify and normalise a webhook, or None if it is not authentic.
+    def portal_url(self, *, customer_id: str, return_url: str | None = None) -> str | None:
+        """An authenticated link to the provider's own billing portal.
 
-        Returning None rather than raising keeps signature schemes out of the
-        route: it answers 401 without knowing how anything is signed.
+        None when the provider has no portal. Cancelling, changing a card and
+        downloading an invoice all live there deliberately: the merchant of
+        record owns the subscription lifecycle and the tax document, so
+        rebuilding those here would mean two systems believing different things
+        about the same subscription.
+        """
+        ...
+
+    def payments(self, *, customer_id: str, limit: int = 20) -> list[Payment]:
+        """Payment history for this customer, newest first. Empty when unknown."""
+        ...
+
+    def set_cancellation(
+        self,
+        *,
+        subscription_id: str,
+        cancel: bool,
+        reason: str | None = None,
+        comment: str | None = None,
+    ) -> bool:
+        """Schedule or undo a cancellation at the end of the paid period.
+
+        Deliberately end-of-period rather than immediate. The customer has paid
+        for the month; taking it away the instant they click cancel is both
+        unkind and the thing that generates a refund request.
+
+        The provider stays the system of record. We are a client of its API, and
+        its webhook tells us what happened, so there is no second opinion about
+        the subscription's state even though the button lives here.
+        """
+        ...
+
+    def parse_event(self, headers: dict[str, str], raw: bytes) -> BillingEvent | None:
+        """Verify and normalise a webhook.
+
+        Returns None for an authentic delivery this adapter does not act on, and
+        raises ``InvalidWebhookSignature`` when it cannot be authenticated. The
+        route needs those to mean different things and still knows nothing about
+        how anything is signed.
         """
         ...
 
 
-__all__ = ["BillingEvent", "BillingProvider", "Checkout"]
+__all__ = [
+    "BillingEvent",
+    "BillingProvider",
+    "Checkout",
+    "InvalidWebhookSignature",
+    "Payment",
+]

@@ -84,11 +84,27 @@ def resolve_llm(tenant_config: TenantConfigLike | None = None) -> OpenAICompatPr
     )
 
 
+def resolve_embedding_identity(
+    tenant_config: TenantConfigLike | None = None,
+) -> tuple[str, str]:
+    """The ``(provider, model)`` an embedding call for this tenant will use.
+
+    Split out for the same reason as :func:`resolve_llm_identity`: pricing has
+    to name the model that actually ran. Note there are no flat
+    ``embedding_provider``/``embedding_model`` columns on tenant_config — the
+    only per-tenant override is the nested ``providers`` map.
+    """
+    emb_cfg = _capability_config(tenant_config, "embedding")
+    return (
+        emb_cfg.get("provider") or settings.embedding_provider,
+        emb_cfg.get("model") or settings.embedding_model,
+    )
+
+
 def resolve_embedding(tenant_config: TenantConfigLike | None = None) -> OpenAICompatProvider:
     """Build an embedding provider for a tenant, falling back to system defaults."""
     emb_cfg = _capability_config(tenant_config, "embedding")
-    provider_name = emb_cfg.get("provider") or settings.embedding_provider
-    model = emb_cfg.get("model") or settings.embedding_model
+    provider_name, model = resolve_embedding_identity(tenant_config)
     base_url = _resolve_base_url(
         provider_name, emb_cfg.get("base_url") or settings.embedding_base_url
     )
@@ -98,6 +114,24 @@ def resolve_embedding(tenant_config: TenantConfigLike | None = None) -> OpenAICo
         base_url=base_url or PROVIDER_PRESETS["openai"],
         api_key=api_key,
         model=model,
+    )
+
+
+def resolve_stt_identity(tenant_config: TenantConfigLike | None = None) -> tuple[str, str]:
+    """The ``(provider, model)`` an STT call will use, for pricing."""
+    cfg = _capability_config(tenant_config, "stt")
+    return (
+        cfg.get("provider") or settings.stt_provider,
+        cfg.get("model") or settings.stt_model,
+    )
+
+
+def resolve_tts_identity(tenant_config: TenantConfigLike | None = None) -> tuple[str, str]:
+    """The ``(provider, model)`` a TTS call will use, for pricing."""
+    cfg = _capability_config(tenant_config, "tts")
+    return (
+        cfg.get("provider") or settings.tts_provider,
+        cfg.get("model") or settings.tts_model,
     )
 
 
@@ -138,6 +172,18 @@ def resolve_tts(tenant_config: TenantConfigLike | None = None):
     )
 
 
+def reply_language_mode(tenant_config: TenantConfigLike | None = None) -> str:
+    """The tenant's reply-language choice: "match" or a language code.
+
+    Stored under ``providers["language"]["mode"]``, the same shape as voice, so
+    it needs no migration and no new column.
+    """
+    from app.agent.language import normalise_reply_language
+
+    cfg = _capability_config(tenant_config, "language")
+    return normalise_reply_language(cfg.get("mode"))
+
+
 def voice_reply_mode(tenant_config: TenantConfigLike | None = None) -> str:
     """"match" | "always" | "never" — per-tenant override, else system default."""
     cfg = _capability_config(tenant_config, "voice")
@@ -146,6 +192,7 @@ def voice_reply_mode(tenant_config: TenantConfigLike | None = None) -> str:
 
 __all__ = [
     "PROVIDER_PRESETS",
+    "reply_language_mode",
     "resolve_embedding",
     "resolve_llm",
     "resolve_stt",

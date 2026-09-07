@@ -36,10 +36,14 @@ case "$ENV_NAME" in
 staging)
 	API="http://localhost:8010"
 	PG_CONTAINER="qonvo-staging-postgres-1"
+	WAHA_URL="http://localhost:3011"
+	ENV_FILE_FOR_WAHA=".env.staging"
 	;;
 production)
 	API="http://localhost:8000"
 	PG_CONTAINER="qonvo-postgres-1"
+	WAHA_URL="http://localhost:3001"
+	ENV_FILE_FOR_WAHA=".env"
 	if [[ "$ALLOW_PROD" -ne 1 ]]; then
 		echo "Refusing to write test data to production." >&2
 		echo "Run against staging, or pass --allow-production if you mean it." >&2
@@ -396,10 +400,12 @@ print(hmac.new(sys.argv[1].encode(), sys.argv[2].encode(), hashlib.sha512).hexdi
 		psql_q "delete from conversations where chat_id like '92300000000%'" >/dev/null
 		if [[ "$CREATED_SESSION" -eq 1 ]]; then
 			# There is no session-delete endpoint (deliberately: an owner should
-			# not be able to drop a linked number by accident). Stop it in WAHA
-			# through the admin fleet console, then remove the row.
-			[[ -n "${ADMIN_TOKEN:-}" ]] && curl -s -o /dev/null --max-time 30 \
-				-X POST "$API/api/admin/fleet/$SESSION_NAME/stop" "${AH[@]}"
+			# not be able to drop a linked number by accident), so tear it down
+			# in WAHA directly. Stopping is not enough -- only DELETE removes the
+			# session directory, and stopping alone leaked a directory per run.
+			waha_key=$(grep '^WAHA_API_KEY=' "$ENV_FILE_FOR_WAHA" 2>/dev/null | tail -1 | cut -d= -f2)
+			[[ -n "$waha_key" ]] && curl -s -o /dev/null --max-time 30 \
+				-X DELETE "$WAHA_URL/api/sessions/$SESSION_NAME" -H "X-Api-Key: $waha_key"
 			psql_q "delete from whatsapp_sessions where session_name='$SESSION_NAME'" >/dev/null
 		fi
 		ok "synthetic conversations cleaned up"

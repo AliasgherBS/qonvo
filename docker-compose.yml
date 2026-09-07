@@ -112,6 +112,12 @@ services:
       context: ./backend
     restart: unless-stopped
     <<: *backend-env
+    volumes:
+      # Uploaded knowledge files. MUST be shared with the worker: the API
+      # writes the upload and the worker ingests it, so without a shared
+      # volume the worker looks for the file in its own container and every
+      # file upload fails with FileNotFoundError.
+      - knowledge_data:/data/knowledge
     # Apply migrations, then serve. Single replica → no migration race.
     command: >
       sh -c "alembic upgrade head &&
@@ -143,6 +149,9 @@ services:
       context: ./backend
     restart: unless-stopped
     <<: *backend-env
+    volumes:
+      # Same volume as the API — see the note there.
+      - knowledge_data:/data/knowledge
     command: ["arq", "app.workers.worker.WorkerSettings"]
     depends_on:
       postgres:
@@ -205,6 +214,7 @@ services:
         condition: service_started
 
 volumes:
+  knowledge_data:
   waha_sessions:
   waha_media:
   postgres_data:

@@ -11,6 +11,10 @@
 export const CONTACT = {
   whatsapp: "+92 319 4505305",
   whatsappHref: "https://wa.me/923194505305",
-  email: "alihuzezzy@gmail.com",
-  emailHref: "mailto:alihuzezzy@gmail.com",
+  // hello@ rather than a personal address: it is an alias on the one Zoho
+  // mailbox, so it costs nothing, it survives a change of personal provider,
+  // and it can be handed to someone else without handing over an account.
+  // See docs/EMAIL-SETUP.md.
+  email: "hello@qonvo.org",
+  emailHref: "mailto:hello@qonvo.org",
 } as const;

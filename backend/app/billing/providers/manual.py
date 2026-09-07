@@ -9,7 +9,12 @@ second implementation rather than a hypothetical one.
 
 from __future__ import annotations
 
-from app.billing.providers.base import BillingEvent, Checkout
+from app.billing.providers.base import (
+    BillingEvent,
+    Checkout,
+    InvalidWebhookSignature,
+    Payment,
+)
 
 
 class ManualProvider:
@@ -23,9 +28,33 @@ class ManualProvider:
             )
         )
 
-    def parse_event(self, headers: dict[str, str], raw: bytes) -> BillingEvent | None:
-        # Nothing signs manual events; the admin endpoint is the only way in.
+    def portal_url(self, *, customer_id: str, return_url: str | None = None) -> str | None:
+        # No gateway, so no portal. The billing page falls back to telling the
+        # owner to message us, which is what "manual" means.
         return None
+
+    def payments(self, *, customer_id: str, limit: int = 20) -> list[Payment]:
+        # An operator recorded the plan by hand; there is no payment ledger to
+        # read. Returning [] rather than raising lets the page render the rest.
+        return []
+
+    def set_cancellation(
+        self,
+        *,
+        subscription_id: str,
+        cancel: bool,
+        reason: str | None = None,
+        comment: str | None = None,
+    ) -> bool:
+        # There is no subscription to cancel: an operator recorded the plan by
+        # hand and would remove it the same way.
+        return False
+
+    def parse_event(self, headers: dict[str, str], raw: bytes) -> BillingEvent | None:
+        # There is no signing scheme, so nothing arriving here can be shown to
+        # be authentic. Raising rather than returning None is the honest answer:
+        # None now means "verified, not actionable", which this cannot claim.
+        raise InvalidWebhookSignature("the manual adapter accepts no webhooks")
 
 
 __all__ = ["ManualProvider"]

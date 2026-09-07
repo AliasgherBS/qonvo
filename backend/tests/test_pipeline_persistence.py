@@ -36,6 +36,7 @@ if _APP_URL is None or _SYSTEM_URL is None:
 from app.core.tenancy import set_tenant  # noqa: E402
 from app.models.conversation import Conversation, Message  # noqa: E402
 from app.models.enums import SessionStatus  # noqa: E402
+from app.models.ops import UsageCounter  # noqa: E402
 from app.models.tenant import Tenant, TenantConfig  # noqa: E402
 from app.models.whatsapp import WhatsAppSession  # noqa: E402
 from app.providers.openai_compat import ProviderError  # noqa: E402
@@ -204,3 +205,60 @@ async def test_a_retry_does_not_duplicate_the_message(tenant, monkeypatch):
 
     stored = await _stored_messages(tenant)
     assert len(stored) == 1, "the same inbound message was stored more than once"
+
+
+# --- billing must outlive a failed send -------------------------------------- #
+class _BrokenGateway:
+    """Sends fail the way WAHA does when a session is unlinked (HTTP 422)."""
+
+    async def send_text(self, *_a, **_k):
+        raise RuntimeError("WAHA request failed (422)")
+
+    async def send_voice(self, *_a, **_k):
+        raise RuntimeError("WAHA request failed (422)")
+
+
+async def test_the_provider_bill_is_recorded_even_when_the_send_fails(tenant, monkeypatch):
+    """We were billed for the model call the moment it returned.
+
+    Usage was written inside the same transaction as the send, so a send failure
+    rolled it back and the turn recorded $0.00 for tokens the provider had
+    already charged for. Found by scripts/verify-billing.sh: ten messages
+    produced ten LLM calls, twelve conversations, and zero usage rows.
+    """
+    session_name = await _session_name(tenant)
+
+    class _Llm:
+        async def generate(self, *_a, **_k):
+            from app.providers.base import LLMResult
+
+            return LLMResult(text="We open at 9am.", prompt_tokens=2000, completion_tokens=40)
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr(pl, "resolve_llm", lambda *_a, **_k: _Llm())
+    monkeypatch.setattr(pl, "resolve_embedding", lambda *_a, **_k: None)
+
+    async def _no_chunks(*_a, **_k):
+        return []
+
+    monkeypatch.setattr("app.agent.rag.retrieve", _no_chunks)
+
+    with pytest.raises(RuntimeError, match="422"):
+        await pl.run_pipeline(
+            [pl.InboundFragment(message_id="billing-1", body="what time do you open?")],
+            session=session_name,
+            chat_id="923001113333@c.us",
+            tenant_id=str(tenant),
+            send_gateway=_BrokenGateway(),
+        )
+
+    async with _tenant_session(tenant) as db:
+        tokens = (
+            await db.execute(
+                select(UsageCounter.tokens).where(UsageCounter.tenant_id == tenant)
+            )
+        ).scalars().all()
+
+    assert sum(tokens) >= 2040, "the model call was billed but recorded as nothing"

@@ -8,13 +8,15 @@ resolve one.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_claims, get_system_db
+from app.core import throttle
 from app.core.config import settings
+from app.core.redis import get_redis
 from app.core.security import TokenClaims
 from app.models.tenant import Tenant, User
 from app.services.auth import (
@@ -77,13 +79,35 @@ def _login_response(result: AuthResult) -> LoginResponse:
 
 
 @router.post("/auth/login", response_model=LoginResponse)
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_system_db)) -> LoginResponse:
+async def login(
+    body: LoginRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_system_db),
+) -> LoginResponse:
+    redis = get_redis()
+    if await throttle.check(
+        redis, throttle.LOGIN, ip=throttle.client_ip(request), account=body.email
+    ):
+        # 429 with a Retry-After rather than a 401. Telling an attacker they are
+        # rate limited costs nothing they could not measure anyway, and telling
+        # a real user "invalid password" when the password was right sends them
+        # to reset a password that works.
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="too many attempts, try again shortly",
+            headers={"Retry-After": str(throttle.LOGIN.window_seconds)},
+        )
+
     result = await authenticate(db, body.email, body.password)
     if result is None:
+        await throttle.record_failure(redis, throttle.LOGIN, account=body.email)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid email or password",
         )
+    # Forget the failures. Otherwise someone who mistypes nine times and then
+    # succeeds stays one mistake from being locked out for the rest of the hour.
+    await throttle.clear(redis, throttle.LOGIN, account=body.email)
     return _login_response(result)
 
 
@@ -95,11 +119,27 @@ class SignupRequest(BaseModel):
 
 
 @router.post("/auth/signup", response_model=LoginResponse, status_code=status.HTTP_201_CREATED)
-async def signup(body: SignupRequest, db: AsyncSession = Depends(get_system_db)) -> LoginResponse:
+async def signup(
+    body: SignupRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_system_db),
+) -> LoginResponse:
     """Public self-serve registration: provisions a tenant + owner on a free
     trial and returns a token (auto-login). Admins can still create tenants via
     /admin/tenants. Cross-tenant (no tenant context yet) so it runs on the
     system session, like login."""
+    # Throttled per IP: signup writes a tenant, a config row and a session slot,
+    # so the cost of abuse is ours rather than a wasted guess. Not throttled per
+    # account, since by definition the account does not exist yet.
+    if await throttle.check(
+        get_redis(), throttle.SIGNUP, ip=throttle.client_ip(request), account=None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="too many signups from this address, try again later",
+            headers={"Retry-After": str(throttle.SIGNUP.window_seconds)},
+        )
+
     email = body.email.lower().strip()
     if await find_user(db, email):
         raise HTTPException(
@@ -204,10 +244,24 @@ class ForgotPasswordRequest(BaseModel):
 
 @router.post("/auth/forgot-password", status_code=status.HTTP_202_ACCEPTED)
 async def forgot_password_route(
-    body: ForgotPasswordRequest, db: AsyncSession = Depends(get_system_db)
+    body: ForgotPasswordRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_system_db),
 ) -> dict:
     """Email a password-reset link. Always returns 202 — never reveals whether an
     account exists (no user enumeration)."""
+    # Throttled because each call sends an email. Unthrottled this is a way to
+    # use us to spam a third party, which harms our sending reputation more than
+    # it harms us. Still 202 when throttled, for the same reason the endpoint is
+    # always 202: a different response here would reveal which addresses exist.
+    if await throttle.check(
+        get_redis(),
+        throttle.PASSWORD_RESET,
+        ip=throttle.client_ip(request),
+        account=body.email,
+    ):
+        return {"status": "ok"}
+
     user = await find_user(db, body.email)
     if user is not None and user.is_active:
         token = create_password_reset_token(user)

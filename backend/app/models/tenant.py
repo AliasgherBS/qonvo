@@ -27,6 +27,20 @@ class Tenant(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     # NULL means no trial limit (admin-provisioned or paid).
     plan: Mapped[str] = mapped_column(String(32), nullable=False, default="trial")
     trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Account-level on/off for the rep (spec §3). Deliberately NOT the
+    # per-conversation takeover states (bot_active / paused_by_owner /
+    # needs_human): that machinery is per conversation and works. This is a
+    # different question, asked once for the whole workspace.
+    #
+    # Defaults to False, which is the point. Until now a new tenant scanned the
+    # QR code and the rep began answering real customers from an empty
+    # knowledge base, which nobody agreed to and is the worst possible first
+    # impression of the product. Existing tenants are switched on by the
+    # migration, since they already consented by using it.
+    #
+    # A model default is not a default when the caller always supplies the
+    # field, so signup sets this explicitly too.
+    rep_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):

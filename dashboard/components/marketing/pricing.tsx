@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Reveal } from "@/components/marketing/reveal";
 import { buttonClasses } from "@/components/ui/button";
 import { CONTACT } from "@/lib/contact";
+import { trialHeadline } from "@/lib/plan";
 
 /**
  * No figures. Pricing is not decided, and three empty tiers read as broken, so
@@ -52,7 +53,7 @@ export function Pricing() {
             </ul>
 
             <div className="mt-9 border-t border-border pt-8">
-              <p className="font-bold">14 days free. No card required.</p>
+              <p className="font-bold">{trialHeadline}</p>
 
               <div className="mt-5 flex flex-wrap items-center gap-3">
                 <Link href="/signup" className={buttonClasses({ size: "lg" })}>

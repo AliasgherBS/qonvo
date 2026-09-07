@@ -73,119 +73,185 @@ worker sharing one arq queue.
 
 
 
-## Part 2 — manual, with a phone
+## Part 2 — the manual run, in order
 
-Needs: the stack up, a WhatsApp number linked, and provider keys (Gemini for
-text; a Groq or OpenAI key for voice). Do this on **production** with a number
-you own, because staging's WAHA has no linked phone.
+**These steps are chronological and dependent.** Earlier ones set up state the
+later ones need, and three of them are destructive if run early. Work top to
+bottom.
 
-Record the result in the table at the bottom.
+Order corrections worth knowing, because the obvious order is wrong:
 
-### 2.1 Setup, once
+- **Google must be connected before the booking and order checks** — those write
+  to a calendar and a sheet that do not exist until then.
+- **The recovery drill is last.** It logs the session out, which breaks every
+  check above it.
+- **Suspend is late, and you must undo it.** A suspended tenant's bot is silent,
+  so anything after it would look broken.
 
-1. `./qonvo-up.sh`, then sign in at [http://localhost:3002](http://localhost:3002) as the owner.
-2. **Knowledge** → add a source with facts you can check, e.g. *"We are open
-  Monday to Saturday, 9am to 7pm. Closed Sunday. Refunds within 14 days."*
-   Wait for status `ready`.
-3. **WhatsApp** → scan the QR from the business phone. Wait for `WORKING`.
-
-
-
-### 2.2 The conversation checks
-
-Message the business number from a **different** phone.
-
-
-| #   | Send this                                            | Expect                                                                         | Fault if                                               |
-| --- | ---------------------------------------------------- | ------------------------------------------------------------------------------ | ------------------------------------------------------ |
-| T1  | "what are your hours?"                               | The answer from your knowledge, not a generic one                              | It invents hours, or says it does not know             |
-| T2  | "do you sell aeroplane parts?"                       | It declines and offers a human; a **handoff** appears in Notifications         | It makes something up. Grounding is the core promise   |
-| T3  | Same question in Roman Urdu ("aap kab khulte hain?") | Reply in Roman Urdu                                                            | It answers in English                                  |
-| T4  | Three messages in a row, fast                        | **One** reply covering all three                                               | Three separate replies (debounce broken)               |
-| T5  | 25 messages as fast as you can                       | Later ones ignored; `rate_limited` in the API log                              | It answers all 25 (your bill is uncapped)              |
-| T6  | A voice note asking about hours                      | It understands and answers. With voice mode `match`, replies with a voice note | Silence, or a reply about not understanding audio      |
-| T7  | A photo of something with "what is this?"            | It describes what is actually in the image                                     | A generic reply, meaning the vision path is blind      |
-| T8  | "I want to book tomorrow at 3pm"                     | A booking is created; check Google Calendar                                    | Nothing in the calendar (needs part 3.1)               |
-| T9  | "I want 2 chicken burgers"                           | An order row; check **Analytics**                                              | No order recorded                                      |
-| T10 | Reply to the customer **from the business phone**    | The bot goes quiet; the conversation shows as human-handled in **Inbox**       | The bot keeps replying, or silences itself permanently |
-| T11 | Wait out the takeover TTL, message again             | The bot resumes                                                                | It stays silent forever                                |
-
-
-
-
-### 2.3 Dashboard checks
-
-
-| #   | Do this                                                                  | Expect                                                              |
-| --- | ------------------------------------------------------------------------ | ------------------------------------------------------------------- |
-| D1  | **Inbox** → open the conversation                                        | Full transcript, voice playable                                     |
-| D2  | **Inbox** → Take over, send a reply                                      | It arrives on the customer's phone from the business number         |
-| D3  | **Inbox** → Release                                                      | The bot answers the next message                                    |
-| D4  | **Knowledge** → Gaps                                                     | T2's unanswerable question is listed                                |
-| D5  | **Analytics**                                                            | Message counts, cost and any leads/bookings/orders are non-zero     |
-| D6  | **Billing**                                                              | Plan, entitlements, and the plans list with a working Choose button |
-| D7  | **Settings** → change the persona, save, reload                          | It persisted                                                        |
-| D8  | **Settings** → set business hours to a closed window, message the number | One "we're closed" reply, then silence                              |
-| D9  | Sign in as admin → **Tenants** → suspend the tenant, message the number  | The bot is silent. Reactivate; it answers again                     |
-| D10 | Admin → **Fleet**                                                        | The session shows `WORKING`                                         |
-| D11 | Admin → **System health**                                                | Readiness badges green, tiles populated                             |
-| D12 | Topbar on staging (:3012)                                                | A **Staging** badge. Production (:3002) shows none                  |
-
-
-
-
-### 2.4 The recovery check, worth doing once
-
-
-| #   | Do this                                                 | Expect                                                                                                                        |
-| --- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| R1  | On the phone: WhatsApp → Linked devices → log Qonvo out | Within ~15 min the session shows failed, recovery attempts stop at 3, and one notification appears saying a re-scan is needed |
-| R2  | Re-scan the QR                                          | It returns to `WORKING` and the attempt counter resets                                                                        |
-
+Needs: the stack up (`./qonvo-up.sh`), a phone you own, and provider keys.
 
 ---
 
+### Stage 1 — Start clean
 
+| # | Do | Expect |
+|---|---|---|
+| 1.1 | Admin → Tenants → delete each existing tenant | Gone from the list |
+| 1.2 | `./scripts/measure-usage.sh` | Tenants 0, and note the WAHA sessions total |
 
-## Part 3 — external accounts
+Deleting a tenant is a **hard delete** (see "Is delete really hard?" below).
 
+### Stage 2 — Sign up as a new business
 
+| # | Do | Expect | Covers |
+|---|---|---|---|
+| 2.1 | Public `/signup`, new business + email you own | Land in the dashboard, signed in | self-serve signup |
+| 2.2 | Check the API log for the welcome email | Body logged (`QONVO_EMAIL_PROVIDER=log`) or delivered on SMTP | transactional email |
+| 2.3 | Billing page | Trial plan, **14 days left**, entitlements shown | trial + entitlements |
+| 2.4 | Settings → onboarding checklist | Steps listed, WhatsApp unticked | onboarding |
 
-### 3.1 Google (Calendar and Sheets)
+### Stage 3 — Teach it, before connecting anything
 
-1. **Integrations** → **Connect Google** → consent.
-2. Expect a "Qonvo Bookings" calendar to be created in that Google account.
-3. Pick a spreadsheet through the Google Picker (a typed id **will** fail: the
-  `drive.file` scope only grants what the owner picked, by design).
-4. Re-run T8 and T9 and confirm the calendar event and the sheet row.
-5. Disconnect Sheets and confirm **Calendar still works** — Google's revoke kills
-  the whole grant for a client id, so this is guarded on purpose.
+Knowledge first: the bot has nothing to say until this is done, and ingestion is
+async, so starting it now means it is ready by the time the phone is linked.
 
+| # | Do | Expect | Covers |
+|---|---|---|---|
+| 3.1 | Knowledge → add **pasted text** with checkable facts (hours, refund window) | status → `ready` | text ingest |
+| 3.2 | Knowledge → add a **URL** | status → `ready` | URL ingest |
+| 3.3 | Knowledge → **upload a file** (.txt, .pdf, .docx) | status → `ready`, **not `error`** | file ingest |
+| 3.4 | Settings → persona, tone, business hours (open now), save, reload | Persisted | config |
 
+**3.3 is the one to watch.** File uploads failed with `FileNotFoundError` until
+2026-09-05 because the API and worker did not share a volume. If it goes to
+`error`, the fix did not reach this environment.
 
-### 3.2 Email
+### Stage 4 — Connect the number
 
-1. **Team** → invite an address you own → the invitation arrives → accept it →
-  set a password → sign in → the inbox is visible.
-2. **Forgot password** → the reset link arrives and works once (a second use must
-  fail).
-3. Trigger T2 and confirm the handoff alert email arrives.
+| # | Do | Expect | Covers |
+|---|---|---|---|
+| 4.1 | WhatsApp → scan the QR from the business phone | Status `WORKING` | session provisioning |
+| 4.2 | Onboarding checklist | WhatsApp step now ticks | |
+| 4.3 | Admin → Fleet | Session listed as working | fleet console |
 
-With `QONVO_EMAIL_PROVIDER=log` nothing is actually sent; the message body is in
-the API log instead. That is the correct staging setting.
+A brand-new session starts at **warm-up stage 1: 50 sends/day for a week**. Fine
+for testing; if you hit the cap the bot goes quiet, which is the cap working.
 
-### 3.3 Payments
+### Stage 5 — Conversation, from another phone
 
-Not testable yet: there is no merchant-of-record account. What exists is the
-manual path, which **is** testable today:
+| # | Send | Expect | Fault if |
+|---|---|---|---|
+| 5.1 | "what are your hours?" | The answer from **your** knowledge | It invents hours |
+| 5.2 | "do you sell aeroplane parts?" | Declines, offers a human; **handoff** in Notifications; owner alert email | It makes something up |
+| 5.3 | Roman Urdu: "aap kab khulte hain?" | Reply in Roman Urdu | Answers in English |
+| 5.4 | Three messages fast | **One** reply covering all three | Three replies (debounce broken) |
+| 5.5 | 25 messages fast | Later ones ignored | It answers all 25 |
+| 5.6 | A voice note asking about hours | Understood; voice reply if mode is `match` | Silence |
+| 5.7 | A photo + "what is this?" | Describes what is actually in it | Generic reply (vision blind) |
 
-1. Admin → `PUT /api/admin/tenants/{id}/subscription` with a plan.
-2. The owner's **Billing** page shows the plan and the entitlements it grants.
-3. The message quota on the pipeline matches that plan.
+**5.6 note:** the configured TTS (`orpheus-v1-english`) **cannot speak Urdu**. An
+English voice reply proves the path works; Urdu voice needs a different provider.
+
+### Stage 6 — Connect Google (before the skills that need it)
+
+| # | Do | Expect | Covers |
+|---|---|---|---|
+| 6.1 | Integrations → **Connect Google** → consent | Connected; a "Qonvo Bookings" calendar appears in that account | OAuth |
+| 6.2 | Pick a spreadsheet via the **Google Picker** | Selected | `drive.file` scope |
+| 6.3 | Try typing a spreadsheet id instead | **Fails, by design** — the scope only grants what was picked | |
+
+### Stage 7 — Skills that act
+
+| # | Send | Expect |
+|---|---|---|
+| 7.1 | "I want to book tomorrow at 3pm" | Booking confirmed; **event in Google Calendar** |
+| 7.2 | "I want 2 chicken burgers" | Order taken; row visible in Analytics |
+| 7.3 | Something that writes to the sheet | **Row appears in the spreadsheet** |
+| 7.4 | "how do I pay?" | Payment details from Settings, verbatim |
+| 7.5 | Wait for the booking reminder window | Confirmation + 24h reminder, max 2 |
+
+### Stage 8 — Takeover
+
+| # | Do | Expect |
+|---|---|---|
+| 8.1 | Reply to the customer **from the business phone** | Bot goes quiet; Inbox shows human-handled |
+| 8.2 | Inbox → Take over → send a reply | Arrives from the business number |
+| 8.3 | Inbox → Release | Bot answers the next message |
+| 8.4 | Wait out the takeover TTL, message again | Bot resumes on its own |
+
+### Stage 9 — Review what it recorded
+
+| # | Do | Expect |
+|---|---|---|
+| 9.1 | Inbox → open the conversation | Full transcript; voice playable |
+| 9.2 | Knowledge → Gaps | 5.2's unanswerable question listed |
+| 9.3 | Analytics | Messages, cost, leads/bookings/orders all non-zero |
+| 9.4 | Billing | Trial days left, entitlements, plans with a working Choose |
+| 9.5 | Team → invite an address you own → accept → set password → sign in | Teammate sees the inbox |
+| 9.6 | Team → Export data | JSON downloads with your conversations |
+| 9.7 | Account → change password, sign out, sign in | New password works |
+
+### Stage 10 — Admin, and the destructive checks
+
+Everything above must be finished first.
+
+| # | Do | Expect |
+|---|---|---|
+| 10.1 | Admin → Overview | Tiles populated |
+| 10.2 | Admin → System health | Readiness green, tiles live |
+| 10.3 | Admin → set the tenant's subscription to a paid plan | Owner's Billing shows it; entitlements change |
+| 10.4 | Settings → business hours to a **closed** window → message | One "we're closed" reply, then silence |
+| 10.5 | **Undo 10.4** | Bot answers again |
+| 10.6 | Admin → **suspend** the tenant → message | Bot silent |
+| 10.7 | **Reactivate** | Bot answers again |
+
+### Stage 11 — Recovery drill (last, it unlinks the phone)
+
+| # | Do | Expect |
+|---|---|---|
+| 11.1 | Phone → WhatsApp → Linked devices → log Qonvo out | Within ~15 min: failed, 3 recovery attempts, one notification |
+| 11.2 | Re-scan the QR | Back to `WORKING`, attempt counter reset |
+
+### Stage 12 — Measure it
+
+| # | Do | Expect |
+|---|---|---|
+| 12.1 | `./scripts/measure-usage.sh` | Real numbers for tokens/reply, storage, WAHA session size |
+| 12.2 | Compare to [DEPLOYMENT-AND-COSTS.md](DEPLOYMENT-AND-COSTS.md) | Update any claim that differs |
+
+This is the step that turns the cost model from estimate into fact. In
+particular it will show the **first-ever WAHA session size with `fullSync` off**,
+which is currently the least-evidenced number in that document.
 
 ---
 
+## Is the admin delete really a hard delete?
 
+Yes for the database and for WhatsApp, with one caveat about disk.
+
+**Verified by reading `admin.py:delete_tenant` and by testing on staging:**
+
+| What | Removed? |
+|---|---|
+| All 23 tenant-scoped tables | **Yes** — explicit `DELETE ... WHERE tenant_id`, no soft-delete flag anywhere |
+| The tenant row | Yes |
+| Users left with no other membership | Yes (platform admins are skipped, deliberately) |
+| Users who belong to another tenant | **No, by design** — they keep that other workspace |
+| WAHA session files | **Yes** — `DELETE /api/sessions/{name}` removes the directory. Tested: 124 KB directory present, gone after the call |
+| Uploaded knowledge files | **Yes, since 2026-09-05.** Nothing removed them before; that was a privacy leak as much as a disk one |
+| Redis keys (dedupe, own-send, rate limits) | Not purged, but all carry TTLs (60s to 24h) and expire on their own |
+| MinIO objects | Nothing to remove — media is never copied there |
+
+**The caveat.** Postgres `DELETE` marks rows dead and frees the space **for
+reuse**; it does not return it to the operating system, so the database file
+does not shrink. For a 12 MB database this is irrelevant. If you want the disk
+back:
+
+```bash
+docker exec qonvo-postgres-1 psql -U qonvo -d qonvo -c "VACUUM FULL"   # locks tables
+```
+
+`./scripts/measure-usage.sh` reports dead tuples so you can see it.
 
 ## Known faults
 

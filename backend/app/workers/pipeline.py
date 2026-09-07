@@ -22,6 +22,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.language import language_instruction
+from app.agent.voice_allowance import VOICE_QUOTA_NOTICE, period_start, voice_allowance
 from app.billing.service import get_subscription
 from app.billing.state import service_state
 from app.core import obs
@@ -35,9 +37,13 @@ from app.models.tenant import Tenant, TenantConfig
 from app.models.whatsapp import WhatsAppSession
 from app.providers.base import ChatMessage, LLMProvider, LLMResult, ToolCall
 from app.providers.registry import (
+    reply_language_mode,
     resolve_embedding,
+    resolve_embedding_identity,
     resolve_llm,
     resolve_llm_identity,
+    resolve_stt_identity,
+    resolve_tts_identity,
     voice_reply_mode,
 )
 from app.skills.registry import SkillContext, execute_skill
@@ -222,9 +228,19 @@ def should_auto_resume(
     )
 
 
+#: Only these mean a person has the wheel. ``needs_human`` deliberately is not
+#: one of them: escalating an issue flags it and notifies the owner, but taking
+#: the rep offline for every later question is how one unanswerable question
+#: silences a customer permanently.
+_PAUSED_STATES = frozenset(
+    {ConversationState.paused_by_agent, ConversationState.paused_by_owner}
+)
+
+
 def is_paused(state: ConversationState, paused_until: datetime | None, *, now: datetime) -> bool:
-    """True when the bot must not reply: paused/needs_human and not yet auto-resumed."""
-    if state == ConversationState.bot_active:
+    """True when the bot must not reply: a human has taken over and the takeover
+    has not yet auto-resumed."""
+    if state not in _PAUSED_STATES:
         return False
     return not should_auto_resume(state, paused_until, now=now)
 
@@ -282,9 +298,18 @@ def build_system_prompt(
     tone: str | None,
     custom_instructions: str | None,
     primary_language: str,
-    context_block: str,
-    conversation_summary: str | None = None,
+    reply_language: str | None = None,
 ) -> str:
+    """The stable half of the prompt — identical on every turn for a tenant.
+
+    This is the cacheable prefix. OpenAI and Gemini 2.5+ both cache
+    automatically by matching the longest common prefix of a request against a
+    recent one and billing the hit at roughly a tenth of the input rate, so
+    anything that changes between turns must NOT appear here: the system message
+    is position 0, and one volatile byte in it means a cache miss on every
+    single request. Retrieved knowledge and the rolling summary therefore live
+    in :func:`build_turn_prompt`, at the end of the request.
+    """
     lines = [f"You are the AI customer representative for {business_name or 'this business'}."]
     if persona:
         lines.append(persona)
@@ -292,24 +317,56 @@ def build_system_prompt(
         lines.append(f"Tone: {tone}.")
     if custom_instructions:
         lines.append(custom_instructions)
-    if conversation_summary:
-        # Rolling summary of turns that have scrolled out of the history window
-        # (§5.4 step 6) — gives the model long-term memory of this conversation.
-        lines.append("Summary of the conversation so far:\n" + conversation_summary)
     lines.append(GROUNDING_INSTRUCTION)
+    # A validated setting rather than a hope. Prose in the prompt was never
+    # deterministic about script, which is how an Urdu-script question came
+    # back in Roman Urdu.
+    lines.append(language_instruction(reply_language))
     lines.append(
-        "Always reply in the customer's language; default to "
-        f"{primary_language} only if the language is unclear."
+        f"If the customer's language is genuinely unclear, use {primary_language}."
     )
     lines.append(
         "Keep replies concise and conversational, in WhatsApp style — short "
         "paragraphs, no markdown headers or bullet-heavy formatting."
     )
-    if context_block:
-        lines.append("Business knowledge:\n" + context_block)
-    else:
-        lines.append("No relevant business knowledge was found for this question.")
     return "\n\n".join(lines)
+
+
+def build_turn_prompt(
+    *,
+    context_block: str,
+    conversation_summary: str | None,
+    message: str,
+    open_handoff_reason: str | None = None,
+) -> str:
+    """The volatile half — knowledge, summary and question, in that order.
+
+    Sent as the final user turn so everything before it (system prompt, then the
+    append-only history) stays byte-identical and can be served from cache. The
+    customer's own words come last, both because it reads as the thing to answer
+    and because it is the part that always differs.
+    """
+    parts: list[str] = []
+    if context_block:
+        parts.append("Business knowledge:\n" + context_block)
+    else:
+        parts.append("No relevant business knowledge was found for this question.")
+    if conversation_summary:
+        # Turns that have scrolled out of the history window (§5.4 step 6).
+        parts.append("Summary of the conversation so far:\n" + conversation_summary)
+    if open_handoff_reason:
+        # An issue is already with a human. Say so, so the model neither
+        # re-escalates it nor answers over the top of the colleague who is about
+        # to reply -- while still helping with anything unrelated.
+        parts.append(
+            "This issue has already been passed to the team and is being handled "
+            f"by a person: {open_handoff_reason}\n"
+            "Do not escalate it again and do not try to resolve it yourself. If "
+            "the customer asks about it, say the team is on it and will come "
+            "back to them. Answer any other question normally."
+        )
+    parts.append("Customer message:\n" + message)
+    return "\n\n".join(parts)
 
 
 # --------------------------------------------------------------------------- #
@@ -363,9 +420,18 @@ def compute_cost(
     prompt_tokens: int,
     completion_tokens: int,
     *,
+    cached_tokens: int = 0,
     pricing: dict[str, dict[str, dict[str, float]]] | None = None,
 ) -> float:
-    """USD cost from the per-provider-per-model $/1K-token pricing table."""
+    """USD cost from the per-provider-per-model $/1K-token pricing table.
+
+    ``cached_tokens`` is the part of the prompt a provider served from its
+    automatic prompt cache, billed at roughly a tenth of the input rate. It is
+    a large share once the prompt is ordered for caching — measured at 2,048 of
+    2,161 tokens on gpt-5-nano — so ignoring it over-reports cost several times
+    over. When a model has no recorded cached rate, the cached half is billed at
+    the full input rate: a slightly high number beats a silently low one.
+    """
     pricing = pricing if pricing is not None else settings.llm_pricing
     rates = (pricing.get(provider) or {}).get(model)
     if not rates:
@@ -376,9 +442,68 @@ def compute_cost(
             f"no pricing for {provider}/{model} — recording $0.00; add it to llm_pricing"
         )
         return 0.0
-    return (prompt_tokens / 1000) * rates.get("input", 0.0) + (
-        completion_tokens / 1000
-    ) * rates.get("output", 0.0)
+
+    input_rate = rates.get("input", 0.0)
+    cached = max(0, min(cached_tokens, prompt_tokens))
+    fresh = prompt_tokens - cached
+    cached_rate = rates.get("cached_input", input_rate)
+
+    return (
+        (fresh / 1000) * input_rate
+        + (cached / 1000) * cached_rate
+        + (completion_tokens / 1000) * rates.get("output", 0.0)
+    )
+
+
+def _audio_rate(
+    table: dict[str, dict[str, dict[str, float]]],
+    provider: str,
+    model: str,
+    key: str,
+    kind: str,
+) -> float:
+    rates = (table.get(provider) or {}).get(model)
+    if not rates:
+        # Same contract as compute_cost: loud, so an unpriced model surfaces as
+        # a bug rather than as suspiciously cheap analytics.
+        logger.warning(f"no {kind} pricing for {provider}/{model} — recording $0.00")
+        return 0.0
+    return rates.get(key, 0.0)
+
+
+def compute_stt_cost(
+    provider: str,
+    model: str,
+    seconds: float,
+    *,
+    pricing: dict[str, dict[str, dict[str, float]]] | None = None,
+) -> float:
+    """USD for transcribing ``seconds`` of audio. Billed pro-rata, not rounded
+    up to whole minutes."""
+    if seconds <= 0:
+        return 0.0
+    table = pricing if pricing is not None else settings.stt_pricing
+    return (seconds / 60.0) * _audio_rate(table, provider, model, "per_minute", "STT")
+
+
+def compute_tts_cost(
+    provider: str,
+    model: str,
+    characters: int,
+    *,
+    pricing: dict[str, dict[str, dict[str, float]]] | None = None,
+) -> float:
+    """USD for synthesizing ``characters`` of speech.
+
+    For a tenant with voice replies on this is the largest single line in the
+    bill — roughly three times the language model for the same conversation.
+    """
+    if characters <= 0:
+        return 0.0
+    table = pricing if pricing is not None else settings.tts_pricing
+    return (characters / 1_000_000) * _audio_rate(
+        table, provider, model, "per_1m_chars", "TTS"
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -391,6 +516,8 @@ class ToolLoopResult:
     completion_tokens: int
     transcript: list[ChatMessage]
     iterations: int
+    #: Share of prompt_tokens served from the provider's automatic prompt cache.
+    cached_tokens: int = 0
     tool_results: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -418,6 +545,7 @@ async def run_tool_loop(
     working = list(messages)
     prompt_tokens = 0
     completion_tokens = 0
+    cached_tokens = 0
     tool_results: list[dict[str, Any]] = []
     last = LLMResult(text="")
 
@@ -425,11 +553,13 @@ async def run_tool_loop(
         last = await llm.generate(working, tools=tools or None, model=model)
         prompt_tokens += last.prompt_tokens
         completion_tokens += last.completion_tokens
+        cached_tokens += last.cached_tokens
         if not last.tool_calls:
             return ToolLoopResult(
                 text=last.text,
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
+                cached_tokens=cached_tokens,
                 transcript=working,
                 iterations=i + 1,
                 tool_results=tool_results,
@@ -438,7 +568,7 @@ async def run_tool_loop(
         working.append(ChatMessage(role="assistant", content=last.text, tool_calls=last.tool_calls))
         for call in last.tool_calls:
             result = await dispatch(call)
-            tool_results.append(result)
+            tool_results.append({**result, "_tool": call.name})
             working.append(
                 ChatMessage(
                     role="tool",
@@ -452,10 +582,24 @@ async def run_tool_loop(
         text=last.text,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        cached_tokens=cached_tokens,
         transcript=working,
         iterations=max_iterations,
         tool_results=tool_results,
     )
+
+
+def escalation_from_tool_results(tool_results: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The handoff this turn raised, if it raised a new one.
+
+    ``already_escalated`` is deliberately not reported: the topic was raised on
+    an earlier turn and counting it again would make one problem look like many
+    in the owner's report.
+    """
+    for result in tool_results:
+        if result.get("_tool") == "human_handoff" and result.get("status") == "escalated":
+            return result
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -535,6 +679,42 @@ async def _persist_inbound(
                 wa_timestamp=wa_timestamp,
             )
         )
+
+
+async def record_billed_usage(
+    tenant_id: uuid.UUID,
+    *,
+    messages_in: int,
+    messages_out: int,
+    tokens: int,
+    cost: float,
+    voice_seconds: int = 0,
+) -> None:
+    """Commit a usage row in its own transaction, right after the model answers.
+
+    The provider billed us the moment the call returned. Recording that inside
+    the turn's transaction meant a later failure — most commonly a send failing
+    because the WhatsApp session is unlinked — rolled the cost back and the turn
+    recorded $0.00 for tokens we had already paid for. Found by
+    scripts/verify-billing.sh: ten messages produced ten model calls and zero
+    usage rows.
+
+    Deliberately counts a retried turn twice, because a retry is a second real
+    call and a second real charge.
+    """
+    try:
+        async with tenant_session(tenant_id) as db:
+            await _bump_usage(
+                db,
+                tenant_id,
+                messages_in=messages_in,
+                messages_out=messages_out,
+                tokens=tokens,
+                cost=cost,
+                voice_seconds=voice_seconds,
+            )
+    except Exception as exc:  # noqa: BLE001 — accounting must never break a reply
+        logger.bind(tenant_id=str(tenant_id)).warning(f"could not record usage: {exc}")
 
 
 async def _bump_usage(
@@ -665,6 +845,9 @@ async def _run_pipeline_inner(
         inbound_had_voice, voice_seconds = await _transcribe_voice_fragments(
             fragments, tenant_config, waha, bound
         )
+        # Held separately: voice_seconds later accumulates the synthesized reply
+        # too, but STT is only billed for what the customer actually sent.
+        inbound_voice_seconds = voice_seconds
         await _persist_inbound(db, tenant_uuid, conversation, fragments)
 
     # --- Phase 2: gates, retrieval, the model, the reply -------------------- #
@@ -707,11 +890,25 @@ async def _run_pipeline_inner(
         # message the customer about the business's account status.
         tenant_row = (
             await db.execute(
-                select(Tenant.status, Tenant.plan, Tenant.trial_ends_at).where(
-                    Tenant.id == tenant_uuid
-                )
+                select(
+                    Tenant.status, Tenant.plan, Tenant.trial_ends_at, Tenant.rep_active
+                ).where(Tenant.id == tenant_uuid)
             )
         ).one_or_none()
+
+        # --- Gate: the rep is switched off (spec §3) ---
+        # Additional to the entitlement gate below, never a replacement: both
+        # must pass. This one is the owner's own choice, and it is checked first
+        # because it is the cheapest and the most explicit.
+        #
+        # The message is already stored and already visible in the inbox by this
+        # point (phase 1 committed it), which is the behaviour that makes an off
+        # rep useful rather than a black hole: the owner answers by hand and
+        # loses nothing.
+        if tenant_row is not None and not tenant_row.rep_active:
+            bound.info("rep is switched off — storing the message, not replying")
+            return PipelineResult(reply_text="", meta={"gate": "rep_inactive"})
+
         if tenant_row is not None:
             entitlement = service_state(
                 tenant_status=tenant_row.status,
@@ -879,7 +1076,10 @@ async def _run_pipeline_inner(
         embedder = resolve_embedding(tenant_config)
         from app.agent.rag import build_context_block, retrieve
 
-        chunks = await retrieve(db, tenant_uuid, coalesced, embedder=embedder)
+        rag_usage: dict[str, int] = {}
+        chunks = await retrieve(
+            db, tenant_uuid, coalesced, embedder=embedder, usage_out=rag_usage
+        )
         if not chunks and coalesced:
             db.add(
                 AnalyticsEvent(
@@ -893,21 +1093,37 @@ async def _run_pipeline_inner(
         context_block = build_context_block(chunks)
 
         # --- Grounding prompt + windowed history (§5.4 steps 6–7) ---
+        # Ordered for automatic prompt caching: stable system prompt, then the
+        # append-only history, then everything volatile in the final turn. The
+        # prefix a provider can serve from cache ends where the first change
+        # begins, so anything per-question in front of the history would cost
+        # the whole prefix. Input is ~95% of LLM spend, so this ordering is the
+        # largest single lever on cost.
         system_prompt = build_system_prompt(
             business_name=tenant_config.business_name if tenant_config else None,
             persona=tenant_config.persona if tenant_config else None,
             tone=tenant_config.tone if tenant_config else None,
             custom_instructions=tenant_config.custom_instructions if tenant_config else None,
             primary_language=tenant_config.primary_language if tenant_config else "en",
-            context_block=context_block,
-            conversation_summary=conversation.summary,
+            reply_language=reply_language_mode(tenant_config),
         )
         windowed = window_history(history_rows)
         images = await _images_as_data_uris(fragments, waha, bound)
+        # If something is already with a human, tell the model so it defers on
+        # that topic instead of re-escalating it, and keeps helping otherwise.
+        from app.skills.human_handoff import open_handoff_for
+
+        open_handoff = await open_handoff_for(db, conversation.id)
+        turn_prompt = build_turn_prompt(
+            context_block=context_block,
+            conversation_summary=conversation.summary,
+            message=coalesced,
+            open_handoff_reason=(open_handoff.reason if open_handoff else None),
+        )
         llm_messages = [
             ChatMessage(role="system", content=system_prompt),
             *to_chat_messages(windowed),
-            ChatMessage(role="user", content=coalesced, images=images),
+            ChatMessage(role="user", content=turn_prompt, images=images),
         ]
 
         tools = await skill_enabled_tools(db, tenant_uuid)
@@ -941,8 +1157,21 @@ async def _run_pipeline_inner(
 
         try:
             loop_result = await run_tool_loop(llm, llm_messages, tools, dispatch)
-        except Exception:
+        except Exception as exc:
             await obs.incr("qonvo_provider_errors_total", {"kind": "llm"})
+            # Tell someone. Until now this surfaced only as a DLQ row in the
+            # worker log: the owner learned nothing and the customer got silence,
+            # which reads as the business having shut down.
+            await _handle_provider_outage(
+                bound,
+                tenant_uuid,
+                cause="llm",
+                error=exc,
+                send_gateway=send_gateway,
+                session=session,
+                chat_id=chat_id,
+                pacing=pacing,
+            )
             raise
         # .strip() so a whitespace-only model output (seen when an untranscribed
         # voice note yields an empty user turn) falls back instead of sending a
@@ -956,13 +1185,49 @@ async def _run_pipeline_inner(
         provider_name, model_name = resolve_llm_identity(tenant_config)
         total_tokens = loop_result.prompt_tokens + loop_result.completion_tokens
         cost = compute_cost(
-            provider_name, model_name, loop_result.prompt_tokens, loop_result.completion_tokens
+            provider_name,
+            model_name,
+            loop_result.prompt_tokens,
+            loop_result.completion_tokens,
+            cached_tokens=loop_result.cached_tokens,
         )
 
         # --- Voice-out (§2): synthesize when the customer sent voice / tenant opts in ---
         reply_voice = should_reply_voice(
             voice_reply_mode(tenant_config), inbound_had_voice=inbound_had_voice
         )
+
+        # --- Gate: voice allowance (spec §1.5) ---
+        # Degrade, never fail. The reply still goes out; it goes out as text.
+        # Checked here rather than before the model call on purpose: the answer
+        # is worth the same either way, and refusing earlier would turn an
+        # exhausted voice allowance into a silent conversation.
+        voice_quota_note = ""
+        if reply_voice:
+            allowance = await voice_allowance(
+                db, tenant_uuid, now=now, tenant_config=tenant_config
+            )
+            if allowance.exhausted:
+                reply_voice = False
+                bound.info(
+                    f"voice paused: {allowance.used_minutes}/{allowance.allowed_minutes} min used"
+                )
+                # Said once per period, not once per message. Without the
+                # dedupe every voice note for the rest of the month carries an
+                # apology, which reads worse than the limit itself.
+                already_told = any(
+                    m.meta.get("auto_reply") == "voice_quota"
+                    and m.created_at is not None
+                    and m.created_at.date() >= period_start(now)
+                    for m in history_rows
+                )
+                if not already_told:
+                    voice_quota_note = f"\n\n{VOICE_QUOTA_NOTICE}"
+                    await _notify_voice_quota(bound, tenant_uuid, allowance)
+
+        if voice_quota_note:
+            reply_text = f"{reply_text}{voice_quota_note}"
+
         audio_b64 = (
             await _synthesize_reply(reply_text, tenant_config, bound) if reply_voice else None
         )
@@ -988,13 +1253,60 @@ async def _run_pipeline_inner(
                 meta={"knowledge_gap": True} if not chunks else {},
             )
         )
-        await _bump_usage(
-            db,
+        # An escalation is the strongest signal a tenant has about what their
+        # knowledge cannot cover. Recorded with the question that triggered it
+        # and whether anything was retrieved: a miss WITH context is a different
+        # problem from a miss with none, and only one of them is fixed by adding
+        # more knowledge.
+        escalation = escalation_from_tool_results(loop_result.tool_results)
+        if escalation is not None:
+            db.add(
+                AnalyticsEvent(
+                    tenant_id=tenant_uuid,
+                    event_type="escalation",
+                    conversation_id=conversation.id,
+                    occurred_at=now,
+                    data={
+                        "question": coalesced,
+                        "reason": escalation.get("reason")
+                        or escalation.get("message")
+                        or "Escalated by the agent.",
+                        "had_context": bool(chunks),
+                    },
+                )
+            )
+
+        # The query embedding is billed too, on every single message.
+        embed_tokens = rag_usage.get("embedding_tokens", 0)
+        if embed_tokens:
+            emb_provider, emb_model = resolve_embedding_identity(tenant_config)
+            await record_billed_usage(
+                tenant_uuid,
+                messages_in=0,
+                messages_out=0,
+                tokens=embed_tokens,
+                cost=compute_cost(emb_provider, emb_model, embed_tokens, 0),
+            )
+
+        # Voice is billed in its own units — per minute transcribed, per
+        # character synthesized — and was previously recorded as nothing at all,
+        # despite TTS being the largest line in a voice tenant's bill.
+        audio_cost = 0.0
+        if inbound_voice_seconds:
+            stt_provider, stt_model = resolve_stt_identity(tenant_config)
+            audio_cost += compute_stt_cost(stt_provider, stt_model, inbound_voice_seconds)
+        if was_voice:
+            tts_provider, tts_model = resolve_tts_identity(tenant_config)
+            audio_cost += compute_tts_cost(tts_provider, tts_model, len(reply_text))
+
+        # Committed separately, because the provider has already charged for
+        # this call and a failure further down must not erase that fact.
+        await record_billed_usage(
             tenant_uuid,
             messages_in=len(fragments),
             messages_out=1,
             tokens=total_tokens,
-            cost=cost,
+            cost=cost + audio_cost,
             voice_seconds=voice_seconds,
         )
         # Cross-process metrics (Prometheus): success-path spend + throughput.
@@ -1008,12 +1320,25 @@ async def _run_pipeline_inner(
         prior_bot_turns = sum(1 for m in history_rows if m.author == MessageAuthor.bot)
         turn_number = prior_bot_turns + 1
         if should_refresh_summary(turn_number):
-            try:
-                conversation.summary = await _refresh_summary(
-                    llm, conversation.summary, windowed, model=model_name
+            summary_text, summary_usage = await refresh_summary_with_usage(
+                llm, conversation.summary, windowed, model=model_name
+            )
+            conversation.summary = summary_text
+            if summary_usage.total:
+                # A separate call, separately billed. Recorded as its own row so
+                # the tenant's token bill reflects what the provider charged.
+                await record_billed_usage(
+                    tenant_uuid,
+                    messages_in=0,
+                    messages_out=0,
+                    tokens=summary_usage.total,
+                    cost=compute_cost(
+                        provider_name,
+                        model_name,
+                        summary_usage.prompt_tokens,
+                        summary_usage.completion_tokens,
+                    ),
                 )
-            except Exception as exc:  # noqa: BLE001 — summary refresh must not break the turn
-                bound.warning(f"summary refresh failed: {exc}")
 
         if was_voice:
             await _send_voice(bound, send_gateway, session, chat_id, audio_b64, pacing)
@@ -1033,9 +1358,44 @@ async def _run_pipeline_inner(
         )
 
 
-async def _refresh_summary(
+@dataclass(slots=True)
+class CallUsage:
+    """Tokens a provider billed for one call, so it can be recorded."""
+
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
+    @property
+    def total(self) -> int:
+        return self.prompt_tokens + self.completion_tokens
+
+
+async def refresh_summary_with_usage(
+    llm: LLMProvider,
+    prior_summary: str | None,
+    recent: list[Message],
+    *,
+    model: str | None,
+) -> tuple[str, CallUsage]:
+    """Refresh the rolling summary, reporting what the call cost.
+
+    This is a second, separately billed model call that sends the whole windowed
+    transcript. Fired every ``summary_refresh_turns`` against a 4,000-token
+    window it adds roughly a tenth to a tenant's token bill, and it used to be
+    recorded as nothing at all because only ``.text`` was read off the result.
+
+    A failure keeps the previous summary and costs nothing: the turn must not
+    break because a summary could not be rewritten.
+    """
+    try:
+        return await _refresh_summary_text(llm, prior_summary, recent, model=model)
+    except Exception:
+        return (prior_summary or ""), CallUsage()
+
+
+async def _refresh_summary_text(
     llm: LLMProvider, prior_summary: str | None, recent: list[Message], *, model: str | None
-) -> str:
+) -> tuple[str, CallUsage]:
     transcript = "\n".join(
         f"{'Customer' if m.author == MessageAuthor.customer else 'Agent'}: "
         f"{m.body or m.transcript or ''}"
@@ -1047,7 +1407,97 @@ async def _refresh_summary(
         f"Prior summary: {prior_summary or '(none)'}\n\nRecent messages:\n{transcript}"
     )
     result = await llm.generate([ChatMessage(role="user", content=prompt)], model=model)
-    return result.text.strip() or (prior_summary or "")
+    return (
+        result.text.strip() or (prior_summary or ""),
+        CallUsage(result.prompt_tokens, result.completion_tokens),
+    )
+
+
+async def _notify_voice_quota(
+    bound: Any,
+    tenant_id: uuid.UUID,
+    allowance: Any,
+) -> None:
+    """Tell the owner their voice allowance ran out. Once per period.
+
+    In its own transaction, like the outage alert and for the same reason: this
+    runs inside the turn's session, and if the turn later rolls back the
+    notification would go with it. That trap has cost this codebase inbound
+    messages, usage rows and an outage alert already.
+
+    Best effort throughout. A missing notification must never cost a customer
+    their reply, which is the entire point of degrading rather than failing.
+    """
+    from app.models.enums import NotificationType
+    from app.services.notifications import notify
+
+    try:
+        async with tenant_session(tenant_id) as alert_db:
+            await notify(
+                alert_db,
+                tenant_id=tenant_id,
+                type=NotificationType.disconnect,
+                title="Voice replies are paused",
+                body=(
+                    f"Your rep has used its {allowance.allowed_minutes} voice minutes "
+                    "for this month, so it is answering by text until the plan renews. "
+                    "Nothing else has changed: customers still get replies, and voice "
+                    "notes they send are still understood. Upgrade for more voice."
+                ),
+                send_gateway=None,
+            )
+    except Exception as exc:  # noqa: BLE001 - never cost the customer a reply
+        bound.warning(f"could not raise voice-quota notification: {exc}")
+
+
+async def _handle_provider_outage(
+    bound: Any,
+    tenant_id: uuid.UUID,
+    *,
+    cause: str,
+    error: Exception,
+    send_gateway: SendGateway,
+    session: str,
+    chat_id: str,
+    pacing: SessionPacing,
+) -> None:
+    """Alert the owner and say something to the customer, then let the job fail.
+
+    Both halves are best-effort: this runs on a path that is already failing,
+    and neither an alert nor a courtesy reply may replace the original error,
+    which still needs to reach the retry machinery and the DLQ.
+    """
+    from app.agent.outage import PROVIDER_OUTAGE_REPLY, should_alert_owner
+    from app.core.redis import get_redis
+    from app.models.enums import NotificationType
+    from app.services.notifications import notify
+
+    try:
+        if await should_alert_owner(get_redis(), tenant_id=str(tenant_id), cause=cause):
+            # Its OWN transaction. Writing it to the turn's session would be
+            # pointless: this runs on a path that is about to raise, and the
+            # rollback would take the notification with it -- the same trap that
+            # lost inbound messages and usage rows.
+            async with tenant_session(tenant_id) as alert_db:
+                await notify(
+                    alert_db,
+                    tenant_id=tenant_id,
+                    type=NotificationType.disconnect,
+                    title="Your AI rep could not reply",
+                    body=(
+                        "Qonvo could not reach the AI provider, so a customer "
+                        "message went unanswered. If this keeps happening, check "
+                        f"the provider key and its quota. ({cause}: {str(error)[:120]})"
+                    ),
+                    send_gateway=send_gateway,
+                )
+    except Exception as exc:  # noqa: BLE001 — never mask the original failure
+        bound.warning(f"could not raise outage notification: {exc}")
+
+    try:
+        await _send(bound, send_gateway, session, chat_id, PROVIDER_OUTAGE_REPLY, pacing)
+    except Exception as exc:  # noqa: BLE001 — the send may be why we are here
+        bound.warning(f"could not send outage reply to the customer: {exc}")
 
 
 async def _send(
@@ -1110,10 +1560,17 @@ __all__ = [
     "PipelineResult",
     "ToolLoopResult",
     "build_system_prompt",
+    "build_turn_prompt",
     "business_hours_closed_reply",
     "coalesce_fragments",
     "compute_cost",
+    "escalation_from_tool_results",
+    "compute_stt_cost",
+    "compute_tts_cost",
     "is_hard_quota_exceeded",
+    "CallUsage",
+    "record_billed_usage",
+    "refresh_summary_with_usage",
     "is_paused",
     "is_voice_fragment",
     "should_reply_voice",

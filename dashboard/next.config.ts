@@ -1,5 +1,7 @@
 import type { NextConfig } from "next";
 
+import { SECURITY_HEADERS } from "./lib/security-headers";
+
 // The backend is proxied under /backend/* so the whole app (dashboard + API)
 // lives on one origin — needed for a single-URL public tunnel (zrok) with no
 // CORS. The destination is read at server start, so it works in standalone.
@@ -14,6 +16,14 @@ const DIST_DIR = process.env.NEXT_DIST_DIR ?? ".next";
 const nextConfig: NextConfig = {
   output: "standalone",
   distDir: DIST_DIR,
+  // The version banner tells an attacker which Next.js CVEs to try. Nothing
+  // needs it.
+  poweredByHeader: false,
+  async headers() {
+    // Every route, including the marketing pages: a missing CSP on the landing
+    // page is the same origin as the dashboard.
+    return [{ source: "/:path*", headers: SECURITY_HEADERS }];
+  },
   async rewrites() {
     return [{ source: "/backend/:path*", destination: `${INTERNAL_API_URL}/:path*` }];
   },

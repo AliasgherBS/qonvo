@@ -57,6 +57,25 @@ Scheduler and worker are **separate consumer processes** and must use **differen
 (`arq:scheduler` vs the default). If they share the queue, the scheduler grabs worker jobs
 (e.g. `ingest_knowledge_source`) and drops them as *function not found*.
 
+## Public access (live since 2026-09-06)
+
+`qonvo.org` is live, served from **this machine** through a **Cloudflare Tunnel**
+(`cloudflared tunnel run qonvo`, in the `cloudflared` tmux window). The tunnel dials
+outward, so nothing is port-forwarded and no public IP is needed — this box sits behind
+CGNAT and could never have been pointed at directly.
+
+| Host | Serves | Local target |
+|---|---|---|
+| `qonvo.org` | landing page + dashboard | `localhost:3002` (host node process) |
+| `api.qonvo.org` | FastAPI | `localhost:8000` |
+
+Routing lives in `~/.cloudflared/config.yml`. **The dashboard and API are now separate
+origins**, so `QONVO_CORS_ORIGINS` must contain `https://qonvo.org` or every browser call
+fails while curl keeps working.
+
+Moving to a VPS later changes only where DNS points; every application setting stays as
+it is. Runbook, including rollback: [`docs/GOING-LIVE-ON-A-DOMAIN.md`](docs/GOING-LIVE-ON-A-DOMAIN.md).
+
 ## Dev environment quirks on this VPS
 
 - Host port `3000` is held by an unrelated `evolution-api` container (user's, don't kill).
@@ -127,7 +146,7 @@ ports and `QONVO_EMAIL_PROVIDER=log`, so it can never mail a real customer.
 cd ~/qonvo && ./qonvo-redeploy.sh
 
 # Bring the whole stack up from scratch (after a reboot / tmux gone)
-cd ~/qonvo && ./qonvo-up.sh          # docker + tmux(dashboard, ngrok)
+cd ~/qonvo && ./qonvo-up.sh          # docker + tmux(dashboard, cloudflared) + a public health check
 
 # Backend tests (must stay green — 286 passing, 8 skipped)
 cd backend && uv run pytest -q && uv run ruff check
@@ -170,6 +189,38 @@ cd backend && QONVO_SYSTEM_DATABASE_URL=... QONVO_JWT_SECRET=... \
 - `NEXT_PUBLIC_*` vars are baked in at **build** time — a bare restart won't pick
   them up, you need `npm run build`. Server-side vars (`AUTH_URL`, `AUTH_GOOGLE_*`)
   only need a restart.
+
+## Security posture (audited 2026-09-07)
+
+Full findings: [`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md).
+
+- **`.env` was tracked once** (`4a48a52`, untracked in `a80ca3a`). A removed file
+  stays in history, so ten still-live secrets were readable by anyone who could
+  clone. All rotated by [`scripts/rotate-secrets.sh`](scripts/rotate-secrets.sh).
+  **The values in git history are now worthless; they have not been erased.** A
+  history rewrite is the only way to do that and it invalidates every clone, so
+  it belongs before the repo is ever public, not today.
+- **Never put a secret in a tracked file, including a doc or a test fixture.**
+  `.env`, `.env.staging` and `dashboard/.env.local` are gitignored; only the
+  `.example` templates are tracked.
+- Both hosts now send security headers, set in **application** middleware rather
+  than the proxy so they survive the move from Cloudflare Tunnel to Caddy.
+  `script-src` keeps `'unsafe-inline'` because Next inlines its hydration
+  bootstrap and `ThemeScript` runs pre-paint; nonces are the real fix.
+- **Middleware strips credential query parameters**, because Polar appends
+  `customer_session_token` to its success URL. `token` is exempt on
+  `/reset-password` and `/accept-invite` only, since our own emails link there
+  and stripping it breaks every reset and invitation.
+- The WAHA webhook HMAC is **per session** (`secrets.token_urlsafe(32)`, stored
+  on the session row). `QONVO_WAHA_HMAC_SECRET` is only the fallback for a row
+  with none.
+- Rotating `QONVO_FERNET_KEY` requires re-encrypting
+  `integrations.encrypted_credentials` first
+  ([`backend/scripts/reencrypt_fernet.py`](backend/scripts/reencrypt_fernet.py)).
+  Swapping the key alone leaves every tenant's Google token undecryptable, and
+  it fails silently: the next booking attempt, for an owner who has no idea.
+- Still open: no rate limiting on auth endpoints, load testing never run,
+  backups local-only.
 
 ## Session status right now
 
@@ -238,9 +289,18 @@ cd backend && QONVO_SYSTEM_DATABASE_URL=... QONVO_JWT_SECRET=... \
     dict (`config = {**config, ...}`) — in-place mutation is never flushed. And config now mixes
     owner-written with system-written keys, so `upsert_integration` **merges** rather than replaces
     (a PUT of just `timezone` used to wipe `calendar_id`).
-  - `FORCE ROW LEVEL SECURITY` applies to the table owner, and the migration role `qonvo` *is* the
-    owner — so a bare `UPDATE <tenant_table> SET …` in a migration matches **zero rows**
-    (`0004_billing.py:29` is already silently a no-op for this reason).
+  - **Corrected 2026-09-07.** This note used to say a bare `UPDATE <tenant_table>` in a
+    migration matches zero rows under `FORCE ROW LEVEL SECURITY`, and cited
+    `0004_billing.py:29` as a silent no-op. **That is wrong.** The migration role `qonvo` is
+    the bootstrap superuser (`rolsuper = true`), and a superuser bypasses row security
+    including FORCE, so such an UPDATE does match. 0004's statement was a no-op only because
+    its `WHERE plan='trial' AND trial_ends_at IS NULL` matched nothing: every tenant was
+    created after signup existed and already had a `trial_ends_at`.
+    RLS is still real where it matters, verified: `qonvo_app` sees **0 rows** in `tenants`
+    with no `app.tenant_id` set. The caution worth keeping is narrower: a migration that
+    backfills via UPDATE is relying on the migration role being a superuser. Prefer
+    `ADD COLUMN ... DEFAULT <value>`, which fills existing rows as DDL and does not care
+    (`0009_rep_activation.py`).
   - The OAuth callback uses `tenant_session`, **not** `system_session`: its state token was minted
     inside an authenticated request and is single-use (Redis `GETDEL`), so the tenant is already
     established. Unlike the WAHA webhook, it has no cross-tenant lookup to do, and handing an
@@ -250,16 +310,22 @@ cd backend && QONVO_SYSTEM_DATABASE_URL=... QONVO_JWT_SECRET=... \
     from the browser and gets full JWKS signature + `aud`/`iss`/`exp` verification — never conflate
     the two.
   - **`AUTH_URL` must be set explicitly in `dashboard/.env.local`.** Auth.js host-derivation is
-    broken behind this tunnel: verified live that ngrok forwards `Host` *and* `X-Forwarded-Host`
+    broken behind a proxy: verified live that the tunnel forwards `Host` *and* `X-Forwarded-Host`
     as the public domain, yet Auth.js still built `https://localhost:3002/api/auth/callback/google`
     (it honoured `X-Forwarded-Proto` but not the host) → `redirect_uri_mismatch` from every device.
-    Pinning `AUTH_URL` fixes it. Consequence: SSO from `localhost:3002` finishes on the ngrok
+    Pinning `AUTH_URL` fixes it. Consequence: SSO from `localhost:3002` finishes on the public
     domain, so the cookie lands there — use email+password locally. **`AUTH_URL`,
     `QONVO_GOOGLE_OAUTH_REDIRECT_BASE`, `QONVO_DASHBOARD_BASE_URL` and the Cloud console redirect
-    URIs are all coupled to the tunnel hostname — change one, change all four.**
-  - The backend's redirect URI carries a **`/backend` prefix**
-    (`https://<host>/backend/api/integrations/oauth/callback`) because the tunnel fronts the
-    dashboard, which proxies `/backend/*` to the API. The Auth.js one has no prefix.
+    URIs are all coupled to the public hostname — change one, change all four.**
+  - **The two Google redirect URIs live on different hosts**, which is easy to get wrong:
+    integrations on the API host (`https://api.qonvo.org/api/integrations/oauth/callback`),
+    Sign in with Google on the dashboard host (`https://qonvo.org/api/auth/callback/google`).
+    The `/backend` prefix the integrations URI used to carry is **gone**: it existed only while
+    one tunnel host fronted the dashboard and proxied `/backend/*` to the API.
+  - **`.env` is read by docker as a literal env file, not by a shell.** Inline `#` comments after
+    a value and leading spaces become *part of the value* — proved with a throwaway container
+    after an edit produced `" https://api.qonvo.org #https://old-host"`. Comments go on their own
+    line. (`run-dashboard.sh` has the same constraint for `.env.local`.)
 - **Billing (2026-09-04)** ✅ — provider-agnostic subsystem shaped around a merchant of record
   (Paddle/Polar), shipped with a **manual adapter** so it works before any gateway account exists.
   Plan catalogue in code (`app/billing/plans.py`, entitlements only — **prices deliberately live

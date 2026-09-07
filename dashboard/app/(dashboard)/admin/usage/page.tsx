@@ -2,6 +2,7 @@
 
 import { Gauge } from "lucide-react";
 
+import { FleetLimits } from "@/components/admin/fleet-limits";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -20,8 +21,20 @@ export default function AdminUsagePage() {
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">Usage</h1>
         <p className="text-sm text-muted-foreground">
-          Per-tenant messages, tokens and cost. The basis for manual invoicing.
+          What tenants are using, against what they are allowed and what it costs.
         </p>
+      </div>
+
+      {/* Limits first, cost second. They answer different questions and the
+          operational one is more urgent: cost tells you what to invoice at the
+          end of the month, limits tell you who to look at today. */}
+      <section className="overflow-hidden rounded-2xl border border-border bg-surface">
+        <FleetLimits />
+      </section>
+
+      <div>
+        <h2 className="text-lg font-bold">Cost and tokens</h2>
+        <p className="text-sm text-muted-foreground">The basis for manual invoicing.</p>
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-border bg-surface">
