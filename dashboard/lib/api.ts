@@ -954,6 +954,39 @@ interface PaymentRowDto {
   invoice_url: string | null;
 }
 
+export const CANCELLATION_REASONS = [
+  { value: "too_expensive", label: "Too expensive" },
+  { value: "missing_features", label: "Missing something I need" },
+  { value: "switched_service", label: "Switched to something else" },
+  { value: "unused", label: "Not using it enough" },
+  { value: "low_quality", label: "It did not work well enough" },
+  { value: "too_complex", label: "Too hard to set up or use" },
+  { value: "customer_service", label: "Support let me down" },
+  { value: "other", label: "Something else" },
+] as const;
+
+export type CancellationReason = (typeof CANCELLATION_REASONS)[number]["value"];
+
+export const subscription = {
+  /** Schedules cancellation for the end of the paid period, never immediately. */
+  cancel: (
+    payload: { reason?: CancellationReason; comment?: string } = {},
+    opts: CallOpts = {},
+  ) =>
+    apiFetch<{ ok: boolean; reason: string | null }>("/api/billing/cancel", {
+      ...opts,
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  /** Undoes a scheduled cancellation. A real undo, not a new subscription. */
+  resume: (opts: CallOpts = {}) =>
+    apiFetch<{ ok: boolean; reason: string | null }>("/api/billing/resume", {
+      ...opts,
+      method: "POST",
+    }),
+};
+
 export const payments = {
   /**
    * Read from the payment provider, not from our own event ledger. Theirs knows

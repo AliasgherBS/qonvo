@@ -135,7 +135,7 @@ should change the readable one first.
 |---|---|
 | **Secrets remain in git history** | Rotation makes them worthless, which is the fix that matters. Actually removing them needs a history rewrite (`git filter-repo`), which invalidates every existing clone and every commit hash. Worth doing before the repository is ever made public or gains a collaborator, and not worth doing today. |
 | **CSP allows `'unsafe-inline'` scripts** | Next's hydration bootstrap and the pre-paint theme script. Fix is per-request nonces threaded through the document. |
-| **No rate limiting on authentication** | `/api/auth/login` and the password-reset request accept unlimited attempts. Argon2 makes each guess expensive, and the reset endpoint does not reveal whether an address exists, so this is throttling rather than a hole. Should be closed before any real traffic. |
+| ~~No rate limiting on authentication~~ | **Closed 2026-09-08.** `app/core/throttle.py`: login 10 per 15 minutes, signup 5 per hour, password reset 5 per hour. Two keys per attempt, since per-IP alone is defeated by a botnet and per-account alone lets an attacker lock a victim out by failing on purpose. The account counter records **failures only**, so a correct password never counts against it. Fails open, because an outage that also blocks sign-in turns a degraded service into an inaccessible one. Email addresses are hashed before they become Redis keys. |
 | **Load testing never run** | The one row in the E2E plan still marked "never". Not a vulnerability, but an unmeasured failure mode. |
 | **Backups are local-only** | Postgres and the WAHA session files exist only on the box being backed up. |
 

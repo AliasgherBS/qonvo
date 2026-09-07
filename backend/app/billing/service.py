@@ -47,6 +47,11 @@ def subscription_fields_from_event(event: BillingEvent) -> dict[str, Any]:
         fields["provider_customer_id"] = event.customer_id
     if event.current_period_end:
         fields["current_period_end"] = event.current_period_end
+    # `is not None`, not truthiness: False is the meaningful value that undoes a
+    # scheduled cancellation, and `if event.cancel_at_period_end` would drop it,
+    # leaving the dashboard showing "ends on" after somebody resumed.
+    if event.cancel_at_period_end is not None:
+        fields["cancel_at_period_end"] = event.cancel_at_period_end
     return fields
 
 

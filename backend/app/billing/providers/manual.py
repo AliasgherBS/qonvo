@@ -38,6 +38,18 @@ class ManualProvider:
         # read. Returning [] rather than raising lets the page render the rest.
         return []
 
+    def set_cancellation(
+        self,
+        *,
+        subscription_id: str,
+        cancel: bool,
+        reason: str | None = None,
+        comment: str | None = None,
+    ) -> bool:
+        # There is no subscription to cancel: an operator recorded the plan by
+        # hand and would remove it the same way.
+        return False
+
     def parse_event(self, headers: dict[str, str], raw: bytes) -> BillingEvent | None:
         # There is no signing scheme, so nothing arriving here can be shown to
         # be authentic. Raising rather than returning None is the honest answer:

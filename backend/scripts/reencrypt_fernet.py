@@ -20,11 +20,10 @@ import asyncio
 import os
 import sys
 
-from cryptography.fernet import Fernet, InvalidToken
-from sqlalchemy import select, update
-
 from app.core.tenancy import system_session
 from app.models.skill import Integration
+from cryptography.fernet import Fernet, InvalidToken
+from sqlalchemy import select, update
 
 
 async def main() -> int:

@@ -233,6 +233,49 @@ class PolarProvider:
             )
         return out
 
+    def set_cancellation(
+        self,
+        *,
+        subscription_id: str,
+        cancel: bool,
+        reason: str | None = None,
+        comment: str | None = None,
+    ) -> bool:
+        """Schedule or undo a cancellation at the period end.
+
+        Verified against the sandbox: ``cancel_at_period_end: true`` leaves
+        ``status`` as ``active`` and sets ``ends_at`` to the current period end,
+        which is exactly the behaviour to promise a customer. Setting it back to
+        false clears ``ends_at`` and ``canceled_at``, so resuming is a real
+        undo rather than a new subscription.
+
+        Polar remains the system of record. This is a client call, and the
+        subscription.canceled webhook it triggers is what updates our own row,
+        so the two cannot disagree.
+        """
+        if not settings.polar_access_token:
+            return False
+        payload: dict[str, Any] = {"cancel_at_period_end": cancel}
+        if cancel and reason:
+            # Polar validates this against its own enum, so an unknown value
+            # would fail the whole request. Sent only when we have one.
+            payload["customer_cancellation_reason"] = reason
+        if cancel and comment:
+            payload["customer_cancellation_comment"] = comment[:500]
+
+        try:
+            response = httpx.patch(
+                f"{self._api}/subscriptions/{subscription_id}",
+                headers={"Authorization": f"Bearer {settings.polar_access_token}"},
+                json=payload,
+                timeout=20,
+            )
+            response.raise_for_status()
+            return bool(response.json().get("cancel_at_period_end")) == cancel
+        except Exception as exc:  # noqa: BLE001 - the caller reports failure
+            logger.warning(f"polar cancellation update failed: {exc}")
+            return False
+
     # --- webhooks ---------------------------------------------------------- #
     @staticmethod
     def _candidate_keys(secret: str) -> list[bytes]:
@@ -351,7 +394,18 @@ class PolarProvider:
             # is what billing_events dedupes on. Merchants of record retry.
             event_id=self._event_id(headers, payload),
             type=event_type,
-            status=_STATUS_BY_EVENT.get(event_type),
+            # The payload's own status wins, and the map is the backstop.
+            #
+            # This matters for subscription.canceled, which carries
+            # status="active": Polar means "a cancellation is scheduled", not
+            # "it has stopped". Mapping the event type alone wrote "canceled"
+            # into our row for a subscription that was still live and still
+            # billing, and the billing page then offered to cancel it again.
+            status=(
+                _normalise_status(subscription.get("status"))
+                or _STATUS_BY_EVENT.get(event_type)
+            ),
+            cancel_at_period_end=_bool_or_none(subscription.get("cancel_at_period_end")),
             plan_key=self._plan_key(subscription),
             subscription_id=_str_or_none(subscription.get("id")),
             customer_id=_str_or_none(subscription.get("customer_id")),
@@ -423,6 +477,24 @@ class PolarProvider:
 
 def _str_or_none(value: Any) -> str | None:
     return str(value) if value else None
+
+
+#: Polar's own status vocabulary, mapped onto what service_state understands.
+#: Anything unrecognised falls through to the event-type map rather than being
+#: written verbatim, since an unknown status in that column would be treated as
+#: "not a live status" and silence a paying tenant.
+_KNOWN_STATUSES = frozenset({"active", "trialing", "past_due", "canceled", "paused", "unpaid"})
+
+
+def _normalise_status(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    lowered = value.strip().lower()
+    return lowered if lowered in _KNOWN_STATUSES else None
+
+
+def _bool_or_none(value: Any) -> bool | None:
+    return value if isinstance(value, bool) else None
 
 
 def _int_or_none(value: Any) -> int | None:

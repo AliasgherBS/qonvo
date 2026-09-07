@@ -57,6 +57,11 @@ class BillingEvent:
     plan_key: str | None = None
     subscription_id: str | None = None
     customer_id: str | None = None
+    #: Whether the subscription is scheduled to end. Distinct from ``status``,
+    #: and the distinction is the whole point: a scheduled cancellation is still
+    #: ``active`` and still billing until the period end. Without this the
+    #: dashboard shows "renews on" to somebody who has already cancelled.
+    cancel_at_period_end: bool | None = None
     #: Which tenant this is about, when the provider echoes back the metadata we
     #: sent at checkout. Load-bearing for the *first* event of a subscription:
     #: before it there is no ``subscriptions`` row, so the provider's own ids
@@ -124,6 +129,26 @@ class BillingProvider(Protocol):
 
     def payments(self, *, customer_id: str, limit: int = 20) -> list[Payment]:
         """Payment history for this customer, newest first. Empty when unknown."""
+        ...
+
+    def set_cancellation(
+        self,
+        *,
+        subscription_id: str,
+        cancel: bool,
+        reason: str | None = None,
+        comment: str | None = None,
+    ) -> bool:
+        """Schedule or undo a cancellation at the end of the paid period.
+
+        Deliberately end-of-period rather than immediate. The customer has paid
+        for the month; taking it away the instant they click cancel is both
+        unkind and the thing that generates a refund request.
+
+        The provider stays the system of record. We are a client of its API, and
+        its webhook tells us what happened, so there is no second opinion about
+        the subscription's state even though the button lives here.
+        """
         ...
 
     def parse_event(self, headers: dict[str, str], raw: bytes) -> BillingEvent | None:
