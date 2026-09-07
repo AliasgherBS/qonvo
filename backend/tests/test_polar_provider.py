@@ -395,3 +395,60 @@ def test_a_short_coincidental_decode_is_not_treated_as_a_key():
     keys = PolarProvider._candidate_keys("whsec_ab")
 
     assert all(len(k) >= 16 or k in (b"whsec_ab", b"ab") for k in keys)
+
+
+# --- the first payment ----------------------------------------------------------- #
+# The event that creates a subscriptions row is the first one, so at the moment
+# it arrives there is nothing for provider_subscription_id to match. Without the
+# echoed metadata a customer's first payment resolves to no tenant, answers 200,
+# and leaves them on their old plan having paid for a new one. Silently, both
+# ways.
+@pytest.mark.parametrize(
+    "data",
+    [
+        # A subscription event: the subscription *is* the payload.
+        {"id": "sub_1", "metadata": {"tenant_id": "11111111-1111-1111-1111-111111111111"}},
+        # An order event: the subscription is nested, metadata on the order.
+        {
+            "id": "ord_1",
+            "metadata": {"tenant_id": "11111111-1111-1111-1111-111111111111"},
+            "subscription": {"id": "sub_1"},
+        },
+        # Metadata on the nested subscription instead.
+        {
+            "id": "ord_1",
+            "subscription": {
+                "id": "sub_1",
+                "metadata": {"tenant_id": "11111111-1111-1111-1111-111111111111"},
+            },
+        },
+        # Attached to the checkout.
+        {
+            "id": "sub_1",
+            "checkout": {"metadata": {"tenant_id": "11111111-1111-1111-1111-111111111111"}},
+        },
+    ],
+)
+def test_the_tenant_id_survives_wherever_polar_echoes_it(polar, data):
+    body = _body("subscription.created", **data)
+    event = polar.parse_event(_sign(RAW_SECRET.encode(), body), body)
+
+    assert event.tenant_id == "11111111-1111-1111-1111-111111111111"
+
+
+def test_no_metadata_leaves_the_tenant_unresolved_rather_than_guessed(polar):
+    """Falling back to the provider ids is correct for every event after the
+    first. Inventing a tenant would be worse than not knowing."""
+    body = _body("subscription.updated", id="sub_1")
+    event = polar.parse_event(_sign(RAW_SECRET.encode(), body), body)
+
+    assert event.tenant_id is None
+
+
+def test_checkout_sends_the_tenant_id_so_there_is_something_to_echo():
+    """The two halves have to agree. A checkout that omitted it would make the
+    reader above permanently useless, and nothing else would fail."""
+    import inspect
+
+    source = inspect.getsource(PolarProvider.checkout)
+    assert '"tenant_id": tenant_id' in source

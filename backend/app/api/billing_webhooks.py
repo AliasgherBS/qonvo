@@ -27,6 +27,7 @@ from app.billing.service import record_event, set_subscription, subscription_fie
 from app.core.logging import logger
 from app.core.tenancy import system_session
 from app.models.billing import Subscription
+from app.models.tenant import Tenant
 
 router = APIRouter(tags=["billing"])
 
@@ -34,11 +35,37 @@ router = APIRouter(tags=["billing"])
 async def _resolve_tenant(event: BillingEvent) -> uuid.UUID | None:
     """Find the tenant this event belongs to.
 
-    Matched on the provider's own ids, since the webhook carries no Qonvo
-    identity of its own. A first-ever subscription therefore needs the tenant id
-    to have been passed through checkout as provider metadata, which each
-    merchant-of-record adapter is responsible for supplying.
+    Metadata first, then the provider's own ids.
+
+    The order matters, and getting it wrong is silent. Matching on
+    ``provider_subscription_id`` only works once a ``subscriptions`` row exists,
+    and the event that creates that row is the very first one: a customer's
+    first payment arrives with nothing to match against, resolves to no tenant,
+    and answers 200. They would keep their old plan having paid for a new one,
+    and neither they nor we would be told.
+
+    So the adapter echoes our own tenant id back through checkout metadata, and
+    this reads it. Trusting it is fine: the value originated from our own
+    checkout call and the delivery carrying it has already been signature
+    verified as coming from the provider.
     """
+    if event.tenant_id:
+        try:
+            claimed = uuid.UUID(event.tenant_id)
+        except (ValueError, AttributeError, TypeError):
+            logger.warning(f"billing event carried an unusable tenant id: {event.tenant_id!r}")
+        else:
+            # Confirmed against the table rather than taken on faith. A tenant
+            # deleted between checkout and payment would otherwise write
+            # subscription rows nothing owns.
+            async with system_session() as db:
+                exists = (
+                    await db.execute(select(Tenant.id).where(Tenant.id == claimed))
+                ).scalar_one_or_none()
+            if exists is not None:
+                return claimed
+            logger.warning(f"billing event named an unknown tenant: {claimed}")
+
     async with system_session() as db:
         for column, value in (
             (Subscription.provider_subscription_id, event.subscription_id),

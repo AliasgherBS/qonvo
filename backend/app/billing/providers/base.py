@@ -57,6 +57,11 @@ class BillingEvent:
     plan_key: str | None = None
     subscription_id: str | None = None
     customer_id: str | None = None
+    #: Which tenant this is about, when the provider echoes back the metadata we
+    #: sent at checkout. Load-bearing for the *first* event of a subscription:
+    #: before it there is no ``subscriptions`` row, so the provider's own ids
+    #: match nothing and the tenant is unresolvable without this.
+    tenant_id: str | None = None
     current_period_end: datetime | None = None
 
 

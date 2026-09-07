@@ -258,6 +258,7 @@ class PolarProvider:
 
         return BillingEvent(
             provider=self.key,
+            tenant_id=self._tenant_id(data, subscription),
             # Standard Webhooks guarantees this is unique per delivery, and it
             # is what billing_events dedupes on. Merchants of record retry.
             event_id=self._event_id(headers, payload),
@@ -276,6 +277,28 @@ class PolarProvider:
         # event dedupes correctly. The body id is a fallback for a hand-crafted
         # replay in a test.
         return str(lower.get("webhook-id") or payload.get("id") or "")
+
+    @staticmethod
+    def _tenant_id(data: dict[str, Any], subscription: dict[str, Any]) -> str | None:
+        """Our own tenant id, echoed back through checkout metadata.
+
+        Checked in several places for the same reason ``_plan_key`` is: Polar
+        copies checkout metadata onto the objects it creates, but which object
+        carries it depends on the event. An order event nests the subscription;
+        a subscription event is the subscription; and a checkout may be attached
+        to either.
+
+        This is the only thing that makes a customer's *first* payment
+        resolvable, since before it no ``subscriptions`` row exists for the
+        provider ids to match.
+        """
+        for holder in (subscription, data, data.get("checkout") or {}):
+            if not isinstance(holder, dict):
+                continue
+            metadata = holder.get("metadata")
+            if isinstance(metadata, dict) and metadata.get("tenant_id"):
+                return str(metadata["tenant_id"])
+        return None
 
     @staticmethod
     def _plan_key(subscription: dict[str, Any]) -> str | None:
