@@ -18,7 +18,7 @@ from typing import Any
 from fastapi import APIRouter, Request, Response, status
 from sqlalchemy import select
 
-from app.billing.providers.base import BillingEvent
+from app.billing.providers.base import BillingEvent, InvalidWebhookSignature
 from app.billing.providers.registry import (
     UnknownBillingProvider,
     resolve_billing_provider,
@@ -64,12 +64,23 @@ async def billing_webhook(provider: str, request: Request, response: Response) -
         response.status_code = status.HTTP_404_NOT_FOUND
         return {"status": "unknown_provider"}
 
-    event = adapter.parse_event(dict(request.headers), raw)
-    if event is None:
-        # Covers both a bad signature and a provider that accepts no webhooks.
-        logger.bind(provider=provider).warning("billing webhook rejected")
+    try:
+        event = adapter.parse_event(dict(request.headers), raw)
+    except InvalidWebhookSignature:
+        # Loud on purpose. A wrong signing secret answering 200 would look like
+        # a working integration in the provider's delivery log, and nobody would
+        # find out until a customer paid and got nothing.
+        logger.bind(provider=provider).warning("billing webhook failed verification")
         response.status_code = status.HTTP_401_UNAUTHORIZED
         return {"status": "unauthorized"}
+
+    if event is None:
+        # Authentic, just not something we act on. Providers send far more event
+        # types than any integration uses, and answering an error to those gets
+        # the endpoint disabled: same reasoning as the unknown-subscription case
+        # below, which this used to contradict.
+        logger.bind(provider=provider).info("billing webhook not actionable")
+        return {"status": "ignored", "reason": "not_actionable"}
 
     bound = logger.bind(provider=provider, event_id=event.event_id, type=event.type)
 
