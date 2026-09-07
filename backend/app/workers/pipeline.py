@@ -890,11 +890,25 @@ async def _run_pipeline_inner(
         # message the customer about the business's account status.
         tenant_row = (
             await db.execute(
-                select(Tenant.status, Tenant.plan, Tenant.trial_ends_at).where(
-                    Tenant.id == tenant_uuid
-                )
+                select(
+                    Tenant.status, Tenant.plan, Tenant.trial_ends_at, Tenant.rep_active
+                ).where(Tenant.id == tenant_uuid)
             )
         ).one_or_none()
+
+        # --- Gate: the rep is switched off (spec §3) ---
+        # Additional to the entitlement gate below, never a replacement: both
+        # must pass. This one is the owner's own choice, and it is checked first
+        # because it is the cheapest and the most explicit.
+        #
+        # The message is already stored and already visible in the inbox by this
+        # point (phase 1 committed it), which is the behaviour that makes an off
+        # rep useful rather than a black hole: the owner answers by hand and
+        # loses nothing.
+        if tenant_row is not None and not tenant_row.rep_active:
+            bound.info("rep is switched off — storing the message, not replying")
+            return PipelineResult(reply_text="", meta={"gate": "rep_inactive"})
+
         if tenant_row is not None:
             entitlement = service_state(
                 tenant_status=tenant_row.status,
