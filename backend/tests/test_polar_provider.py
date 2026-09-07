@@ -339,3 +339,59 @@ def test_a_provider_outage_does_not_500_the_upgrade(monkeypatch):
 
     assert checkout.url is None
     assert checkout.instructions
+
+
+# --- a real secret's shape ------------------------------------------------------- #
+# Written against the shape of an actual Polar secret rather than an invented
+# one, because the invented ones in this file all happened to be verifiable and
+# a real one was not: a Standard Webhooks secret is UNPADDED base64, so a
+# 32-byte key is 43 characters and 43 % 4 == 3, which fails a strict decode on
+# length alone. That left the post-2026-09-08 scheme unverifiable while every
+# test here passed.
+REAL_SHAPE = "whsec_" + base64.b64encode(b"x" * 32).decode().rstrip("=")
+
+
+def test_a_real_unpadded_secret_yields_its_32_byte_key():
+    keys = PolarProvider._candidate_keys(REAL_SHAPE)
+
+    assert any(len(k) == 32 for k in keys), (
+        "the 32-byte signing key was not derived. Standard Webhooks secrets are "
+        "unpadded base64 and must be padded before decoding."
+    )
+
+
+def test_both_schemes_verify_against_one_configured_secret(monkeypatch):
+    """The whole point of trying several derivations: an operator should not
+    have to know which side of 2026-09-08 their Polar account was created on."""
+    monkeypatch.setattr(settings, "polar_webhook_secret", REAL_SHAPE)
+    monkeypatch.setattr(settings, "billing_price_map", {})
+    provider = PolarProvider()
+    body = _body("subscription.created", id="sub_1")
+
+    # Pre-2026-09-08: the secret string itself is the HMAC key.
+    old_scheme = _sign(REAL_SHAPE.encode(), body)
+    assert provider.parse_event(old_scheme, body) is not None
+
+    # Post-2026-09-08: the base64-decoded body is the key.
+    new_key = base64.b64decode(REAL_SHAPE.removeprefix("whsec_") + "=")
+    new_scheme = _sign(new_key, body)
+    assert provider.parse_event(new_scheme, body) is not None
+
+
+def test_widening_the_key_set_does_not_admit_a_forgery(monkeypatch):
+    """Trying several derivations is only safe if none of them is guessable.
+    A signature made with a key we never derive must still be rejected."""
+    monkeypatch.setattr(settings, "polar_webhook_secret", REAL_SHAPE)
+    monkeypatch.setattr(settings, "billing_price_map", {})
+    body = _body("subscription.created", id="sub_1")
+
+    with pytest.raises(InvalidWebhookSignature):
+        PolarProvider().parse_event(_sign(b"attacker-chosen-key", body), body)
+
+
+def test_a_short_coincidental_decode_is_not_treated_as_a_key():
+    """Many non-base64 strings decode to a few bytes once padded. Admitting
+    those would widen what counts as a valid signature for no benefit."""
+    keys = PolarProvider._candidate_keys("whsec_ab")
+
+    assert all(len(k) >= 16 or k in (b"whsec_ab", b"ab") for k in keys)

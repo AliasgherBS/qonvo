@@ -161,12 +161,22 @@ class PolarProvider:
         if body != secret:
             keys.append(body.encode())
         for candidate in (secret, body):
-            try:
-                decoded = base64.b64decode(candidate, validate=True)
-            except Exception:  # noqa: BLE001 - not base64, which is fine
-                continue
-            if decoded and decoded not in keys:
-                keys.append(decoded)
+            # Pad before decoding. Standard Webhooks secrets are unpadded
+            # base64, so a real one fails a strict decode on length alone: a
+            # 32-byte key is 43 characters, and 43 % 4 == 3. Skipping it left
+            # the post-2026-09-08 scheme unverifiable, which is precisely the
+            # 401-that-looks-like-a-bad-secret this function exists to avoid.
+            padded = candidate + "=" * (-len(candidate) % 4)
+            for decoder in (base64.b64decode, base64.urlsafe_b64decode):
+                try:
+                    decoded = decoder(padded)
+                except Exception:  # noqa: BLE001 - not base64, which is fine
+                    continue
+                # A signing key is 32 bytes. Anything much shorter is almost
+                # certainly a coincidental decode of a non-base64 string, and
+                # adding it would only widen what counts as a valid signature.
+                if len(decoded) >= 16 and decoded not in keys:
+                    keys.append(decoded)
         return keys
 
     def _verify(self, headers: dict[str, str], raw: bytes) -> bool:
