@@ -257,9 +257,18 @@ cd backend && QONVO_SYSTEM_DATABASE_URL=... QONVO_JWT_SECRET=... \
     dict (`config = {**config, ...}`) — in-place mutation is never flushed. And config now mixes
     owner-written with system-written keys, so `upsert_integration` **merges** rather than replaces
     (a PUT of just `timezone` used to wipe `calendar_id`).
-  - `FORCE ROW LEVEL SECURITY` applies to the table owner, and the migration role `qonvo` *is* the
-    owner — so a bare `UPDATE <tenant_table> SET …` in a migration matches **zero rows**
-    (`0004_billing.py:29` is already silently a no-op for this reason).
+  - **Corrected 2026-09-07.** This note used to say a bare `UPDATE <tenant_table>` in a
+    migration matches zero rows under `FORCE ROW LEVEL SECURITY`, and cited
+    `0004_billing.py:29` as a silent no-op. **That is wrong.** The migration role `qonvo` is
+    the bootstrap superuser (`rolsuper = true`), and a superuser bypasses row security
+    including FORCE, so such an UPDATE does match. 0004's statement was a no-op only because
+    its `WHERE plan='trial' AND trial_ends_at IS NULL` matched nothing: every tenant was
+    created after signup existed and already had a `trial_ends_at`.
+    RLS is still real where it matters, verified: `qonvo_app` sees **0 rows** in `tenants`
+    with no `app.tenant_id` set. The caution worth keeping is narrower: a migration that
+    backfills via UPDATE is relying on the migration role being a superuser. Prefer
+    `ADD COLUMN ... DEFAULT <value>`, which fills existing rows as DDL and does not care
+    (`0009_rep_activation.py`).
   - The OAuth callback uses `tenant_session`, **not** `system_session`: its state token was minted
     inside an authenticated request and is single-use (Redis `GETDEL`), so the tenant is already
     established. Unlike the WAHA webhook, it has no cross-tenant lookup to do, and handing an

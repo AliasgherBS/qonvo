@@ -808,6 +808,56 @@ export const onboarding = {
 };
 
 // ---------------------------------------------------------------------------
+// Activation: the rep's account-level on/off switch
+// ---------------------------------------------------------------------------
+
+export interface ActivationReadiness {
+  whatsappConnected: boolean;
+  hasGrounding: boolean;
+  businessNameSet: boolean;
+}
+
+export interface Activation {
+  repActive: boolean;
+  /** Advisory. Shown as what is missing, never used to refuse the switch. */
+  readiness: ActivationReadiness;
+  ready: boolean;
+}
+
+interface ActivationDto {
+  rep_active: boolean;
+  readiness: {
+    whatsapp_connected: boolean;
+    has_grounding: boolean;
+    business_name_set: boolean;
+  };
+  ready: boolean;
+}
+
+function mapActivation(dto: ActivationDto): Activation {
+  return {
+    repActive: dto.rep_active,
+    readiness: {
+      whatsappConnected: dto.readiness.whatsapp_connected,
+      hasGrounding: dto.readiness.has_grounding,
+      businessNameSet: dto.readiness.business_name_set,
+    },
+    ready: dto.ready,
+  };
+}
+
+export const activation = {
+  get: (opts: CallOpts = {}) =>
+    apiFetch<ActivationDto>("/api/activation", opts).then(mapActivation),
+  set: (repActive: boolean, opts: CallOpts = {}) =>
+    apiFetch<ActivationDto>("/api/activation", {
+      ...opts,
+      method: "PUT",
+      body: JSON.stringify({ rep_active: repActive }),
+    }).then(mapActivation),
+};
+
+// ---------------------------------------------------------------------------
 // Team seats (invite staff / co-owners)
 // ---------------------------------------------------------------------------
 

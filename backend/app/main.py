@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
     account,
+    activation,
     admin,
     auth,
     billing,
@@ -95,6 +96,7 @@ app.include_router(billing.router)
 app.include_router(billing_webhooks.router)
 app.include_router(notifications.router)
 app.include_router(onboarding.router)
+app.include_router(activation.router)
 app.include_router(team.router)
 app.include_router(account.router)
 app.include_router(admin.router)

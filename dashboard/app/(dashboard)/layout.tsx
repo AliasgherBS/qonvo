@@ -4,6 +4,7 @@ import { ConnectionBanner } from "@/components/connection-banner";
 import { MobileNav } from "@/components/mobile-nav";
 import { Sidebar } from "@/components/sidebar";
 import { Topbar } from "@/components/topbar";
+import { RepSwitch } from "@/components/rep-switch";
 import { TrialBanner } from "@/components/trial-banner";
 import { auth } from "@/auth";
 
@@ -34,6 +35,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
             <>
               <TrialBanner />
               <ConnectionBanner />
+              {/* On every page, not only the home one. The reason to reach for
+                  it is usually urgent, and hunting for it is the failure. */}
+              <RepSwitch />
             </>
           )}
           {children}
