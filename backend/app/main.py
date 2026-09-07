@@ -66,6 +66,40 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+#: Headers every API response carries. Fewer than the dashboard needs, because
+#: this host serves JSON to a known client rather than documents to a browser,
+#: but the omissions were still real: a JSON endpoint with no `nosniff` can be
+#: coerced into executing, and one with no `Referrer-Policy` leaks its own URL
+#: onward. `api.qonvo.org` had none of these.
+_SECURITY_HEADERS = {
+    "Strict-Transport-Security": "max-age=63072000; includeSubDomains",
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    # Nothing here is a document, so nothing here should ever be framed or
+    # loaded as one.
+    "X-Frame-Options": "DENY",
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+    "Cross-Origin-Resource-Policy": "same-site",
+}
+
+
+@app.middleware("http")
+async def _security_headers(request, call_next):
+    """Attach the security headers to every response, including errors.
+
+    Set here rather than in Caddy or the tunnel so they travel with the
+    application: this API is reached through a Cloudflare Tunnel today and will
+    be behind Caddy on a VPS later, and a header that lives in the proxy
+    silently disappears when the proxy changes.
+    """
+    response = await call_next(request)
+    for key, value in _SECURITY_HEADERS.items():
+        # setdefault, not assignment: a route that deliberately set its own
+        # (the docs UI needs a looser CSP) must win over the default.
+        response.headers.setdefault(key, value)
+    return response
+
+
 @app.middleware("http")
 async def _metrics_middleware(request, call_next):
     """Record per-route request counts + durations for GET /metrics (§12)."""
