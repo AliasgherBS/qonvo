@@ -27,19 +27,36 @@ class Plan:
 
 #: Ordered by quota: this is the order an upgrade page renders.
 #:
-#: ``knowledge_sources`` bounds the ingestion queue; ``knowledge_chars`` bounds
-#: what actually costs money, since every chunk is an embedding row in pgvector
-#: and is re-embedded on re-crawl. The trial matches Starter deliberately: a
-#: trial that cannot hold a real price list does not demonstrate the product.
+#: The four allowances bound four different resources, and the reasons differ
+#: enough that copying one shape onto another would price it wrongly.
+#:
+#: ``monthly_message_quota`` is the headline number and the per-reply cost.
+#:
+#: ``monthly_voice_minutes`` is the expensive one. Voice is 54-74% of
+#: per-tenant AI cost, and one allowance covers both directions: speech-to-text
+#: is roughly 30x cheaper than text-to-speech, so the outbound leg dominates
+#: whatever a customer sends, and two numbers would be more accurate and much
+#: harder to explain.
+#:
+#: ``knowledge_chars`` is deliberately generous. Retrieval means only the
+#: relevant chunks ever reach a prompt, so a large corpus costs storage and a
+#: one-off embedding. It never makes a reply more expensive, which is exactly
+#: what a per-turn cap would wrongly imply.
+#:
+#: ``knowledge_upload_bytes`` is deliberately not. Raw files are kept after
+#: ingestion so re-ingestion stays possible, so this is real disk on a single
+#: VPS, and it is the number that stops one tenant filling it.
 PLANS: dict[str, Plan] = {
     TRIAL_PLAN: Plan(
         key=TRIAL_PLAN,
         name="Trial",
         entitlements={
             "monthly_message_quota": 300,
+            "monthly_voice_minutes": 5,
             "seats": 2,
-            "knowledge_sources": 25,
-            "knowledge_chars": 500_000,
+            "knowledge_sources": 50,
+            "knowledge_chars": 2_000_000,
+            "knowledge_upload_bytes": 50 * 1024 * 1024,
         },
     ),
     "starter": Plan(
@@ -47,9 +64,11 @@ PLANS: dict[str, Plan] = {
         name="Starter",
         entitlements={
             "monthly_message_quota": 1_000,
+            "monthly_voice_minutes": 5,
             "seats": 2,
-            "knowledge_sources": 25,
-            "knowledge_chars": 500_000,
+            "knowledge_sources": 50,
+            "knowledge_chars": 2_000_000,
+            "knowledge_upload_bytes": 50 * 1024 * 1024,
         },
     ),
     "growth": Plan(
@@ -57,9 +76,11 @@ PLANS: dict[str, Plan] = {
         name="Growth",
         entitlements={
             "monthly_message_quota": 5_000,
+            "monthly_voice_minutes": 20,
             "seats": 5,
-            "knowledge_sources": 50,
-            "knowledge_chars": 2_000_000,
+            "knowledge_sources": 150,
+            "knowledge_chars": 5_000_000,
+            "knowledge_upload_bytes": 150 * 1024 * 1024,
         },
     ),
     "scale": Plan(
@@ -67,9 +88,11 @@ PLANS: dict[str, Plan] = {
         name="Scale",
         entitlements={
             "monthly_message_quota": 20_000,
+            "monthly_voice_minutes": 100,
             "seats": 15,
-            "knowledge_sources": 100,
-            "knowledge_chars": 10_000_000,
+            "knowledge_sources": 400,
+            "knowledge_chars": 15_000_000,
+            "knowledge_upload_bytes": 500 * 1024 * 1024,
         },
     ),
 }

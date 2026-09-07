@@ -266,7 +266,7 @@ async def upload_source_file(
     # total, so the plan limit is checked here too. Bytes are a stand-in for
     # characters at this point; the worker re-checks once it has real text.
     try:
-        await check_room_for(db, tenant_id, added_chars=total)
+        await check_room_for(db, tenant_id, added_bytes=total)
     except LimitExceeded as err:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=as_http_detail(err)
@@ -279,7 +279,15 @@ async def upload_source_file(
     dest_path.write_bytes(data)
 
     row.status = "pending_ingest"
-    row.meta = {**row.meta, "upload_path": str(dest_path), "content_type": file.content_type}
+    row.meta = {
+        **row.meta,
+        "upload_path": str(dest_path),
+        "content_type": file.content_type,
+        # Recorded here so the disk quota can be summed in SQL. The raw file is
+        # kept after ingestion so re-ingestion stays possible, which is exactly
+        # why it needs a bound.
+        "upload_bytes": total,
+    }
     await db.flush()
     await arq.enqueue_job("ingest_knowledge_source", str(row.id), str(tenant_id))
     return _to_response(row)
