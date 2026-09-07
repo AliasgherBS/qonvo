@@ -49,6 +49,7 @@ __all__ = [
     "VOLT",
     "owner_alert",
     "password_reset",
+    "plan_upgraded",
     "shell",
     "team_invite",
     "welcome",
@@ -389,3 +390,111 @@ def owner_alert(subject: str, body_text: str) -> str:
         body_html=paragraphs or _p(body_text),
         footer_note="You are getting this because you are the owner of this Qonvo workspace.",
     )
+
+def plan_upgraded(
+    *,
+    business: str,
+    plan_name: str,
+    plan_key: str,
+    dashboard_url: str,
+    amount_cents: int | None = None,
+    currency: str | None = None,
+    invoice_number: str | None = None,
+) -> tuple[str, str, str]:
+    """Confirmation that a paid plan is now active.
+
+    Deliberately **not** a receipt. Qonvo sells through a merchant of record, so
+    the provider is the seller of record: it collects the tax, it issues the
+    invoice, and it emails its own confirmation with a portal link to download
+    both. Sending a second document for one sale would be wrong, not merely
+    redundant.
+
+    What is missing from the provider's receipt is everything about the product.
+    It says a business paid $18; it cannot say their allowance just went from
+    300 messages to 5,000. That is what this is for, and it is why the numbers
+    come from the plan catalogue rather than being written here.
+
+    The amount is quoted only as a reference, from the figure the provider
+    reported for a payment that already happened. That is not the same as a
+    price living in this repo, and prices still do not.
+    """
+    plan = PLANS.get(plan_key)
+    entitlements = plan.entitlements if plan else {}
+    quota = int(entitlements.get("monthly_message_quota", 0))
+    voice = int(entitlements.get("monthly_voice_minutes", 0))
+    seats = int(entitlements.get("seats", 0))
+    sources = int(entitlements.get("knowledge_sources", 0))
+
+    whats_new = [
+        ("Messages", f"{quota:,} a month, up from the trial's {_trial_quota():,}."),
+        ("Voice replies", f"{voice} minutes a month."),
+        ("Team", f"{seats} seats, so you can bring someone in to help."),
+        ("Knowledge", f"Up to {sources} sources for your rep to answer from."),
+    ]
+
+    charged = ""
+    if amount_cents is not None and currency:
+        charged = f"{currency.upper()} {amount_cents / 100:,.2f}"
+
+    subject = f"You are on Qonvo {plan_name}"
+
+    text = (
+        f"Thank you.\n\n"
+        f"{business} is now on the {plan_name} plan, and the new allowances are "
+        f"live already. Nothing to switch on.\n\n"
+        "What changed:\n"
+        + "".join(f"  - {label}: {detail}\n" for label, detail in whats_new)
+        + (f"\nCharged: {charged}\n" if charged else "")
+        + (f"Invoice: {invoice_number}\n" if invoice_number else "")
+        + "\nYour receipt and invoice come from Polar, our payment provider, in a "
+        "separate email. You can download them any time from the link in it.\n\n"
+        f"See your usage: {dashboard_url}/billing\n\n"
+        "If anything is unclear or you want a hand making the most of the extra "
+        "room, just reply to this email. A person reads it.\n\n"
+        "The Qonvo team"
+    )
+
+    reference = ""
+    if charged or invoice_number:
+        bits = []
+        if charged:
+            bits.append(f"Charged <strong>{charged}</strong>")
+        if invoice_number:
+            bits.append(f"invoice <strong>{invoice_number}</strong>")
+        reference = _volt_note(
+            "Your receipt",
+            ", ".join(bits)
+            + ". The receipt and invoice come from <strong>Polar</strong>, our payment "
+            "provider, in a separate email, and can be downloaded any time from the "
+            "link in it.",
+        )
+
+    body = (
+        _p("Thank you.")
+        + _p(
+            f'<strong style="color:{INK};">{business}</strong> is now on the '
+            f'<strong style="color:{INK};">{plan_name}</strong> plan. The new '
+            "allowances are live already, so there is nothing to switch on."
+        )
+        + _divider()
+        + _p("What changed", size=16, color=INK, top=20)
+        + _feature_rows(whats_new)
+        + reference
+    )
+    html = shell(
+        preheader=f"{business} is on {plan_name}. The new allowances are live already.",
+        eyebrow="Plan upgraded",
+        heading=f"You are on {plan_name}",
+        body_html=body,
+        cta_label="See your usage",
+        cta_url=f"{dashboard_url}/billing",
+        footer_note=(
+            "Want a hand making the most of the extra room? Reply to this email. "
+            "A person reads it."
+        ),
+    )
+    return subject, text, html
+
+
+def _trial_quota() -> int:
+    return int(PLANS[TRIAL_PLAN].entitlements["monthly_message_quota"])

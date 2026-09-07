@@ -268,6 +268,13 @@ class PolarProvider:
             subscription_id=_str_or_none(subscription.get("id")),
             customer_id=_str_or_none(subscription.get("customer_id")),
             current_period_end=_parse_time(subscription.get("current_period_end")),
+            # Order-shaped fields. Present on order.paid and absent on the
+            # subscription events, which is why the confirmation email is sent
+            # from the former: it is the only one that knows money moved.
+            amount_cents=_int_or_none(data.get("total_amount")),
+            currency=_str_or_none(data.get("currency")),
+            invoice_number=_str_or_none(data.get("invoice_number")),
+            billing_reason=_str_or_none(data.get("billing_reason")),
         )
 
     @staticmethod
@@ -328,6 +335,17 @@ class PolarProvider:
 
 def _str_or_none(value: Any) -> str | None:
     return str(value) if value else None
+
+
+def _int_or_none(value: Any) -> int | None:
+    # 0 is a real amount (a fully discounted order), so this cannot use the
+    # truthiness shortcut the string version does.
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _parse_time(value: Any) -> datetime | None:

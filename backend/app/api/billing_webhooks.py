@@ -131,8 +131,57 @@ async def billing_webhook(provider: str, request: Request, response: Response) -
         await set_subscription(db, tenant_id, subscription_fields_from_event(event))
         await db.commit()
 
+    await _confirm_upgrade_by_email(bound, tenant_id, event)
+
     bound.info("billing event applied")
     return {"status": "ok"}
+
+
+async def _confirm_upgrade_by_email(bound: Any, tenant_id: uuid.UUID, event: BillingEvent) -> None:
+    """Email the owner that their new plan is live. At most once per upgrade.
+
+    Three things decide when this fires, and each of them stops a real
+    duplicate.
+
+    Only ``order.paid``, because one payment produced four events in the live
+    sandbox test: subscription.created, .active, .updated and order.paid. Any
+    other choice sends four emails, and order.paid is the only one that knows
+    money actually moved or what was charged.
+
+    Only ``subscription_create``, so a renewal is silent. Telling someone
+    monthly that their card worked is noise the provider's own receipt already
+    covers, and the interesting thing here is a change of allowance, which a
+    renewal is not.
+
+    And after ``record_event`` committed, so the idempotency ledger has already
+    turned a provider retry into a duplicate and returned. Sending before that
+    would email again on every retry.
+
+    Runs after the commit rather than inside it, which is the opposite of the
+    usual rule in this codebase and deliberate: a failed send must not roll back
+    a payment that has already been applied. Failure is swallowed either way,
+    since send_email never raises.
+    """
+    if event.type != "order.paid" or event.billing_reason != "subscription_create":
+        return
+    if not event.plan_key:
+        # Nothing true to say about which plan they are on. Better silent than
+        # a confirmation naming the wrong allowances.
+        bound.warning("paid order with no resolvable plan, skipping the confirmation email")
+        return
+
+    from app.services.email import send_plan_upgraded_email
+
+    async with system_session() as db:
+        sent = await send_plan_upgraded_email(
+            db,
+            tenant_id,
+            plan_key=event.plan_key,
+            amount_cents=event.amount_cents,
+            currency=event.currency,
+            invoice_number=event.invoice_number,
+        )
+    bound.info(f"plan confirmation email sent={sent}")
 
 
 __all__ = ["router"]
