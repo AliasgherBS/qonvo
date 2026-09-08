@@ -44,13 +44,31 @@ export function Capabilities() {
   return (
     <section className="border-t border-border/60">
       <div className="mx-auto w-full max-w-7xl px-4 py-24 sm:py-32">
-        <Reveal>
-          <h2 className="max-w-2xl text-4xl font-extrabold leading-tight tracking-tight md:text-5xl">
-            It does not just chat.
-            <br />
-            It does the <span className="text-primary">work.</span>
-          </h2>
-        </Reveal>
+        {/*
+          Heading and lede side by side (teardown L4). The heading was capped
+          at `max-w-2xl` with nothing opposite it, so the row above the bento
+          left the right half of a desktop viewport empty and made this the
+          second of three consecutive sections with that same silhouette. The
+          lede is not decoration: it names the four outcomes the four cells
+          then spell out, which is the job the empty half was not doing.
+        */}
+        <div className="grid gap-8 lg:grid-cols-[1.1fr_0.9fr] lg:items-end lg:gap-20">
+          <Reveal>
+            <h2 className="text-4xl font-extrabold leading-tight tracking-tight md:text-5xl">
+              It does not just chat.
+              <br />
+              It does the <span className="text-primary">work.</span>
+            </h2>
+          </Reveal>
+
+          <Reveal delay={0.08}>
+            <p className="text-lg leading-relaxed text-muted-foreground">
+              Every reply can end in something actually happening: a slot held
+              in your calendar, an order written down, a lead in your sheet, or
+              the conversation handed to you.
+            </p>
+          </Reveal>
+        </div>
 
         <RevealGroup className="mt-14 grid gap-4 md:grid-cols-3" stagger={0.09}>
           {CAPABILITIES.map(({ icon: Icon, title, body, wide }) => (

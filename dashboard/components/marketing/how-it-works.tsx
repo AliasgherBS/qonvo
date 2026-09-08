@@ -6,7 +6,20 @@ import { Reveal, RevealGroup, RevealItem } from "@/components/marketing/reveal";
  *
  * Vertical staggered rows with a connecting rule, rather than three equal
  * cards. Pinning three short steps would cost scroll length for no gain, so
- * this is not a sticky stack.
+ * this is not a sticky stack of panels.
+ *
+ * The *heading* is sticky, though, and that is the L4 fix. The heading used to
+ * run full width with the three steps stacked beneath it at `max-w-3xl`,
+ * leaving the right half of a desktop viewport empty and making this the third
+ * consecutive section with that silhouette. Now the heading holds the left
+ * column and stays with the steps as they pass, which fills the width, keeps
+ * the claim on screen while the proof of it scrolls, and costs no new asset.
+ *
+ * The sticky wrapper is a plain div rather than the Reveal itself: Reveal is a
+ * motion element and stacking a transform onto a sticky element is a class of
+ * bug not worth inviting.
+ *
+ * `id` is the target of the header's "How it works" anchor (teardown L3).
  */
 const STEPS = [
   {
@@ -25,15 +38,20 @@ const STEPS = [
 
 export function HowItWorks() {
   return (
-    <section className="border-t border-border/60">
-      <div className="mx-auto w-full max-w-7xl px-4 py-24 sm:py-32">
-        <Reveal>
-          <h2 className="text-4xl font-extrabold leading-tight tracking-tight md:text-5xl">
-            Live in a day. <span className="text-primary">No code.</span>
-          </h2>
-        </Reveal>
+    <section id="how-it-works" className="border-t border-border/60">
+      <div className="mx-auto grid w-full max-w-7xl gap-12 px-4 py-24 sm:py-32 lg:grid-cols-[0.85fr_1.15fr] lg:gap-20">
+        <div className="lg:sticky lg:top-16 lg:self-start">
+          <Reveal>
+            <h2 className="text-4xl font-extrabold leading-tight tracking-tight md:text-5xl">
+              Live in a day. <span className="text-primary">No code.</span>
+            </h2>
+            <p className="mt-5 max-w-sm text-lg text-muted-foreground">
+              No new number for you, and nothing for your customers to install.
+            </p>
+          </Reveal>
+        </div>
 
-        <RevealGroup className="mt-14 max-w-3xl" stagger={0.12}>
+        <RevealGroup className="max-w-2xl" stagger={0.12}>
           {STEPS.map(({ title, body }, i) => (
             <RevealItem key={title}>
               <div className="flex gap-7 pb-14 last:pb-0">

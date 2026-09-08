@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
-import { isOwnerOnlyPath, isTenantPath } from "@/lib/nav-access";
+import { TENANT_PREFIXES, isOwnerOnlyPath, isTenantPath } from "@/lib/nav-access";
 import { cspWithNonce } from "@/lib/security-headers";
 
 /**
@@ -56,6 +56,40 @@ const PUBLIC_PREFIXES = [
 
 // Matched exactly, not by prefix — "/" as a prefix would make the whole app public.
 const PUBLIC_EXACT = ["/"];
+
+/**
+ * Every path prefix in the app that resolves to a real page behind auth.
+ *
+ * This exists for one reason (teardown A1): a URL that matches no route at all
+ * must reach Next's 404 rather than the login redirect. It used to reach the
+ * redirect, so a mistyped marketing link asked a stranger to sign in and a
+ * crawler recorded a soft 404 instead of a real one.
+ *
+ * Middleware runs before routing, so it cannot ask Next whether a route
+ * exists. It has to be told, and this is the telling. The tenant pages come
+ * from lib/nav-access, which the sidebar, the mobile bar and the redirects
+ * below already read, so a new tenant page has to be added there regardless.
+ * `/account` and `/admin` are the two that list does not cover, by design: it
+ * answers "which pages are a tenant's", and those two are neither.
+ *
+ * Why an omission here cannot make a page public. Middleware is not the only
+ * gate. Every route under app/(dashboard) renders inside a layout that calls
+ * `auth()` and redirects to /login when there is no session, and every API
+ * call those pages make carries the session's bearer token or 401s. Middleware
+ * is the gate that makes the redirect fast and gives it a callbackUrl; the
+ * layout is the gate that makes it safe. A route accidentally left out of this
+ * list therefore still redirects a signed-out visitor to /login, one hop later
+ * and without the callbackUrl. A route wrongly left *in* it is gated exactly as
+ * it is today. Neither mistake opens anything, which is why the list is allowed
+ * to be a list.
+ */
+const APP_PREFIXES = [...TENANT_PREFIXES, "/account", "/admin"];
+
+function isAppPath(pathname: string): boolean {
+  return APP_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
 
 /**
  * Query parameters that are credentials and must never persist in a URL.
@@ -168,7 +202,13 @@ export default auth((req) => {
   // where -- a hidden sidebar entry is decoration if the URL still loads.
   const adminHome = "/admin/tenants";
 
-  if (!isLoggedIn && !isPublicPath) {
+  // `isAppPath` is the A1 condition: without it, an unmatched URL took this
+  // branch and became a login page. With it, an unmatched URL falls all the way
+  // through to `NextResponse.next()` at the bottom, Next finds no route for it,
+  // and app/not-found.tsx renders with a real 404 status. A signed-in visitor
+  // already fell through this way, which is why they were the ones seeing the
+  // unstyled default.
+  if (!isLoggedIn && !isPublicPath && isAppPath(nextUrl.pathname)) {
     const loginUrl = new URL("/login", origin);
     loginUrl.searchParams.set("callbackUrl", nextUrl.pathname);
     // A Google sign-in that was refused for a reason leaves the reason on the

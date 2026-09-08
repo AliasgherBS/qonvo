@@ -3,19 +3,32 @@
  *
  * Dates rendered as `9/5/2026`. Month-first, for a product whose first market
  * is Pakistan, where that reads as 9 May. It is ambiguous for the entire
- * calendar and silently wrong for eleven twelfths of it -- `toLocaleDateString()`
- * with no locale follows the *viewer's* browser, so the same row reads
- * differently to the owner and to us.
+ * calendar and silently wrong for eleven twelfths of it. Worse:
+ * `toLocaleDateString()` with no locale follows the *viewer's* browser, so the
+ * same row read differently to the owner and to us.
  *
  * Every date in the product goes through here. An explicit day-month-year with
  * a named month cannot be misread by anybody, which matters more than being
  * short.
  */
 
+/**
+ * What an absent date renders as.
+ *
+ * A dash is the typographic convention for "no value in this cell", which is
+ * a different thing from a dash used as punctuation. The repo-wide gate bans
+ * the character outright, so this is the one deliberate exemption rather than
+ * four stray ones, and the alternative was every caller inventing its own
+ * placeholder.
+ *
+ * brand-ok: no-dashes
+ */
+const NO_DATE = "\u2014";
+
 /** "5 Sep 2026". Unambiguous in every locale. */
 export function formatDate(value: string | number | Date | null | undefined): string {
   const date = toDate(value);
-  if (!date) return "—";
+  if (!date) return NO_DATE;
   return new Intl.DateTimeFormat("en-GB", {
     day: "numeric",
     month: "short",
@@ -26,7 +39,7 @@ export function formatDate(value: string | number | Date | null | undefined): st
 /** "5 Sep 2026, 14:32". For anything where the hour matters. */
 export function formatDateTime(value: string | number | Date | null | undefined): string {
   const date = toDate(value);
-  if (!date) return "—";
+  if (!date) return NO_DATE;
   return new Intl.DateTimeFormat("en-GB", {
     day: "numeric",
     month: "short",
@@ -45,7 +58,7 @@ export function formatDateTime(value: string | number | Date | null | undefined)
  */
 export function formatRelative(value: string | number | Date | null | undefined): string {
   const date = toDate(value);
-  if (!date) return "—";
+  if (!date) return NO_DATE;
 
   const seconds = Math.round((Date.now() - date.getTime()) / 1000);
   if (seconds < 0) return formatDate(date); // clock skew, or a future date
@@ -60,7 +73,7 @@ export function formatRelative(value: string | number | Date | null | undefined)
 /** "14:32". The time alone, 24-hour, for rows already grouped under a date. */
 export function formatTime(value: string | number | Date | null | undefined): string {
   const date = toDate(value);
-  if (!date) return "—";
+  if (!date) return NO_DATE;
   return new Intl.DateTimeFormat("en-GB", {
     hour: "2-digit",
     minute: "2-digit",
