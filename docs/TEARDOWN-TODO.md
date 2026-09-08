@@ -57,6 +57,10 @@ the rehoming that follows.
 | ~~5~~ | ~~X6b~~ | Medium | **Done.** Rotating refresh keyed on a session id, capped at 14 days from the original sign-in; sign-out ends the session rather than one token |
 | ~~6~~ | ~~X4~~ | High | **Built.** TOTP (RFC 6238, verified against the RFC vectors), replay protection, `act` claim on impersonated tokens, audited actions attributed to the real admin. **Enrolment is the owner's to do** — see the deferred table |
 
+**Phases 1 to 9 are complete.** Every actionable finding is closed except
+the two recorded as skipped (V2's `country` field, S5's Team dead spot) and the
+six deferred below.
+
 **Phase 1 is complete.** Every security finding in the teardown is closed, bar
 one enrolment that is not code (see the deferred table).
 
@@ -66,9 +70,9 @@ Small, and they unblock or de-duplicate later work.
 
 | # | ID | Sev | What |
 |---|---|---|---|
-| 6 | L2 | Costly | "Unlimited knowledge about your business" contradicts the caps that shipped. A false claim on a public page — corrected first, before anything cosmetic |
+| ~~6~~ | ~~L2~~ | **Done** (landing claim corrected) | Costly | "Unlimited knowledge about your business" contradicts the caps that shipped. A false claim on a public page — corrected first, before anything cosmetic |
 | ~~7~~ | ~~K4~~ | Polish | **Done.** `dashboard/lib/format.ts` — `formatDate`, `formatDateTime`, `formatRelative`, `formatTime`, all pinned to en-GB so a date reads the same to the owner and to us |
-| 8 | A1 | Rough | Any unknown URL becomes a login page, or a bare browser 404. A real `not-found` page |
+| ~~8~~ | ~~A1~~ | **Done** (real 404) | Rough | Any unknown URL becomes a login page, or a bare browser 404. A real `not-found` page |
 
 ## Phase 3 — inbox
 
@@ -76,12 +80,12 @@ The largest change in how the product feels, per the report, and self-contained.
 
 | # | ID | Sev | What |
 |---|---|---|---|
-| 9 | I1 | Costly | Customers shown as `923009998877@c.us`. Push name where present, formatted number otherwise |
-| 10 | I2 | Broken | Composer starts below the fold at 1440×900; the whole page scrolls to reach it |
-| 11 | I3 | Broken | On a phone, tapping a conversation appears to do nothing — panes stack |
-| 12 | I4 | Rough | No search, no unread state, no dates. Breaks at 300 conversations |
-| 13 | I5 | Polish | Redundant "Customer"/"Bot" labels, Urdu line height, transcript density |
-| 14 | S4 | Rough | Notifications: no unread badge, no link through, and it quotes the model's reasoning at the owner |
+| ~~9~~ | ~~I1~~ | **Done** (names not addresses) | Costly | Customers shown as `923009998877@c.us`. Push name where present, formatted number otherwise |
+| ~~10~~ | ~~I2~~ | **Done** (composer on screen (measured)) | Broken | Composer starts below the fold at 1440×900; the whole page scrolls to reach it |
+| ~~11~~ | ~~I3~~ | **Done** (one pane on mobile) | Broken | On a phone, tapping a conversation appears to do nothing — panes stack |
+| ~~12~~ | ~~I4~~ | **Done** (search, unread, dates) | Rough | No search, no unread state, no dates. Breaks at 300 conversations |
+| ~~13~~ | ~~I5~~ | **Done** (transcript polish) | Polish | Redundant "Customer"/"Bot" labels, Urdu line height, transcript density |
+| ~~14~~ | ~~S4~~ | **Done** (badge, link, trimmed reason) | Rough | Notifications: no unread badge, no link through, and it quotes the model's reasoning at the owner |
 
 ## Phase 4 — information architecture
 
@@ -89,19 +93,19 @@ Must precede the per-page work below it: these move fields between pages.
 
 | # | ID | Sev | What |
 |---|---|---|---|
-| 15 | V1 | Costly | "Setup" is a lifecycle stage as a category. Rename the group to Connections |
-| 16 | V2 | Costly | Business facts live on four pages and Business holds none. Rehome name, country, contact number, opening hours onto Business |
-| 17 | P2 | Rough | Business is a nav entry for one text field — resolved by V2 |
-| 18 | V4 | Rough | Skills mixes three concerns and contains no skills. Move alert number and payment details out |
-| 19 | P1 | Rough | The Skills page lists no skills. List the eight, with their gating |
-| 20 | V5 | Rough | Profile says "how you appear to your team" and lets you set nothing |
-| 21 | V7 | Rough | Read-only values dressed as form fields; "contact support" with no address |
-| 22 | V6 | Rough | Account is missing 2FA, active sessions, "sign out everywhere", data export |
-| 23 | B2 | Rough | Hours master switch says Off while all seven day rows look active |
-| 24 | B3 | Rough | 2,000-character field in a five-line box; one Save for three cards |
-| 25 | B4 | Polish | Seven identical day rows, no "apply to weekdays"; 745px form in a 1,150px area |
-| 26 | S3 | Rough | The rep switch taxes every page by 90–130px. Move it into the top bar |
-| 27 | S5 | Polish | Three dead spots: the setup-checklist item, and two others |
+| ~~15~~ | ~~V1~~ | **Done** (group renamed Connections) | Costly | "Setup" is a lifecycle stage as a category. Rename the group to Connections |
+| ~~16~~ | ~~V2~~ | **Done** (business facts on Business) | Costly | Business facts live on four pages and Business holds none. Rehome name, country, contact number, opening hours onto Business |
+| ~~17~~ | ~~P2~~ | **Done** (resolved by V2) | Rough | Business is a nav entry for one text field — resolved by V2 |
+| ~~18~~ | ~~V4~~ | **Done** (skills only) | Rough | Skills mixes three concerns and contains no skills. Move alert number and payment details out |
+| ~~19~~ | ~~P1~~ | **Done** (eight real skills listed) | Rough | The Skills page lists no skills. List the eight, with their gating |
+| ~~20~~ | ~~V5~~ | **Done** (editable name) | Rough | Profile says "how you appear to your team" and lets you set nothing |
+| ~~21~~ | ~~V7~~ | **Done** (text not fake fields) | Rough | Read-only values dressed as form fields; "contact support" with no address |
+| ~~22~~ | ~~V6~~ | **Done** (2FA and sign out everywhere) | Rough | Account is missing 2FA, active sessions, "sign out everywhere", data export |
+| ~~23~~ | ~~B2~~ | **Done** (rows disabled with the master) | Rough | Hours master switch says Off while all seven day rows look active |
+| ~~24~~ | ~~B3~~ | **Done** (12 rows, sticky save) | Rough | 2,000-character field in a five-line box; one Save for three cards |
+| ~~25~~ | ~~B4~~ | **Done** (weekday copy, wider forms) | Polish | Seven identical day rows, no "apply to weekdays"; 745px form in a 1,150px area |
+| ~~26~~ | ~~S3~~ | **Done** (rep switch in the top bar) | Rough | The rep switch taxes every page by 90–130px. Move it into the top bar |
+| ~~27~~ | ~~S5~~ | **Done** (checklist status honest) | Polish | Three dead spots: the setup-checklist item, and two others |
 
 ## Phase 5 — WhatsApp and integrations
 
@@ -109,34 +113,34 @@ Depends on V1 (the group rename changes what this page is for).
 
 | # | ID | Sev | What |
 |---|---|---|---|
-| 28 | W1 | Broken | A connected tenant sees the same empty connect form as a new one. Make it a status page: number, state, last event, restart, re-link |
-| 29 | W2 | Rough | Asks a salon owner to invent a "session name" |
-| 30 | N2 | Rough | Reconnect is the primary button on a working connection |
-| 31 | N3 | Rough | Nothing proves the integration has ever been used. "Last booking 2 hours ago" |
+| ~~28~~ | ~~W1~~ | **Done** (status page) | Broken | A connected tenant sees the same empty connect form as a new one. Make it a status page: number, state, last event, restart, re-link |
+| ~~29~~ | ~~W2~~ | **Done** (no session name) | Rough | Asks a salon owner to invent a "session name" |
+| ~~30~~ | ~~N2~~ | **Done** (emphasis swapped) | Rough | Reconnect is the primary button on a working connection |
+| ~~31~~ | ~~N3~~ | **Done** (usage line) | Rough | Nothing proves the integration has ever been used. "Last booking 2 hours ago" |
 
 ## Phase 6 — knowledge
 
 | # | ID | Sev | What |
 |---|---|---|---|
-| 32 | K3 | Rough | The caps are metered and invisible on the page they govern |
-| 33 | K2 | Rough | A source is a name, a type and a date. No contribution, no last-crawled |
-| 34 | K1 | Rough | Gaps is the best idea in the product and a dead end. An "Answer this" button |
+| ~~32~~ | ~~K3~~ | **Done** (caps on the page) | Rough | The caps are metered and invisible on the page they govern |
+| ~~33~~ | ~~K2~~ | **Done** (source facts) | Rough | A source is a name, a type and a date. No contribution, no last-crawled |
+| ~~34~~ | ~~K1~~ | **Done** (answer-this loop) | Rough | Gaps is the best idea in the product and a dead end. An "Answer this" button |
 
 ## Phase 7 — analytics
 
 | # | ID | Sev | What |
 |---|---|---|---|
-| 35 | Y2 | Rough | Eight tiles of identical weight, five reading zero. Lead with two, add a range selector |
+| ~~35~~ | ~~Y2~~ | **Done** (hierarchy and a range) | Rough | Eight tiles of identical weight, five reading zero. Lead with two, add a range selector |
 
 ## Phase 8 — billing
 
 | # | ID | Sev | What |
 |---|---|---|---|
-| 36 | Z4 | Costly | The card on file is never shown. Expiry is the largest preventable cause of involuntary churn |
-| 37 | Z2 | Rough | Voice minutes are metered above and absent from the plan comparison |
-| 38 | Z3 | Polish | Two dates that look like they disagree; empty meters that look broken |
-| 39 | Z5 | Rough | Proration promised in prose, never shown as a number |
-| 40 | Z6 | Rough | Nothing says what happens when a meter fills, and the consequences differ per meter |
+| ~~36~~ | ~~Z4~~ | **Done** (card on file) | Costly | The card on file is never shown. Expiry is the largest preventable cause of involuntary churn |
+| ~~37~~ | ~~Z2~~ | **Done** (voice compared) | Rough | Voice minutes are metered above and absent from the plan comparison |
+| ~~38~~ | ~~Z3~~ | **Done** (dates explained) | Polish | Two dates that look like they disagree; empty meters that look broken |
+| ~~39~~ | ~~Z5~~ | **Done** (stopped promising a number) | Rough | Proration promised in prose, never shown as a number |
+| ~~40~~ | ~~Z6~~ | **Done** (per-meter consequences) | Rough | Nothing says what happens when a meter fills, and the consequences differ per meter |
 
 ## Phase 9 — landing page
 
@@ -171,3 +175,25 @@ Not started. Collected here so the reason is on the record.
 | V8 | What the information architecture gets right |
 | S6 | Things the reviewer went looking to criticise and could not |
 | D3 | The September spec's hardest asks all shipped |
+
+---
+
+## Found while fixing, not in the report
+
+| What | Where |
+|---|---|
+| `reply_language_mode` was omitted from the Behavior page's submitted fields while its voice card edited it, so choosing a reply language was silently dropped and the page still said "Saved" | fixed |
+| Analytics counted leads, bookings, orders, handoffs and conversations over **all time** under a "last 30 days" heading | fixed |
+| `seed_dev.py` hand-rolled its token payload and drifted from `create_access_token` twice: once missing `typ` (every seeded token 401'd) and once missing `jti` (sign-out returned 204 and the token kept working) | fixed |
+| The product tour drew its highlight at 0,0 for three of four steps on mobile, pointing at `display:none` sidebar links | fixed |
+| `apiFetch` ignored an object-shaped error `detail`, so every structured refusal rendered as raw JSON to the user | fixed |
+| `run-dashboard-staging.sh` set `NEXT_DIST_DIR` for the build but not the serve, so every asset 400'd and staging loaded no JavaScript | fixed |
+| Staging's CORS never listed port 3012, where its own dashboard runs, so staging could never work in a browser | fixed |
+| Nothing purges tombstoned knowledge chunks, so a repeatedly re-crawled source accumulates against the tenant's character quota for ever | **open** |
+
+## Skipped, with the reason
+
+| ID | Why |
+|---|---|
+| V2 (`country` only) | Needs both a new column and a key in the shared API type; the rest of V2 was satisfied by rehoming existing fields |
+| S5 (Team dead spot) | The export control and the seat count live in a file the stream that found it did not own |
