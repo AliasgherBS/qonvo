@@ -62,12 +62,21 @@ export function describeError(err: unknown, fallback = "Something went wrong. Pl
   return err instanceof Error && err.message ? err.message : fallback;
 }
 
-interface ApiFetchInit extends Omit<RequestInit, "body"> {
+export interface ApiFetchInit extends Omit<RequestInit, "body"> {
   token?: string;
   body?: BodyInit | object | null;
 }
 
-async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promise<T> {
+/**
+ * Exported so a domain can own its own client module.
+ *
+ * This file is well past a thousand lines and every feature that touches the
+ * API grows it, which makes it the one file several concurrent changes all
+ * collide in. New endpoint groups belong in `lib/api/<domain>.ts` importing
+ * this; what is already here stays here rather than being churned for the sake
+ * of tidiness.
+ */
+export async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promise<T> {
   const { token, headers, body, ...rest } = init;
   const isPlainObject =
     body != null && typeof body === "object" && !(body instanceof FormData) && !(body instanceof Blob);

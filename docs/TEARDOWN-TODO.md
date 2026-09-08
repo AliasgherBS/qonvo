@@ -5,6 +5,12 @@ Every finding in `qonvo-teardown.html` (reviewed against the live site, 8 Septem
 
 **64 findings. 3 are commendations** (V8, S6, D3) and need nothing. **61 actionable.**
 
+**Phases 2 to 9 are being worked in parallel** by six streams with disjoint file
+ownership. `dashboard/lib/api.ts` is shared, so `apiFetch` is exported from it
+and each stream owns a `dashboard/lib/api/<domain>.ts` instead; no stream writes
+an alembic migration, so the revision chain stays linear and one combined
+migration is written centrally.
+
 Ordering is by dependency, not by severity. Anything that moves a field between
 pages (V2) has to land before the per-page polish for those pages (V4–V7, P1,
 P2, B2–B4), or the polish is done twice. Anything that changes a shared
@@ -61,7 +67,7 @@ Small, and they unblock or de-duplicate later work.
 | # | ID | Sev | What |
 |---|---|---|---|
 | 6 | L2 | Costly | "Unlimited knowledge about your business" contradicts the caps that shipped. A false claim on a public page — corrected first, before anything cosmetic |
-| 7 | K4 | Polish | `9/5/2026` is ambiguous and month-first for a Pakistan-first product. One date helper, used by K4, Z3 and I4 |
+| ~~7~~ | ~~K4~~ | Polish | **Done.** `dashboard/lib/format.ts` — `formatDate`, `formatDateTime`, `formatRelative`, `formatTime`, all pinned to en-GB so a date reads the same to the owner and to us |
 | 8 | A1 | Rough | Any unknown URL becomes a login page, or a bare browser 404. A real `not-found` page |
 
 ## Phase 3 — inbox
