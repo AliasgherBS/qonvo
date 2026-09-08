@@ -153,6 +153,11 @@ export function MobileNav({ role }: { role: Role }) {
           <Link
             key={href}
             href={href}
+            // The same attribute the sidebar uses, so the product tour has
+            // something to point at on a phone. Its first three steps describe
+            // navigation, and until now they pointed at sidebar links that are
+            // display:none at this width.
+            data-tour={`nav:${href}`}
             className={cn(
               "flex flex-col items-center gap-0.5 rounded-xl px-3 py-1.5 text-xs font-semibold",
               pathname.startsWith(href) ? "text-primary-strong" : "text-muted-foreground",
