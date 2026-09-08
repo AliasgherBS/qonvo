@@ -22,7 +22,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.billing.plans import TRIAL_PLAN, get_plan
 from app.core.config import settings
-from app.core.security import ACCESS_TOKEN_TYPE, hash_password, verify_password
+from app.core.logging import logger
+from app.core.security import (
+    ACCESS_TOKEN_TYPE,
+    TokenError,
+    decrypt_secret,
+    hash_password,
+    verify_password,
+)
+from app.core.totp import STEP_SECONDS, verify_code
 from app.models.enums import UserRole
 from app.models.tenant import Tenant, TenantConfig, TenantUser, User
 
@@ -207,6 +215,7 @@ def create_access_token(
     role: str | None,
     is_qonvo_admin: bool,
     expires_in_hours: int | None = None,
+    acting_as: str | None = None,
 ) -> str:
     """Mint a signed JWT with tenant/role claims and a ``jwt_expiry_hours`` TTL.
 
@@ -216,6 +225,13 @@ def create_access_token(
     ``typ`` when that became required and 401'd every seeded token, and one
     missed ``jti`` and made the token silently unrevocable. There is one minting
     function for that reason.
+
+    ``acting_as`` marks the token as an impersonation and names the real actor,
+    following the ``act`` claim from RFC 8693. Support could already mint an
+    owner-scoped token for any tenant, and the token carried the owner's
+    identity and nothing else -- so the act of impersonating was audited and
+    everything done inside the session was attributed to the customer
+    (teardown X4).
     """
     now = dt.datetime.now(dt.UTC)
     payload: dict = {
@@ -237,6 +253,8 @@ def create_access_token(
         "aud": settings.jwt_audience,
         "iss": settings.jwt_issuer,
         "iat": now,
+        # RFC 8693's shape for "somebody is acting on behalf of somebody else".
+        **({"act": {"sub": acting_as}} if acting_as else {}),
         "exp": now
         + dt.timedelta(hours=expires_in_hours or settings.jwt_expiry_hours),
     }
@@ -436,5 +454,56 @@ __all__ = [
     "reset_password",
     "resolve_login",
     "slugify",
+    "totp_code_replayed",
     "verify_email",
+    "verify_totp_for",
 ]
+
+
+# --------------------------------------------------------------------------- #
+# Second factor (teardown X4)
+# --------------------------------------------------------------------------- #
+def verify_totp_for(user: User, code: str | None) -> bool:
+    """Whether ``code`` is a valid second factor for this user.
+
+    The secret is decrypted here and nowhere else. A decryption failure means
+    the Fernet key was rotated without re-encrypting, and the honest answer to
+    "is this code valid" is then no -- returning True would turn a key mistake
+    into an authentication bypass.
+    """
+    if not user.totp_enabled or not user.totp_secret:
+        return False
+    try:
+        secret = decrypt_secret(user.totp_secret)
+    except TokenError:
+        logger.error(f"could not decrypt the totp secret for {user.email}")
+        return False
+    return verify_code(secret, code)
+
+
+async def totp_code_replayed(client, email: str, code: str | None) -> bool:
+    """True when this exact code has already been used by this account.
+
+    A code stays valid for its window, so without this a code read over
+    somebody's shoulder, or captured from a phished form, works a second time
+    within the same minute. ``SET NX`` makes the check and the claim one
+    operation, so two simultaneous logins cannot both win.
+
+    Fails **closed**: if the store is unreachable the code is treated as
+    replayed. The opposite of the revocation check's trade, and for the
+    opposite reason -- there, failing closed locks everybody out of a working
+    product; here, failing open silently removes the protection at exactly the
+    moment somebody might be attacking. The cost of being wrong is one refused
+    login on an account that has another code thirty seconds later.
+    """
+    if not code:
+        return True
+    key = f"totp:used:{hashlib.sha256(email.strip().lower().encode()).hexdigest()[:32]}:{code}"
+    try:
+        # A window either side of now, so the key must outlive the widest code
+        # still acceptable.
+        claimed = await client.set(key, "1", ex=STEP_SECONDS * 3, nx=True)
+    except Exception as exc:  # noqa: BLE001 - see the docstring
+        logger.error(f"could not check for a replayed totp code: {exc}")
+        return True
+    return not claimed

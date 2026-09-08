@@ -675,6 +675,11 @@ async def impersonate_tenant(
         tenant_id=tenant_id,
         role=UserRole.owner.value,
         is_qonvo_admin=False,
+        # Names the admin behind the session. Without it the token carried the
+        # owner's identity and nothing else, so the act of impersonating was
+        # audited and every action taken inside the session was attributed to
+        # the customer (teardown X4).
+        acting_as=claims.subject,
     )
     await _audit(
         db, tenant_id=tenant_id, claims=claims, action="tenant.impersonate", target=owner.email

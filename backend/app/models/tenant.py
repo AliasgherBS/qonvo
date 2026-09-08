@@ -62,6 +62,18 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     #: two callers that create users (provision_tenant and accept_invitation)
     #: both set it explicitly, and both are tested for it.
     email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: Fernet-encrypted TOTP secret, and whether it is in force (teardown X4).
+    #:
+    #: Encrypted because it is a credential: whoever holds it can generate
+    #: valid codes forever. Stored on ``users`` rather than somewhere
+    #: admin-specific because the mechanism is not admin-specific -- the login
+    #: path requires a code from anybody who has enrolled.
+    #:
+    #: Two columns rather than one nullable secret, so a half-finished
+    #: enrolment (secret issued, first code never confirmed) cannot lock
+    #: somebody out of their own account.
+    totp_secret: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    totp_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class TenantUser(Base, TenantScopedMixin):

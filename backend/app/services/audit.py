@@ -77,6 +77,15 @@ async def record(
                 meta={
                     **({"actor_email": subject} if subject else {}),
                     **({"actor_role": claims.role} if claims and claims.role else {}),
+                    # An impersonated session presents the customer's identity,
+                    # so without this every row it writes reads as the customer
+                    # having done it. The teardown's point exactly: the act of
+                    # impersonating was logged and the actions were not.
+                    **(
+                        {"impersonated_by": claims.acting_as}
+                        if getattr(claims, "acting_as", None)
+                        else {}
+                    ),
                     **(meta or {}),
                 },
             )

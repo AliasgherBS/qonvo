@@ -19,9 +19,10 @@ from app.core.config import settings
 from app.core.passwords import MAX_LENGTH, PasswordRejected, check_password
 from app.core.redis import get_redis
 from app.core.revocation import revoke_all_for_subject, revoke_token
-from app.core.security import TokenClaims
+from app.core.security import TokenClaims, TokenError, decrypt_secret, encrypt_secret
 from app.core.signup_guard import is_disposable_email
 from app.core.tenant_time import is_valid_timezone
+from app.core.totp import generate_secret, provisioning_uri, verify_code
 from app.models.tenant import Tenant, User
 from app.services.auth import (
     AuthResult,
@@ -35,7 +36,9 @@ from app.services.auth import (
     read_password_reset_token,
     reset_password,
     resolve_login,
+    totp_code_replayed,
     verify_email,
+    verify_totp_for,
 )
 from app.services.email import (
     send_password_reset_email,
@@ -50,6 +53,14 @@ router = APIRouter(prefix="/api", tags=["auth"])
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+    #: The six-digit code, for an account with a second factor enabled.
+    #:
+    #: Optional in the schema and required in effect: the login path refuses an
+    #: enrolled account without a valid one. Optional here so the client can
+    #: make one call, be told a code is needed, and ask for it -- rather than
+    #: the form having to know in advance whether this address has 2FA, which
+    #: would be an enumeration oracle.
+    totp_code: str | None = None
 
 
 class LoginResponse(BaseModel):
@@ -122,6 +133,37 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid email or password",
         )
+    # The second factor, checked after the password (teardown X4).
+    #
+    # After, deliberately. Asking for a code before the password is right would
+    # tell an attacker which addresses have 2FA enabled, and asking for it at
+    # all for an account without one would tell them the opposite.
+    if result.user.totp_enabled:
+        if not verify_totp_for(result.user, body.totp_code):
+            # The failure counts against the account, like a wrong password:
+            # otherwise a correct password plus unlimited code guesses is a
+            # million tries at six digits.
+            await throttle.record_failure(redis, throttle.LOGIN, account=body.email)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "totp_required" if not body.totp_code else "totp_invalid",
+                    "message": (
+                        "Enter the six-digit code from your authenticator app."
+                        if not body.totp_code
+                        else "That code is not right, or it has expired. Try the next one."
+                    ),
+                },
+            )
+        if await totp_code_replayed(get_redis(), result.user.email, body.totp_code):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "totp_replayed",
+                    "message": "That code has already been used. Wait for the next one.",
+                },
+            )
+
     # Forget the failures. Otherwise someone who mistypes nine times and then
     # succeeds stays one mistake from being locked out for the rest of the hour.
     await throttle.clear(redis, throttle.LOGIN, account=body.email)
@@ -463,6 +505,126 @@ async def logout_everywhere(claims: TokenClaims = Depends(get_claims)) -> None:
     redis = get_redis()
     await revoke_all_for_subject(redis, claims.subject)
     await revoke_token(redis, jti=claims.jti, expires_at=claims.raw.get("exp"))
+
+
+# --------------------------------------------------------------------------- #
+# Second factor: enrolment (teardown X4)
+# --------------------------------------------------------------------------- #
+class TotpStartResponse(BaseModel):
+    secret: str
+    provisioning_uri: str
+
+
+class TotpConfirmRequest(BaseModel):
+    code: str
+
+
+@router.post("/auth/totp/start", response_model=TotpStartResponse)
+async def totp_start(
+    claims: TokenClaims = Depends(get_claims),
+    db: AsyncSession = Depends(get_system_db),
+) -> TotpStartResponse:
+    """Issue a secret and the URI an authenticator app scans.
+
+    Stored immediately but **not enabled**. Two columns rather than one
+    nullable secret precisely so this half-finished state exists: somebody who
+    starts enrolling, scans nothing and closes the tab must not be locked out
+    of their own account.
+
+    Re-callable. Starting again replaces the pending secret, which is what
+    somebody does when they lose the tab or set up a new phone. It refuses once
+    a factor is already in force, because replacing a live secret is a
+    disable-then-enable and each step should require a code.
+    """
+    user = await find_user(db, claims.subject)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+    if user.totp_enabled:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "totp_already_enabled",
+                "message": "Two-factor authentication is already on. Turn it off first.",
+            },
+        )
+
+    secret = generate_secret()
+    user.totp_secret = encrypt_secret(secret)
+    await db.flush()
+    return TotpStartResponse(
+        secret=secret,
+        provisioning_uri=provisioning_uri(secret, account=user.email),
+    )
+
+
+@router.post("/auth/totp/confirm", status_code=status.HTTP_204_NO_CONTENT)
+async def totp_confirm(
+    body: TotpConfirmRequest,
+    claims: TokenClaims = Depends(get_claims),
+    db: AsyncSession = Depends(get_system_db),
+) -> None:
+    """Turn the second factor on, once a code from it has been proved.
+
+    Requiring a code before enabling is the whole point: enabling on the
+    strength of having *issued* a secret locks out anybody whose app failed to
+    scan it, and the person who finds out is locked out at the moment they need
+    to sign in.
+    """
+    user = await find_user(db, claims.subject)
+    if user is None or not user.totp_secret:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "totp_not_started", "message": "Start the setup again."},
+        )
+    if user.totp_enabled:
+        return
+
+    try:
+        secret = decrypt_secret(user.totp_secret)
+    except TokenError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "totp_not_started", "message": "Start the setup again."},
+        ) from exc
+    if not verify_code(secret, body.code):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "totp_invalid",
+                "message": "That code is not right. Check your app and try the next one.",
+            },
+        )
+
+    user.totp_enabled = True
+    await db.flush()
+
+
+@router.post("/auth/totp/disable", status_code=status.HTTP_204_NO_CONTENT)
+async def totp_disable(
+    body: TotpConfirmRequest,
+    claims: TokenClaims = Depends(get_claims),
+    db: AsyncSession = Depends(get_system_db),
+) -> None:
+    """Turn the second factor off, which itself requires a code.
+
+    Otherwise a stolen session can remove the protection that would have made
+    the session hard to steal, and the account is back to one password without
+    the owner being asked anything.
+    """
+    user = await find_user(db, claims.subject)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+    if not user.totp_enabled:
+        return
+    if not verify_totp_for(user, body.code):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"code": "totp_invalid", "message": "That code is not right."},
+        )
+
+    user.totp_enabled = False
+    user.totp_secret = None
+    await db.flush()
 
 
 class ForgotPasswordRequest(BaseModel):

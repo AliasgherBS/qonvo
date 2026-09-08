@@ -69,6 +69,10 @@ class TokenClaims:
     #: "everything before this moment is void" markers that a password change
     #: or a member removal writes.
     issued_at: int | None = None
+    #: Who is really behind this session, when it is an impersonation
+    #: (teardown X4). ``None`` for an ordinary token. Everything audited during
+    #: the session names this person as well as the account being used.
+    acting_as: str | None = None
 
 
 def decode_jwt(token: str) -> TokenClaims:
@@ -131,6 +135,7 @@ def decode_jwt(token: str) -> TokenClaims:
         is_qonvo_admin=bool(payload.get("qonvo_admin", False)),
         raw=payload,
         jti=payload.get("jti"),
+        acting_as=(payload.get("act") or {}).get("sub"),
         issued_at=int(payload["iat"]) if payload.get("iat") is not None else None,
     )
 
