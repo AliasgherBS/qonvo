@@ -9,6 +9,8 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-09-08
+
 ### Fixed
 
 - **Cancelling a plan returned 422.** `apiFetch` already stringifies a plain
@@ -219,3 +221,4 @@ could be sold.
 [Unreleased]: https://github.com/AliasgherBS/qonvo/commits/dev
 [0.9.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.9.0
 [0.10.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.0
+[0.10.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.1
