@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, require_tenant
+from app.api.deps import get_db, require_owner, require_tenant
 from app.billing.plans import PLANS, TRIAL_PLAN
 from app.billing.providers.registry import resolve_billing_provider
 from app.billing.service import get_subscription
@@ -68,7 +68,7 @@ class CheckoutResponse(BaseModel):
 
 @router.get("/payments")
 async def payment_history(
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # what the business has spent
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     """This tenant's payments, newest first.
@@ -132,7 +132,7 @@ class CancelRequest(BaseModel):
 @router.post("/cancel")
 async def cancel_subscription(
     body: CancelRequest,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # ends the service the business pays for
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Schedule cancellation at the end of the paid period.
@@ -169,7 +169,7 @@ async def cancel_subscription(
 
 @router.post("/resume")
 async def resume_subscription(
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # restores a paid subscription
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Undo a scheduled cancellation.
@@ -202,7 +202,7 @@ class ChangePlanRequest(BaseModel):
 @router.post("/change-plan")
 async def change_plan(
     body: ChangePlanRequest,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # changes what is charged
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Move an existing subscription onto another plan, without leaving here.
@@ -240,7 +240,7 @@ async def change_plan(
 @router.get("/invoice/{order_id}")
 async def invoice_link(
     order_id: str,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # a tax document naming the business
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """A link to one invoice, generated on demand.
@@ -280,7 +280,7 @@ async def invoice_link(
 
 @router.post("/portal")
 async def billing_portal(
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # hands over a session for the card on file
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """A link to the provider's billing portal, minted fresh.
@@ -398,7 +398,7 @@ async def list_plans(_tenant_id: UUID = Depends(require_tenant)) -> list[PlanInf
 @router.post("/checkout", response_model=CheckoutResponse)
 async def start_checkout(
     body: CheckoutRequest,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # starts a charge
 ) -> CheckoutResponse:
     if body.plan_key not in PLANS:
         raise HTTPException(status_code=400, detail="unknown plan")

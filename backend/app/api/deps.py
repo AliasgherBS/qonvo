@@ -43,8 +43,28 @@ def require_tenant(claims: TokenClaims = Depends(get_claims)) -> UUID:
 
 
 def require_owner(claims: TokenClaims = Depends(get_claims)) -> UUID:
-    """Tenant present AND the caller holds the ``owner`` role (staff can't manage
-    team seats or export the whole account). Returns the acting tenant id."""
+    """Tenant present AND the caller holds the ``owner`` role.
+
+    **What a staff seat may do**, decided deliberately rather than by which
+    dependency a route happened to pick:
+
+    * Read and reply in the inbox, take over and release a conversation.
+    * Read and add knowledge. Deleting is owner-only: a source removed is
+      grounding the rep silently loses.
+    * Read analytics, usage, the plan and the config.
+    * Mark their own notifications read.
+
+    And may not: anything that moves money, ends service, changes what the rep
+    tells customers, or re-links the number. That list is not arbitrary. Before
+    this was enforced, ``PUT /api/config`` accepted ``payment_details``, the
+    free text the ``share_payment_details`` skill reads out verbatim, so a
+    receptionist could substitute their own account number and the business's
+    own WhatsApp number would tell its customers to pay it, with nothing on any
+    screen showing that it happened.
+
+    The product already promised this: the Team page reads "Owners manage the
+    team and billing."
+    """
     tenant_id = require_tenant(claims)
     if claims.role != "owner":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="owner role required")

@@ -14,7 +14,7 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, require_tenant
+from app.api.deps import get_db, require_owner, require_tenant
 from app.core.limits import (
     MAX_CUSTOM_INSTRUCTIONS,
     MAX_PAYMENT_DETAILS,
@@ -209,7 +209,9 @@ async def get_config(
 @router.put("", response_model=ConfigResponse)
 async def update_config(
     body: ConfigUpdateRequest,
-    tenant_id: UUID = Depends(require_tenant),
+    # Owner-only: this accepts payment_details, the text the bot reads out
+    # verbatim when a customer asks how to pay.
+    tenant_id: UUID = Depends(require_owner),
     db: AsyncSession = Depends(get_db),
 ) -> ConfigResponse:
     row = await _get_or_create_config(db, tenant_id)

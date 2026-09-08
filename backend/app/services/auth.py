@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.billing.plans import TRIAL_PLAN, get_plan
 from app.core.config import settings
-from app.core.security import hash_password, verify_password
+from app.core.security import ACCESS_TOKEN_TYPE, hash_password, verify_password
 from app.models.enums import UserRole
 from app.models.tenant import Tenant, TenantConfig, TenantUser, User
 
@@ -123,6 +123,10 @@ def create_access_token(
     now = dt.datetime.now(dt.UTC)
     payload: dict = {
         "sub": subject,
+        # Says which kind of credential this is. decode_jwt requires it, so a
+        # token minted for another purpose cannot authenticate a request even
+        # though it is signed with the same secret.
+        "typ": ACCESS_TOKEN_TYPE,
         "role": role,
         "qonvo_admin": is_qonvo_admin,
         "iat": now,

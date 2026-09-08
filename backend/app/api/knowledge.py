@@ -19,7 +19,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.storage import purge_source_files, source_dir
-from app.api.deps import get_arq, get_db, require_tenant
+from app.api.deps import get_arq, get_db, require_owner, require_tenant
 from app.api.knowledge_limits import as_http_detail, check_room_for, source_chars, usage_for
 from app.core.limits import MAX_TEXT_ENTRY_CHARS, MAX_UPLOAD_BYTES, LimitExceeded, exceeded
 from app.models.enums import KnowledgeSourceType
@@ -217,7 +217,7 @@ async def update_source(
 @router.delete("/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_source(
     source_id: UUID,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # grounding the rep silently loses
     db: AsyncSession = Depends(get_db),
 ) -> None:
     row = await _get_source(db, source_id, tenant_id)

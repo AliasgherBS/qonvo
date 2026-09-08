@@ -45,6 +45,12 @@ def verify_waha_hmac(
 # --------------------------------------------------------------------------- #
 # JWT (tenant_id + role claims, minted by the dashboard — DESIGN.md §8)
 # --------------------------------------------------------------------------- #
+#: The `typ` every access token carries and every other kind must not.
+#: Anything signed with this secret is a credential; the claim is what says
+#: which kind, so the API cannot accept a token minted for another purpose.
+ACCESS_TOKEN_TYPE = "access"
+
+
 class TokenError(Exception):
     """Raised when a JWT is missing, expired, or otherwise invalid."""
 
@@ -64,7 +70,17 @@ def decode_jwt(token: str) -> TokenClaims:
     ``qonvo_admin`` is a cross-tenant superadmin flag (not a tenant role), so a
     valid admin token may carry no ``tenant_id`` until it impersonates one.
     """
-    options = {"require": ["exp", "sub"]}
+    # `typ` is required, and this is the whole of X7's fix.
+    #
+    # Reset tokens are signed with the same secret and algorithm as access
+    # tokens, and carry both `exp` and `sub`. read_password_reset_token checks
+    # typ == "pwreset" correctly; this function checked nothing. The only thing
+    # stopping a reset link working as a bearer token was that require_tenant
+    # found no tenant_id and answered 403 -- an accident of the payload, not a
+    # decision. The day somebody adds a tenant id to that payload, to greet the
+    # user by business name on the reset page say, every reset email becomes a
+    # thirty-minute full-access credential sitting in a URL.
+    options = {"require": ["exp", "sub", "typ"]}
     try:
         payload = jwt.decode(
             token,
@@ -76,6 +92,11 @@ def decode_jwt(token: str) -> TokenClaims:
         )
     except jwt.PyJWTError as exc:  # expired, bad signature, missing claim, ...
         raise TokenError(str(exc)) from exc
+
+    # Requiring the claim is not enough: it has to be the right one. A reset
+    # token carries typ="pwreset" and would otherwise satisfy the requirement.
+    if payload.get("typ") != ACCESS_TOKEN_TYPE:
+        raise TokenError(f"token type {payload.get('typ')!r} is not an access token")
 
     raw_tenant = payload.get("tenant_id")
     tenant_id: UUID | None = None

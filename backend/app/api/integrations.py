@@ -19,7 +19,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_redis_dep, require_tenant
+from app.api.deps import get_db, get_redis_dep, require_owner, require_tenant
 from app.core.config import settings
 from app.core.logging import logger
 from app.core.tenancy import tenant_session
@@ -144,7 +144,7 @@ async def list_integrations(
 @router.post("/{provider}/oauth/start", response_model=OAuthStartResponse)
 async def oauth_start(
     provider: str,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # chooses which Google account the rep acts as,
     redis=Depends(get_redis_dep),
 ) -> OAuthStartResponse:
     """Mint a single-use state and hand back Google's consent URL.
@@ -271,7 +271,7 @@ async def oauth_callback(
 
 @router.post("/google_calendar/provision", response_model=IntegrationResponse)
 async def provision_calendar(
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # creates a calendar the rep books into,
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis_dep),
 ) -> IntegrationResponse:
@@ -328,7 +328,7 @@ async def picker_token(
 @router.post("/google_sheets/select", response_model=SheetTargetResponse)
 async def select_spreadsheet(
     body: SheetSelectRequest,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # chooses the sheet the rep writes leads to,
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis_dep),
 ) -> SheetTargetResponse:
@@ -373,7 +373,7 @@ async def select_spreadsheet(
 @router.post("/google_sheets/create", response_model=SheetTargetResponse)
 async def create_sheet(
     body: SheetCreateRequest,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # creates the sheet the rep writes leads to,
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis_dep),
 ) -> SheetTargetResponse:
@@ -403,7 +403,7 @@ async def create_sheet(
 async def upsert_integration(
     provider: str,
     body: IntegrationUpdateRequest,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # changes what the rep is allowed to do,
     db: AsyncSession = Depends(get_db),
 ) -> IntegrationResponse:
     _require_supported(provider)
@@ -419,7 +419,7 @@ async def upsert_integration(
 @router.delete("/{provider}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_integration(
     provider: str,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # disconnects the calendar the rep books into
     db: AsyncSession = Depends(get_db),
 ) -> None:
     _require_supported(provider)

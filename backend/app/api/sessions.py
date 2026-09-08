@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_waha, require_tenant
+from app.api.deps import get_db, get_waha, require_owner, require_tenant
 from app.core.config import settings
 from app.models.enums import SessionStatus
 from app.models.whatsapp import WhatsAppSession
@@ -86,7 +86,7 @@ async def list_sessions(
 @router.post("", response_model=SessionResponse, status_code=201)
 async def create_session(
     body: CreateSessionRequest,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # re-links the business's WhatsApp number
     db: AsyncSession = Depends(get_db),
     waha: WahaClient = Depends(get_waha),
 ) -> SessionResponse:
@@ -151,6 +151,11 @@ async def session_status(
 @router.get("/{session_name}/qr")
 async def session_qr(
     session_name: str,
+    # Owner-only. RLS already scopes this to the caller's tenant, so it was
+    # never a cross-tenant leak, but a pairing QR is the credential that links
+    # a WhatsApp account: whoever scans it controls the number. That is not a
+    # staff act, and it was reachable by any member.
+    _owner: UUID = Depends(require_owner),
     db: AsyncSession = Depends(get_db),
     waha: WahaClient = Depends(get_waha),
 ) -> Response:

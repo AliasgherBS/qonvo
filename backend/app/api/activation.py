@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, require_tenant
+from app.api.deps import get_db, require_owner, require_tenant
 from app.models.knowledge import KnowledgeSource
 from app.models.tenant import AuditLog, Tenant, TenantConfig
 from app.models.whatsapp import WhatsAppSession
@@ -108,7 +108,7 @@ async def get_activation(
 @router.put("", response_model=ActivationResponse)
 async def set_activation(
     body: ActivationRequest,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # silences the rep for the whole workspace
     db: AsyncSession = Depends(get_db),
 ) -> ActivationResponse:
     """Switch the rep on or off.
