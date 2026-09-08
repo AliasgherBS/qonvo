@@ -8,7 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ManagePlan } from "@/components/billing/manage-plan";
 import { PaymentHistory } from "@/components/billing/payment-history";
 import { UsageMeters } from "@/components/usage-meters";
-import { billing, usage as usageApi } from "@/lib/api";
+import { billing, subscription as subscriptionApi, usage as usageApi } from "@/lib/api";
 import { CONTACT } from "@/lib/contact";
 import { useApi, useAuthToken } from "@/lib/use-api";
 
@@ -46,6 +46,23 @@ export default function BillingPage() {
     setPending(planKey);
     setMessage(null);
     try {
+      // Already subscribed: change the plan in place. Sending them through
+      // checkout again would restart the billing period and charge a full
+      // price on the day they downgraded.
+      if (data?.subscription) {
+        const result = await subscriptionApi.changePlan(planKey, { token });
+        if (result.ok) {
+          setMessage("Your plan has changed. The new allowances are live already.");
+          // The provider's webhook writes our row and rewrites the
+          // entitlements, so both of these need refetching.
+          status.refetch();
+          meters.refetch();
+          return;
+        }
+        setMessage("We could not change the plan just now. Try again shortly.");
+        return;
+      }
+
       const checkout = await billing.checkout(planKey, { token });
       if (checkout.url) {
         window.location.href = checkout.url;
@@ -136,8 +153,8 @@ export default function BillingPage() {
             <CardHeader>
               <CardTitle>Plans</CardTitle>
               <CardDescription>
-                We size pricing with you rather than publishing a table, so pick the volume you
-                need and we will confirm the cost.
+                Change plan any time. Moving up takes effect immediately and moving down is
+                prorated, so you are only charged for what you use.
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
@@ -168,8 +185,15 @@ export default function BillingPage() {
                           {isCurrent
                             ? "Current plan"
                             : pending === plan.key
-                              ? "Starting..."
-                              : "Choose"}
+                              ? "Working..."
+                              : /* Say which direction it goes. "Choose" on a
+                                   cheaper plan reads like starting over. */
+                                data?.subscription
+                                ? (plan.entitlements.monthly_message_quota ?? 0) >
+                                  (data.entitlements.monthly_message_quota ?? 0)
+                                  ? "Upgrade"
+                                  : "Switch to this"
+                                : "Choose"}
                         </Button>
                       </div>
                     );

@@ -102,10 +102,11 @@ class Payment:
     status: str
     invoice_number: str | None = None
     description: str | None = None
-    #: Where the provider will serve the invoice document, when it has one. The
-    #: merchant of record issues it, so this is a link and never something we
-    #: generate.
-    invoice_url: str | None = None
+    #: The provider's order id, so the invoice can be fetched when it is asked
+    #: for. Not a URL: the document is generated on demand and its link is
+    #: signed and short-lived, so one baked into a list response would be stale
+    #: before anybody clicked it.
+    order_id: str | None = None
 
 
 @runtime_checkable
@@ -148,6 +149,25 @@ class BillingProvider(Protocol):
         The provider stays the system of record. We are a client of its API, and
         its webhook tells us what happened, so there is no second opinion about
         the subscription's state even though the button lives here.
+        """
+        ...
+
+    def change_plan(self, *, subscription_id: str, plan_key: str) -> bool:
+        """Move an existing subscription onto another plan, in place.
+
+        In place rather than cancel-and-resubscribe, which would restart the
+        billing period and charge a full price on the same day they downgraded.
+        The provider handles proration.
+        """
+        ...
+
+    def invoice_url(self, *, order_id: str) -> str | None:
+        """A link to the invoice document, generating it if it does not exist.
+
+        The merchant of record issues the invoice, so this fetches theirs rather
+        than rendering one. It is generated on demand because the provider does
+        not create the PDF until somebody asks, which is why an order can carry
+        an invoice *number* and still have no document behind it.
         """
         ...
 

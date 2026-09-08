@@ -24,6 +24,7 @@ exactly the kind of billing bug that costs trust rather than money.
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import hmac
 import json
@@ -224,11 +225,11 @@ class PolarProvider:
                     # is_invoice_generated is False until someone asks for it,
                     # and a link to a PDF that does not exist is worse than no
                     # link.
-                    invoice_url=(
-                        f"{self._api}/orders/{order['id']}/invoice"
-                        if order.get("is_invoice_generated")
-                        else None
-                    ),
+                    # The order id, not a URL. The document is generated on
+                    # demand and its link is signed and short-lived, so a URL
+                    # baked into a list response would be stale by the time
+                    # anybody clicked it.
+                    order_id=_str_or_none(order.get("id")),
                 )
             )
         return out
@@ -275,6 +276,62 @@ class PolarProvider:
         except Exception as exc:  # noqa: BLE001 - the caller reports failure
             logger.warning(f"polar cancellation update failed: {exc}")
             return False
+
+    def change_plan(self, *, subscription_id: str, plan_key: str) -> bool:
+        """Move a live subscription onto another product, in place.
+
+        Verified against the sandbox: PATCHing product_id changes the product
+        and the amount while status stays active, and Polar prorates. Doing this
+        as cancel-and-resubscribe would restart the period and charge full price
+        on the day somebody downgraded, which is the opposite of what they
+        asked for.
+        """
+        product_id = self._price_id_for(plan_key)
+        if not product_id or not settings.polar_access_token:
+            return False
+        try:
+            response = httpx.patch(
+                f"{self._api}/subscriptions/{subscription_id}",
+                headers={"Authorization": f"Bearer {settings.polar_access_token}"},
+                json={"product_id": product_id},
+                timeout=20,
+            )
+            response.raise_for_status()
+            return str((response.json().get("product") or {}).get("id")) == product_id
+        except Exception as exc:  # noqa: BLE001 - the caller reports failure
+            logger.warning(f"polar plan change failed: {exc}")
+            return False
+
+    def invoice_url(self, *, order_id: str) -> str | None:
+        """The invoice PDF, generating it first if Polar has not yet.
+
+        Polar issues an invoice *number* at purchase but does not render the
+        document until asked, which is why is_invoice_generated is False on a
+        fresh order. POST asks for it (202, asynchronous), GET returns a signed
+        URL. Generating unconditionally is safe: a second POST on an existing
+        invoice is a no-op.
+
+        The URL is short-lived and signed, so it is fetched per click rather
+        than stored.
+        """
+        if not settings.polar_access_token:
+            return None
+        headers = {"Authorization": f"Bearer {settings.polar_access_token}"}
+        try:
+            # Best effort. If it already exists this is a no-op, and if it fails
+            # the GET below still succeeds for an order that has one.
+            with contextlib.suppress(Exception):
+                httpx.post(
+                    f"{self._api}/orders/{order_id}/invoice", headers=headers, timeout=20
+                )
+            response = httpx.get(
+                f"{self._api}/orders/{order_id}/invoice", headers=headers, timeout=20
+            )
+            response.raise_for_status()
+            return response.json().get("url")
+        except Exception as exc:  # noqa: BLE001 - the page must still render
+            logger.warning(f"polar invoice fetch failed: {exc}")
+            return None
 
     # --- webhooks ---------------------------------------------------------- #
     @staticmethod

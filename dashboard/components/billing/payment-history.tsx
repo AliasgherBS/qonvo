@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink, Loader2, Receipt, Settings } from "lucide-react";
+import { CreditCard, Download, Loader2, Receipt } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "@/components/ui/button";
@@ -40,6 +40,25 @@ export function PaymentHistory() {
   const { toast } = useToast();
   const { data, loading } = useApi(() => payments.list({ token }), [token]);
   const [opening, setOpening] = useState(false);
+  const [fetchingInvoice, setFetchingInvoice] = useState<string | null>(null);
+
+  async function openInvoice(orderId: string) {
+    setFetchingInvoice(orderId);
+    try {
+      const { url } = await payments.invoice(orderId, { token });
+      // A new tab rather than a same-tab navigation: the link is a signed S3
+      // URL that expires, so a back button would land on a dead page.
+      window.open(url, "_blank", "noopener");
+    } catch (err) {
+      toast({
+        title: "Invoice not ready",
+        description: describeError(err),
+        variant: "error",
+      });
+    } finally {
+      setFetchingInvoice(null);
+    }
+  }
 
   async function openPortal() {
     setOpening(true);
@@ -73,16 +92,21 @@ export function PaymentHistory() {
           <div>
             <CardTitle>Payments</CardTitle>
             <CardDescription>
-              What you have been charged, and where to change your plan or card.
+              What you have been charged. Click an invoice to download it.
             </CardDescription>
           </div>
+          {/* Card details are the one thing that cannot be hosted here without
+              handling them ourselves, which we must not. Everything else lives
+              in the app, so this button says what it actually does rather than
+              "manage plan", which sent people away to do things they could
+              already do on this page. */}
           <Button variant="outline" onClick={openPortal} disabled={opening}>
             {opening ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
             ) : (
-              <Settings className="mr-2 h-4 w-4" />
+              <CreditCard className="mr-2 h-4 w-4" />
             )}
-            Manage plan
+            Update card
           </Button>
         </div>
       </CardHeader>
@@ -139,20 +163,20 @@ export function PaymentHistory() {
                       ) : null}
                     </td>
                     <td className="py-2.5 pr-3">
-                      {row.invoiceUrl ? (
-                        <a
-                          href={row.invoiceUrl}
-                          target="_blank"
-                          rel="noopener"
-                          className="inline-flex items-center gap-1 font-semibold text-primary-strong underline-offset-2 hover:underline"
+                      {row.orderId ? (
+                        <button
+                          onClick={() => openInvoice(row.orderId!)}
+                          disabled={fetchingInvoice === row.orderId}
+                          className="inline-flex items-center gap-1 font-semibold text-primary-strong underline-offset-2 hover:underline disabled:opacity-60"
                         >
+                          {fetchingInvoice === row.orderId ? (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          ) : (
+                            <Download className="h-3 w-3" />
+                          )}
                           {row.invoiceNumber ?? "Invoice"}
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
+                        </button>
                       ) : (
-                        /* No link until the provider has generated the
-                            document. A link to a PDF that does not exist is
-                            worse than a reference the customer can quote. */
                         <span className="tabular-nums text-muted-foreground">
                           {row.invoiceNumber ?? "-"}
                         </span>
@@ -166,9 +190,9 @@ export function PaymentHistory() {
         )}
 
         <p className="mt-4 border-t border-border pt-4 text-xs text-muted-foreground">
-          Cancel any time from <strong>Manage plan</strong>. Your rep keeps answering until the end
-          of the period you have paid for, and payments already made are not refunded except where
-          the law requires it.
+          Change or cancel your plan above. Your rep keeps answering until the end of the period
+          you have paid for, and payments already made are not refunded except where the law
+          requires it.
         </p>
       </CardContent>
     </Card>

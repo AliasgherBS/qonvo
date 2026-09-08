@@ -9,6 +9,44 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.10.1] - 2026-09-08
+
+### Fixed
+
+- **Cancelling a plan returned 422.** `apiFetch` already stringifies a plain
+  object and sets `Content-Type`, and only for a plain object, so passing an
+  already-stringified body skipped both and the API received JSON with no content
+  type. The same mistake was in the rep on/off toggle, which had never been
+  exercised. `apiFetch` now warns in development when handed a stringified body,
+  since the failure surfaces two layers from its cause.
+
+- **A customer with one payment could not get an invoice.** The link was only
+  offered when the provider reported the document as generated, and that is false
+  on every fresh order: Polar issues an invoice *number* at purchase and renders
+  the PDF only when asked. Invoices are now generated on demand, and the link is
+  fetched per click because the provider's URL is signed and short-lived.
+
+- Cloudflare injects its Web Analytics beacon at the edge, so the CSP blocked a
+  script this codebase does not add and cannot remove, producing a violation on
+  every page load and a follow-on TypeError from the half-loaded script.
+
+### Changed
+
+- **Plan management no longer leaves the app.** Changing plan happens in place and
+  is prorated by the provider; cancel-and-resubscribe would have restarted the
+  billing period and charged full price on the day somebody downgraded. What
+  remains in the provider's portal is card details and only that, since hosting a
+  card form means handling card data. The button says "Update card" rather than
+  "Manage plan", which had been sending people away to do things the billing page
+  could already do.
+
+- The Terms name **"Aliasghar Ezzy, trading as Qonvo"** rather than "Qonvo".
+  Qonvo is a product name; with no company registered the seller is a natural
+  person, and a Terms page naming an entity that does not exist against a payment
+  provider's KYC naming an individual is the mismatch that fails a
+  merchant-of-record review.
+
+
 ## [0.10.0] - 2026-09-08
 
 The release that made Qonvo sellable: a public domain, real email, a payment
@@ -183,3 +221,4 @@ could be sold.
 [Unreleased]: https://github.com/AliasgherBS/qonvo/commits/dev
 [0.9.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.9.0
 [0.10.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.0
+[0.10.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.1
