@@ -17,13 +17,14 @@ import secrets
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_claims, get_db, get_system_db, require_owner, require_tenant
 from app.billing.state import seats_available
 from app.core.config import settings
+from app.core.passwords import MAX_LENGTH, PasswordRejected, check_password
 from app.core.redis import get_redis
 from app.core.revocation import revoke_all_for_subject
 from app.core.security import TokenClaims, hash_password
@@ -336,7 +337,7 @@ async def preview_invitation(
 
 class AcceptRequest(BaseModel):
     token: str
-    password: str | None = None
+    password: str | None = Field(default=None, max_length=MAX_LENGTH)
     full_name: str | None = None
 
 
@@ -363,6 +364,15 @@ async def accept_invitation(
     if user is None:
         if not body.password:
             raise HTTPException(status_code=400, detail="password required for a new account")
+        # The fourth path that sets a password, and the one most easily
+        # forgotten: it creates an account rather than changing one.
+        try:
+            await check_password(body.password, email=invite.email)
+        except PasswordRejected as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "weak_password", "reasons": exc.reasons},
+            ) from exc
         user = User(
             email=invite.email,
             hashed_password=hash_password(body.password),
@@ -371,6 +381,13 @@ async def accept_invitation(
         db.add(user)
         await db.flush()
     elif user.hashed_password is None and body.password:
+        try:
+            await check_password(body.password, email=invite.email)
+        except PasswordRejected as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={"code": "weak_password", "reasons": exc.reasons},
+            ) from exc
         user.hashed_password = hash_password(body.password)
 
     # Add membership if not already present (idempotent accept).

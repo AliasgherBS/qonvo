@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_claims, get_system_db
 from app.core import throttle
 from app.core.config import settings
+from app.core.passwords import MAX_LENGTH, PasswordRejected, check_password
 from app.core.redis import get_redis
 from app.core.revocation import revoke_all_for_subject, revoke_token
 from app.core.security import TokenClaims
@@ -130,7 +131,11 @@ class SignupRequest(BaseModel):
     business_name: str = Field(min_length=1, max_length=255)
     owner_name: str = Field(min_length=1, max_length=255)
     email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
+    # Length is not asserted here. `check_password` owns the whole policy, and
+    # splitting it between a Pydantic constraint and a validator means two
+    # different error shapes for the same rule -- a 422 with a field error for
+    # one character too few, and a 400 with sentences for anything else.
+    password: str = Field(max_length=MAX_LENGTH)
     #: The browser's own timezone, sent by the signup form.
     #:
     #: Taken here rather than left to a settings page nobody visits. The
@@ -164,6 +169,12 @@ async def signup(
         )
 
     email = body.email.lower().strip()
+    try:
+        await check_password(
+            body.password, email=email, business_name=body.business_name
+        )
+    except PasswordRejected as exc:
+        raise _reject_weak(exc) from exc
     if await find_user(db, email):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -188,6 +199,18 @@ async def signup(
     # it, which is what damages a young sending domain's reputation.
     await _send_verification(result.user)
     return _login_response(result)
+
+
+def _reject_weak(exc: PasswordRejected) -> HTTPException:
+    """One shape for every weak-password refusal.
+
+    Every reason at once, and machine-readable, because the strength meter on
+    the form needs to render them next to the field rather than as one toast.
+    """
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail={"code": "weak_password", "reasons": exc.reasons},
+    )
 
 
 async def _send_verification(user: User) -> None:
@@ -360,7 +383,7 @@ async def google_auth(
 
 class ChangePasswordRequest(BaseModel):
     current_password: str
-    new_password: str = Field(min_length=8, max_length=128)
+    new_password: str = Field(max_length=MAX_LENGTH)
 
 
 @router.post("/auth/change-password", status_code=status.HTTP_204_NO_CONTENT)
@@ -373,6 +396,10 @@ async def change_password_route(
     user = await find_user(db, claims.subject)
     if user is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user not found")
+    try:
+        await check_password(body.new_password, email=user.email)
+    except PasswordRejected as exc:
+        raise _reject_weak(exc) from exc
     if not await change_password(db, user, body.current_password, body.new_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Your current password is incorrect."
@@ -456,7 +483,7 @@ async def forgot_password_route(
 
 class ResetPasswordRequest(BaseModel):
     token: str
-    new_password: str = Field(min_length=8, max_length=128)
+    new_password: str = Field(max_length=MAX_LENGTH)
 
 
 @router.post("/auth/reset-password", status_code=status.HTTP_204_NO_CONTENT)
@@ -464,6 +491,16 @@ async def reset_password_route(
     body: ResetPasswordRequest, db: AsyncSession = Depends(get_system_db)
 ) -> None:
     """Set a new password from a reset-link token (single-use, 30-min expiry)."""
+    # Checked before the token is consumed, so a rejected password does not
+    # burn the link and force another email.
+    parsed_for_policy = read_password_reset_token(body.token)
+    try:
+        await check_password(
+            body.new_password,
+            email=parsed_for_policy[0] if parsed_for_policy else None,
+        )
+    except PasswordRejected as exc:
+        raise _reject_weak(exc) from exc
     if not await reset_password(db, body.token, body.new_password):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

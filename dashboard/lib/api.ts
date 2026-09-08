@@ -19,11 +19,25 @@ const API_BASE_URL =
 
 export class ApiError extends Error {
   status: number;
+  /**
+   * The parsed `detail` when the API sent a structured one.
+   *
+   * Some refusals are not a sentence: a weak password has a list of reasons to
+   * render beside the field, and an unconfirmed address has a `code` the page
+   * has to branch on. Matching on prose would break the first time the prose
+   * is improved, so the shape is carried through.
+   */
+  detail?: { code?: string; message?: string; reasons?: string[] };
 
-  constructor(message: string, status: number) {
+  constructor(
+    message: string,
+    status: number,
+    detail?: { code?: string; message?: string; reasons?: string[] },
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.detail = detail;
   }
 }
 
@@ -89,17 +103,25 @@ async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promise<T> {
     let message = raw || res.statusText;
     // FastAPI errors are {"detail": "..."} or a validation array - extract the
     // real detail so callers can show what actually went wrong.
+    let detail: ApiError["detail"];
     try {
       const parsed = JSON.parse(raw) as { detail?: unknown };
       if (typeof parsed.detail === "string") message = parsed.detail;
       else if (Array.isArray(parsed.detail)) {
         const first = parsed.detail[0] as { msg?: string } | undefined;
         if (first?.msg) message = first.msg;
+      } else if (parsed.detail && typeof parsed.detail === "object") {
+        // An object detail. Without this branch `message` stayed as the raw
+        // JSON body, so every structured refusal -- a weak password, an
+        // unconfirmed address -- rendered as `{"code":"...","reasons":[...]}`
+        // in front of the user.
+        detail = parsed.detail as ApiError["detail"];
+        message = detail?.message ?? detail?.reasons?.join(" ") ?? message;
       }
     } catch {
       /* body isn't JSON - keep the raw text / status text */
     }
-    throw new ApiError(message, res.status);
+    throw new ApiError(message, res.status, detail);
   }
 
   if (res.status === 204) {

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError, auth } from "@/lib/api";
+import { MIN_PASSWORD_LENGTH, PasswordStrength } from "@/components/password-strength";
 import { browserTimezone } from "@/lib/timezones";
 
 export function SignupForm() {
@@ -15,6 +16,9 @@ export function SignupForm() {
   const [ownerName, setOwnerName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  // Reasons from the server, which include the breach check a browser cannot
+  // do without leaking the hash prefix into its own network log.
+  const [weakReasons, setWeakReasons] = useState<string[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,6 +26,7 @@ export function SignupForm() {
     event.preventDefault();
     setLoading(true);
     setError(null);
+    setWeakReasons(null);
 
     try {
       await auth.signup({
@@ -37,6 +42,13 @@ export function SignupForm() {
       });
     } catch (err) {
       setLoading(false);
+      // A weak password belongs beside the field, not in the error banner: the
+      // reasons are a list of things to fix, and the meter already renders
+      // that shape.
+      if (err instanceof ApiError && err.detail?.code === "weak_password") {
+        setWeakReasons(err.detail.reasons ?? []);
+        return;
+      }
       setError(
         err instanceof ApiError && err.status === 409
           ? "An account with this email already exists. Try signing in instead."
@@ -104,10 +116,19 @@ export function SignupForm() {
           type="password"
           autoComplete="new-password"
           required
-          minLength={8}
+          minLength={MIN_PASSWORD_LENGTH}
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="At least 8 characters"
+          onChange={(e) => {
+            setPassword(e.target.value);
+            setWeakReasons(null);
+          }}
+          placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
+        />
+        <PasswordStrength
+          password={password}
+          email={email}
+          businessName={businessName}
+          serverReasons={weakReasons ?? undefined}
         />
       </div>
 
