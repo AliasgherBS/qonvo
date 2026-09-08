@@ -69,6 +69,11 @@ class TokenClaims:
     #: "everything before this moment is void" markers that a password change
     #: or a member removal writes.
     issued_at: int | None = None
+    #: The sign-in this token belongs to, stable across refreshes, and when
+    #: that sign-in happened. Signing out ends the session rather than the
+    #: token, and the refresh endpoint refuses past an absolute age.
+    session_id: str | None = None
+    session_started_at: int | None = None
     #: Who is really behind this session, when it is an impersonation
     #: (teardown X4). ``None`` for an ordinary token. Everything audited during
     #: the session names this person as well as the account being used.
@@ -136,6 +141,8 @@ def decode_jwt(token: str) -> TokenClaims:
         raw=payload,
         jti=payload.get("jti"),
         acting_as=(payload.get("act") or {}).get("sub"),
+        session_id=payload.get("sid"),
+        session_started_at=int(payload["sst"]) if payload.get("sst") is not None else None,
         issued_at=int(payload["iat"]) if payload.get("iat") is not None else None,
     )
 

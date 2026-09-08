@@ -32,5 +32,7 @@ declare module "@auth/core/jwt" {
     role: Role;
     accessToken: string;
     authError?: string;
+    /** When the backend token expires, as epoch milliseconds. */
+    accessTokenExpires?: number;
   }
 }

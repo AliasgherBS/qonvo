@@ -8,6 +8,8 @@ resolve one.
 
 from __future__ import annotations
 
+import datetime as dt
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import select
@@ -18,7 +20,7 @@ from app.core import throttle
 from app.core.config import settings
 from app.core.passwords import MAX_LENGTH, PasswordRejected, check_password
 from app.core.redis import get_redis
-from app.core.revocation import revoke_all_for_subject, revoke_token
+from app.core.revocation import revoke_all_for_subject, revoke_session, revoke_token
 from app.core.security import TokenClaims, TokenError, decrypt_secret, encrypt_secret
 from app.core.signup_guard import is_disposable_email
 from app.core.tenant_time import is_valid_timezone
@@ -470,22 +472,99 @@ async def change_password_route(
     await revoke_all_for_subject(get_redis(), user.email)
 
 
+#: How long a sign-in may be extended before the password is asked for again.
+#:
+#: A refresh that never expires is a login that never expires, which is the
+#: thing a 24-hour token was trying to avoid. Two weeks is a working
+#: fortnight: long enough that nobody is interrupted mid-task, short enough
+#: that a token quietly captured a month ago is dead.
+MAX_SESSION_DAYS = 14
+
+
+@router.post("/auth/refresh", response_model=LoginResponse)
+async def refresh(
+    claims: TokenClaims = Depends(get_claims),
+    db: AsyncSession = Depends(get_system_db),
+) -> LoginResponse:
+    """Extend a live session without asking for the password again (teardown X6).
+
+    The token lasts a day and nothing renewed it, so every owner was thrown
+    back to the login screen once a day, mid-task. Aligning the dashboard's
+    session to the token's life fixed the *lying* half of that -- a signed-in
+    shell over a dead credential -- and left the interruption.
+
+    Rotating, not additive: the presenting token is revoked as the new one is
+    issued, so a captured token is only useful until the real client next
+    refreshes, and a fork of the chain is visible as two tokens claiming one
+    session.
+
+    Capped at ``MAX_SESSION_DAYS`` from the *original* sign-in, which is what
+    ``sst`` is for. Without an absolute limit, refreshing forever and being
+    signed in forever are the same thing.
+
+    Re-reads the user rather than trusting the token's claims: a role changed,
+    an account disabled or a membership removed must take effect on refresh
+    rather than persisting for as long as somebody keeps refreshing.
+    """
+    started = claims.session_started_at
+    if started is not None and (
+        int(dt.datetime.now(dt.UTC).timestamp()) - started > MAX_SESSION_DAYS * 86400
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "code": "session_expired",
+                "message": "Please sign in again.",
+            },
+        )
+
+    user = await find_user(db, claims.subject)
+    if user is None or not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="this account is not active"
+        )
+
+    result = await resolve_login(db, user)
+    token = create_access_token(
+        subject=result.user.email,
+        tenant_id=result.tenant_id,
+        role=result.role,
+        is_qonvo_admin=result.is_qonvo_admin,
+        acting_as=claims.acting_as,
+        session_id=claims.session_id,
+        session_started_at=started,
+    )
+    # Rotate: the old token stops working the moment the new one exists.
+    await revoke_token(get_redis(), jti=claims.jti, expires_at=claims.raw.get("exp"))
+    return LoginResponse(
+        access_token=token,
+        role="qonvo_admin" if result.is_qonvo_admin else result.role,
+        tenant_id=str(result.tenant_id) if result.tenant_id else None,
+        name=result.user.full_name,
+        email_verified=result.user.email_verified,
+    )
+
+
 @router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
 async def logout(claims: TokenClaims = Depends(get_claims)) -> None:
     """Revoke the token that made this request (teardown X6).
 
     Signing out used to clear the browser's copy and leave the credential
     valid for the rest of its 24 hours, which is not what "sign out" means to
-    anybody. Revoking this token only, not every session: signing out on a
-    laptop must not sign the same person out on their phone.
+    anybody. This session only, not every session: signing out on a laptop must
+    not sign the same person out on their phone.
+
+    The *session* rather than the token. Once a session can be refreshed, one
+    token is a link in a chain, and revoking the newest link stops whoever
+    holds it while leaving anybody who forked the chain still inside.
 
     204 whatever happens. A sign-out that reports failure leaves somebody
     unsure whether they are signed out, and the client has already discarded
     its copy by the time it hears back.
     """
-    await revoke_token(
-        get_redis(), jti=claims.jti, expires_at=claims.raw.get("exp")
-    )
+    redis = get_redis()
+    await revoke_session(redis, claims.session_id)
+    await revoke_token(redis, jti=claims.jti, expires_at=claims.raw.get("exp"))
 
 
 @router.post("/auth/logout-everywhere", status_code=status.HTTP_204_NO_CONTENT)

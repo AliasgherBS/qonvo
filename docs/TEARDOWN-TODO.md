@@ -48,8 +48,11 @@ the rehoming that follows.
 | ~~2~~ | ~~X6~~ | Medium | **Done.** `jti` + denylist for one session, per-subject and per-tenant markers for bulk. Wired to sign-out, sign-out-everywhere, password change, password reset, member removal and suspension. Auth.js session aligned to 24h |
 | ~~3~~ | ~~X5~~ | Medium | **Done.** Minimum 12, no composition rules, HIBP k-anonymity screening, business name and email local part refused, strength meter on all four forms |
 | ~~4~~ | ~~X9~~ | Low | **Done.** Argon2id cost pinned to what was in use, `aud`/`iss` minted and required, disposable domains refused. Its fourth item (QR reachable by staff) was closed by X1 |
-| 5 | X6b | Medium | **Added.** A token refresh, so a working day does not end at a login screen. X6 aligned the two lifetimes; nothing renews them yet |
+| ~~5~~ | ~~X6b~~ | Medium | **Done.** Rotating refresh keyed on a session id, capped at 14 days from the original sign-in; sign-out ends the session rather than one token |
 | ~~6~~ | ~~X4~~ | High | **Built.** TOTP (RFC 6238, verified against the RFC vectors), replay protection, `act` claim on impersonated tokens, audited actions attributed to the real admin. **Enrolment is the owner's to do** — see the deferred table |
+
+**Phase 1 is complete.** Every security finding in the teardown is closed, bar
+one enrolment that is not code (see the deferred table).
 
 ## Phase 2 — shared primitives and factual corrections
 

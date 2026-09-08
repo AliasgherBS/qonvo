@@ -216,6 +216,8 @@ def create_access_token(
     is_qonvo_admin: bool,
     expires_in_hours: int | None = None,
     acting_as: str | None = None,
+    session_id: str | None = None,
+    session_started_at: int | None = None,
 ) -> str:
     """Mint a signed JWT with tenant/role claims and a ``jwt_expiry_hours`` TTL.
 
@@ -255,6 +257,17 @@ def create_access_token(
         "iat": now,
         # RFC 8693's shape for "somebody is acting on behalf of somebody else".
         **({"act": {"sub": acting_as}} if acting_as else {}),
+        # The sign-in this token belongs to, stable across refreshes, plus
+        # when that sign-in happened.
+        #
+        # `jti` identifies one token and changes on every refresh, so revoking
+        # a jti kills one link of a chain and leaves the rest. Signing out has
+        # to end the *session*, and an absolute cap needs to know when the
+        # session started rather than when this token was minted -- otherwise
+        # refreshing forever is indistinguishable from staying signed in
+        # forever.
+        "sid": session_id or uuid4().hex,
+        "sst": session_started_at or int(now.timestamp()),
         "exp": now
         + dt.timedelta(hours=expires_in_hours or settings.jwt_expiry_hours),
     }

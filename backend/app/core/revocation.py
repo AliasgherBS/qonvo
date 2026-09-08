@@ -41,12 +41,14 @@ from app.core.logging import logger
 
 __all__ = [
     "is_revoked",
+    "revoke_session",
     "revoke_all_for_subject",
     "revoke_all_for_tenant",
     "revoke_token",
 ]
 
 _JTI = "revoked:jti:"
+_SESSION = "revoked:sid:"
 _SUBJECT = "revoked:sub:"
 _TENANT = "revoked:tenant:"
 
@@ -88,6 +90,23 @@ async def revoke_token(client, *, jti: str | None, expires_at: int | None) -> No
         logger.error(f"could not revoke token {jti[:8]}: {exc}")
 
 
+async def revoke_session(client, sid: str | None) -> None:
+    """Revoke a whole sign-in, however many times it has been refreshed.
+
+    Revoking a ``jti`` kills one token. Once a session can be refreshed, that
+    is one link of a chain: the refresh already replaced the previous token, so
+    killing the newest jti stops the holder of *that* one and leaves anybody
+    who forked the chain -- somebody who stole a token and refreshed it --
+    still inside. Signing out has to end the session.
+    """
+    if not sid:
+        return
+    try:
+        await client.set(f"{_SESSION}{sid}", "1", ex=_MARKER_TTL_SECONDS)
+    except Exception as exc:  # noqa: BLE001
+        logger.error(f"could not revoke session {sid[:8]}: {exc}")
+
+
 async def revoke_all_for_subject(client, subject: str) -> None:
     """Invalidate every token already issued to this person."""
     try:
@@ -114,6 +133,10 @@ async def is_revoked(client, claims) -> bool:
     try:
         jti = getattr(claims, "jti", None)
         if jti and await client.get(f"{_JTI}{jti}") is not None:
+            return True
+
+        sid = getattr(claims, "session_id", None)
+        if sid and await client.get(f"{_SESSION}{sid}") is not None:
             return True
 
         issued_at = getattr(claims, "issued_at", None)

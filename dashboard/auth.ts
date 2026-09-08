@@ -2,6 +2,8 @@ import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 
+import type { JWT } from "@auth/core/jwt";
+
 import { ApiError, auth as apiAuth } from "@/lib/api";
 
 // Google SSO is optional — without a client id configured, only the email +
@@ -10,6 +12,67 @@ import { ApiError, auth as apiAuth } from "@/lib/api";
 const googleEnabled = Boolean(
   process.env.AUTH_GOOGLE_ID && process.env.AUTH_GOOGLE_SECRET,
 );
+
+/**
+ * When a backend token expires, read from the token itself.
+ *
+ * Decoded rather than assumed: hard-coding "now plus 24 hours" here would drift
+ * the moment `QONVO_JWT_EXPIRY_HOURS` changed, and drift silently -- the
+ * refresh would fire too late and the user would be signed out anyway, which is
+ * the bug this exists to fix. `exp` is not trusted for anything but scheduling;
+ * the API verifies the signature on every call.
+ */
+function expiryOf(accessToken: string): number | undefined {
+  try {
+    const [, payload] = accessToken.split(".");
+    const claims = JSON.parse(Buffer.from(payload, "base64url").toString()) as { exp?: number };
+    return claims.exp ? claims.exp * 1000 : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Renew the backend token before it dies (teardown X6).
+ *
+ * The token lasts a day and nothing renewed it, so every owner was thrown back
+ * to the login screen once a day, mid-task. Aligning the Auth.js session to the
+ * token's life fixed the half where the browser lied about being signed in, and
+ * left the interruption.
+ *
+ * Runs in the `jwt` callback, which fires whenever the session is read, so a
+ * user who is using the product refreshes as a side effect of using it. There
+ * is no timer: a background timer in one tab does not help the other four, and
+ * a closed laptop misses it entirely.
+ *
+ * A failed refresh blanks the token rather than keeping the old one. Middleware
+ * treats a session with no access token as signed out, so the user lands on
+ * /login once -- which is the correct outcome when the session has genuinely
+ * reached its fortnight cap, and no worse than today's behaviour when the
+ * failure was transient.
+ */
+async function refreshIfNearlyExpired(token: JWT): Promise<JWT> {
+  if (!token.accessToken) return token;
+
+  const expires = token.accessTokenExpires;
+  // An hour of margin. Long enough that a slow or briefly-failing refresh has
+  // several more chances before anything breaks; short enough that a token is
+  // not rotated on every page view.
+  if (expires && Date.now() < expires - 60 * 60 * 1000) return token;
+
+  try {
+    const renewed = await apiAuth.refresh({ token: token.accessToken });
+    token.accessToken = renewed.accessToken;
+    token.accessTokenExpires = expiryOf(renewed.accessToken);
+    token.role = renewed.role;
+    if (renewed.tenantId) token.tenantId = renewed.tenantId;
+    delete token.authError;
+  } catch {
+    token.accessToken = "";
+    token.authError = "session_expired";
+  }
+  return token;
+}
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   // Behind our own reverse proxy (Caddy) or on localhost — the Host header is
@@ -90,6 +153,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           token.accessToken = login.accessToken;
           token.email = me.email;
           if (login.name) token.name = login.name;
+          token.accessTokenExpires = expiryOf(login.accessToken);
           delete token.authError;
           return token;
         } catch (err) {
@@ -115,8 +179,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         token.tenantName = user.tenantName;
         token.role = user.role;
         token.accessToken = user.accessToken;
+        token.accessTokenExpires = expiryOf(user.accessToken);
+        return token;
       }
-      return token;
+
+      return await refreshIfNearlyExpired(token);
     },
     session({ session, token }) {
       session.user.tenantId = token.tenantId;

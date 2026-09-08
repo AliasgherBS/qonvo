@@ -306,6 +306,25 @@ export const auth = {
     ),
 
   /**
+   * Extend a live session without asking for the password (teardown X6).
+   *
+   * Rotating: the presenting token is revoked as the new one is issued, so the
+   * old value must be discarded. Capped at a fortnight from the original
+   * sign-in, after which this answers 401 with `session_expired`.
+   */
+  refresh: (opts: CallOpts = {}) =>
+    apiFetch<LoginResponseDto>("/api/auth/refresh", { method: "POST", ...opts }).then(
+      (dto): LoginResult => ({
+        accessToken: dto.access_token,
+        tokenType: dto.token_type,
+        role: dto.role,
+        tenantId: dto.tenant_id,
+        name: dto.name,
+        emailVerified: dto.email_verified ?? true,
+      }),
+    ),
+
+  /**
    * Revoke the token that made this call (teardown X6).
    *
    * Signing out used to clear the browser's copy and leave the credential

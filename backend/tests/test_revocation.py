@@ -369,3 +369,141 @@ def test_the_marker_uses_a_real_timestamp():
     before = int(dt.datetime.now(dt.UTC).timestamp())
 
     assert before - 2 <= revocation._now() <= before + 2
+
+
+# --- sessions, and refreshing them ------------------------------------------------ #
+async def test_revoking_a_session_kills_every_token_in_its_chain():
+    """Why `sid` exists. Revoking a `jti` kills one token, and once a session
+    can be refreshed that is one link of a chain: killing the newest link stops
+    whoever holds it and leaves anybody who forked the chain -- somebody who
+    stole a token and refreshed it -- still inside."""
+    redis = FakeRedis()
+    first = token()
+    # A refresh: same session, new token id.
+    refreshed = decode_jwt(
+        create_access_token(
+            subject="owner@theclinic.pk",
+            tenant_id=TENANT,
+            role="owner",
+            is_qonvo_admin=False,
+            session_id=first.session_id,
+            session_started_at=first.session_started_at,
+        )
+    )
+    assert refreshed.session_id == first.session_id
+    assert refreshed.jti != first.jti
+
+    await revocation.revoke_session(redis, first.session_id)
+
+    assert await revocation.is_revoked(redis, first) is True
+    assert await revocation.is_revoked(redis, refreshed) is True
+
+
+async def test_revoking_one_session_leaves_another_alone():
+    redis = FakeRedis()
+    laptop, phone = token(), token()
+
+    await revocation.revoke_session(redis, laptop.session_id)
+
+    assert await revocation.is_revoked(redis, laptop) is True
+    assert await revocation.is_revoked(redis, phone) is False
+
+
+async def test_revoking_a_missing_session_is_not_an_error():
+    redis = FakeRedis()
+
+    await revocation.revoke_session(redis, None)
+
+    assert redis.values == {}
+
+
+def test_a_token_carries_its_session_and_when_it_started():
+    claims = token()
+
+    assert claims.session_id
+    assert claims.session_started_at
+
+
+def test_signing_out_revokes_the_session_not_only_the_token():
+    import ast
+    import inspect
+
+    from app.api import auth as auth_api
+
+    tree = ast.parse(inspect.getsource(auth_api.logout).lstrip())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            node.value = ast.Constant(value="")
+
+    assert "revoke_session" in ast.unparse(tree)
+
+
+def test_the_refresh_rotates_the_old_token():
+    """Additive refresh leaves every previous token alive, so a captured one
+    stays useful for its full life. Rotating means it dies the moment the real
+    client next refreshes."""
+    import ast
+    import inspect
+
+    from app.api import auth as auth_api
+
+    tree = ast.parse(inspect.getsource(auth_api.refresh).lstrip())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            node.value = ast.Constant(value="")
+
+    assert "revoke_token" in ast.unparse(tree)
+
+
+def test_the_refresh_is_capped_from_the_original_sign_in():
+    """Without an absolute limit, refreshing forever and being signed in
+    forever are the same thing -- which is what a 24-hour token was trying to
+    avoid."""
+    import ast
+    import inspect
+
+    from app.api import auth as auth_api
+
+    tree = ast.parse(inspect.getsource(auth_api.refresh).lstrip())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            node.value = ast.Constant(value="")
+    body = ast.unparse(tree)
+
+    assert "MAX_SESSION_DAYS" in body
+    # From `sst`, not from this token's own iat.
+    assert "session_started_at" in body
+    assert auth_api.MAX_SESSION_DAYS <= 30
+
+
+def test_the_refresh_rereads_the_user():
+    """A role change, a disabled account or a removed membership must take
+    effect on refresh rather than persisting for as long as somebody keeps
+    refreshing."""
+    import ast
+    import inspect
+
+    from app.api import auth as auth_api
+
+    tree = ast.parse(inspect.getsource(auth_api.refresh).lstrip())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            node.value = ast.Constant(value="")
+    body = ast.unparse(tree)
+
+    assert "find_user" in body
+    assert "resolve_login" in body
+    assert "is_active" in body
+
+
+def test_the_dashboard_reads_the_expiry_from_the_token():
+    """Hard-coding "now plus 24 hours" in the browser would drift the moment
+    the server's TTL changed, and drift silently: the refresh would fire too
+    late and the user would be signed out anyway."""
+    from pathlib import Path
+
+    auth_ts = (Path(__file__).resolve().parents[2] / "dashboard" / "auth.ts").read_text()
+
+    assert "function expiryOf" in auth_ts
+    assert "accessTokenExpires" in auth_ts
+    assert "apiAuth.refresh" in auth_ts
