@@ -17,4 +17,11 @@ export const CONTACT = {
   // See docs/EMAIL-SETUP.md.
   email: "hello@qonvo.org",
   emailHref: "mailto:hello@qonvo.org",
+  // Where a signed-in customer is sent (teardown V7). The dashboard said
+  // "contact support if you need it moved" and named a channel that appeared
+  // nowhere in the product: no address, no link, no help destination in the
+  // navigation. Another alias on the same mailbox, so it costs nothing and
+  // matches QONVO_EMAIL_REPLY_TO. See docs/EMAIL-SETUP.md.
+  support: "support@qonvo.org",
+  supportHref: "mailto:support@qonvo.org",
 } as const;

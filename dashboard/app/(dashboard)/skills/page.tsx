@@ -1,45 +1,32 @@
 "use client";
 
-import Link from "next/link";
-
-import {
-  EscalationSection,
-  PaymentsSection,
-  TenantConfigPage,
-} from "@/components/settings/tenant-config";
-import { Card, CardContent } from "@/components/ui/card";
+import { SkillList } from "@/components/settings/skill-list";
 
 /**
- * Things the rep can do, as opposed to how it sounds. Handover lives here
- * rather than under Settings because handing a chat to a person is an action
- * the bot takes, and it pairs with the human_handoff skill that drives it.
+ * The capability list, and nothing else (teardown V4, P1).
  *
- * Booking and sheet logging are configured by connecting Google, so this page
- * points at Integrations rather than duplicating those controls.
+ * This page used to mix three unrelated concerns and name itself after the one
+ * it did not contain: a WhatsApp number for alerts (a way to reach a person),
+ * an alert toggle (a notification preference) and payment details (a fact the
+ * rep reads out to customers). All three are facts about the business and have
+ * moved to Business. What is left is what the name always promised.
+ *
+ * No save button, because there is nothing here to save. Turning a skill off is
+ * a real want and needs a per-skill write endpoint; a switch that did nothing
+ * would be the same finding again.
  */
 export default function SkillsPage() {
   return (
-    <TenantConfigPage
-      title="Skills"
-      description="What your AI rep can do for a customer beyond answering questions."
-      fields={["owner_alert_number", "notify_on_handoff", "payment_details"]}
-    >
-      {(props) => (
-        <>
-          <EscalationSection {...props} />
-          <PaymentsSection {...props} />
+    <div className="max-w-4xl space-y-6">
+      <div>
+        <h1 className="text-2xl font-extrabold tracking-tight">Skills</h1>
+        <p className="text-sm text-muted-foreground">
+          What your AI rep can do for a customer beyond answering questions. Anything waiting on
+          you says so, and links to the one place that fixes it.
+        </p>
+      </div>
 
-          <Card>
-            <CardContent className="pt-5 text-sm text-muted-foreground">
-              Booking, order capture and lead logging switch on when you connect Google.{" "}
-              <Link href="/integrations" className="font-semibold text-primary hover:underline">
-                Go to Integrations
-              </Link>
-              .
-            </CardContent>
-          </Card>
-        </>
-      )}
-    </TenantConfigPage>
+      <SkillList />
+    </div>
   );
 }

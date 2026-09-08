@@ -143,6 +143,11 @@ STAFF_ALLOWED: set[tuple[str, str]] = {
     ("/api/analytics/summary", "GET"),
     ("/api/team", "GET"),
     ("/api/account", "GET"),
+    # Your own display name, which is a property of the person and not of the
+    # workspace (teardown V5). Owner-gating it would leave a staff seat with
+    # exactly the finding this fixes, and the payload carries no user id, so it
+    # can only ever rename the subject of the caller's own token.
+    ("/api/account/profile", "PATCH"),
 }
 
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}

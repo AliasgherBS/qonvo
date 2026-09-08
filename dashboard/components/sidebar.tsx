@@ -48,7 +48,13 @@ const NAV_GROUPS: { label?: string; items: { href: string; label: string; icon: 
       ],
     },
     {
-      label: "Setup",
+      // Not "Setup" (teardown V1). WhatsApp and Integrations are not things
+      // you do once: the questions an owner brings to them -- is my number
+      // still linked, did the calendar write anything today -- are
+      // operational. Calling the group Setup told whoever built the WhatsApp
+      // page that its job was first-run, which is exactly what it does, so the
+      // label change is also the instruction for what gets built next.
+      label: "Connections",
       items: [
         { href: "/onboarding/connect", label: "WhatsApp", icon: Smartphone },
         { href: "/integrations", label: "Integrations", icon: Plug },

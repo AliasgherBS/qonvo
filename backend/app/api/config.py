@@ -7,6 +7,7 @@ surfaces validate and serialize identically.
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -265,4 +266,161 @@ async def update_config(
     return _config_to_dict(row)
 
 
-__all__ = ["ConfigUpdateRequest", "router"]
+# --------------------------------------------------------------------------- #
+# What the rep can actually do (teardown P1)
+# --------------------------------------------------------------------------- #
+# The Skills page listed no skills. The registry and its gating metadata have
+# always existed server-side, so this is the read that turns them into
+# something an owner can see: what they bought, and which of it is waiting on a
+# connection they have not made.
+#
+# It lives on the config router rather than in a module of its own because a
+# new router would have to be registered in app.main, and this is one read.
+#
+# Owner-facing copy, keyed by skill name. The registry's own descriptions are
+# written *for the model* ("Use this once you have at least a phone number"),
+# which is the wrong voice for a page whose job is to tell a salon owner what
+# their rep does. A skill added to the registry without an entry here still
+# appears, described by its registry text, rather than silently vanishing from
+# the list.
+SKILL_COPY: dict[str, tuple[str, str]] = {
+    "capture_lead": (
+        "Capture a lead",
+        "Takes a name and number from someone who is interested but not ready, "
+        "so you can follow up.",
+    ),
+    "human_handoff": (
+        "Hand over to a person",
+        "Stops answering and alerts you when a customer asks for a human, or asks "
+        "something your rep cannot answer.",
+    ),
+    "check_availability": (
+        "Check availability",
+        "Reads your calendar before offering a time, so it never offers a slot you "
+        "are already busy in.",
+    ),
+    "book_appointment": (
+        "Book an appointment",
+        "Puts a confirmed appointment on your calendar and confirms it to the customer.",
+    ),
+    "take_order": (
+        "Take an order",
+        "Records what a customer wants, item by item, and confirms it back to them.",
+    ),
+    "share_payment_details": (
+        "Share payment details",
+        "Sends your receiving account exactly as you wrote it when a customer asks "
+        "how to pay.",
+    ),
+    "append_to_sheet": (
+        "Log to your spreadsheet",
+        "Adds a row to the Google Sheet you picked, for anything you want kept "
+        "outside Qonvo.",
+    ),
+    "lookup_sheet": (
+        "Look something up",
+        "Searches the Google Sheet you picked for stock, prices or an order status, "
+        "and only reports what is actually in it.",
+    ),
+}
+
+#: Plain-language reason a gated skill is not available yet, by integration.
+INTEGRATION_NEEDS: dict[str, str] = {
+    "google_calendar": "Connect Google Calendar",
+    "google_sheets": "Connect Google Sheets",
+}
+
+#: Same, for a skill gated on a config field the owner has not filled in.
+CONFIG_KEY_NEEDS: dict[str, str] = {
+    "payment_details": "Add your payment details",
+}
+
+
+class SkillInfo(BaseModel):
+    key: str
+    label: str
+    description: str
+    #: Whether the rep would be offered this tool on the next message.
+    available: bool
+    requires_integration: str | None = None
+    requires_config_key: str | None = None
+    #: What to do about it, when it is not available. None when it is.
+    needs: str | None = None
+
+
+def skill_states(
+    definitions: dict[str, Any],
+    *,
+    ready: set[str],
+    config_row: Any,
+    configured: dict[str, bool],
+) -> list[SkillInfo]:
+    """Turn the registry plus this tenant's state into rows for the page.
+
+    Pure, and separate from the route, because the interesting part is the
+    availability rule and it must agree exactly with
+    :func:`app.skills.registry.enabled_skill_names` -- the page telling an owner
+    a skill is live while the pipeline never offers it is worse than the page
+    not existing. Same three conditions, in the same order.
+    """
+    rows: list[SkillInfo] = []
+    for name, definition in definitions.items():
+        label, description = SKILL_COPY.get(name, (name.replace("_", " "), definition.description))
+        needs: str | None = None
+        # An explicit skills row with enabled=False wins over everything; no
+        # row at all means enabled (the registry's default).
+        if configured.get(name, True) is not True:
+            needs = "Turned off for this workspace"
+        elif definition.requires_integration and definition.requires_integration not in ready:
+            needs = INTEGRATION_NEEDS.get(
+                definition.requires_integration,
+                f"Connect {definition.requires_integration}",
+            )
+        elif definition.requires_config_key and not getattr(
+            config_row, definition.requires_config_key, None
+        ):
+            needs = CONFIG_KEY_NEEDS.get(
+                definition.requires_config_key,
+                f"Set {definition.requires_config_key.replace('_', ' ')}",
+            )
+        rows.append(
+            SkillInfo(
+                key=name,
+                label=label,
+                description=description,
+                available=needs is None,
+                requires_integration=definition.requires_integration,
+                requires_config_key=definition.requires_config_key,
+                needs=needs,
+            )
+        )
+    return rows
+
+
+@router.get("/skills", response_model=list[SkillInfo])
+async def list_skills(
+    # A read, and one a staff seat genuinely needs: somebody working the inbox
+    # has to be able to see what the rep will and will not do on its own.
+    tenant_id: UUID = Depends(require_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> list[SkillInfo]:
+    """Every built-in skill, with whether this tenant's rep can use it."""
+    # Imported here rather than at module scope: the registry pulls in the
+    # integration resolver and every handler, and app.api.admin imports this
+    # module for its own config surface.
+    from app.integrations.resolver import ready_providers
+    from app.models.skill import Skill
+    from app.skills.registry import SKILL_REGISTRY
+
+    rows = (
+        await db.execute(select(Skill.key, Skill.enabled).where(Skill.tenant_id == tenant_id))
+    ).all()
+    return skill_states(
+        SKILL_REGISTRY,
+        ready=await ready_providers(db, tenant_id),
+        config_row=await _get_or_create_config(db, tenant_id),
+        configured=dict(rows),
+    )
+
+
+__all__ = ["ConfigUpdateRequest", "SkillInfo", "router", "skill_states"]
