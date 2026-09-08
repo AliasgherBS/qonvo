@@ -3,6 +3,7 @@
 import { Check, Copy, ShieldCheck } from "lucide-react";
 import { useState } from "react";
 
+import { TotpQr } from "@/components/account/totp-qr";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,16 +22,18 @@ import { useApi, useAuthToken } from "@/lib/use-api";
  * shipped with the security work; there was simply no way for a person to
  * switch it on, so nobody had. This is that way.
  *
- * **No QR code, on purpose.** There is no QR library in the dashboard and the
- * CSP allows scripts from four CDNs that do not include one, so the options
- * were a hand-rolled encoder or the setup key as text. An encoder we cannot
- * test against a real phone camera is a QR that might scan wrong, and a wrong
- * QR fails at the moment somebody is locked out. Every authenticator app takes
- * a typed key, and on a phone the `otpauth://` link below opens the app
- * directly, which beats scanning a screen you are already holding.
+ * **Scan, with typing as the fallback.** An earlier version of this offered
+ * only the key, on the grounds that the CSP allows scripts from four CDNs and
+ * none of them carries a QR library. That confused two things: the CSP governs
+ * scripts fetched at runtime from another origin, not an npm dependency, which
+ * the build compiles into our own bundle and serves under `'self'`. A
+ * 32-character key typed off a screen is the step people abandon, and an
+ * authenticator nobody sets up protects nothing.
  *
- * Grouped in fours because the key is typed by a human off a screen, and
- * twenty-six unbroken characters is where transcription errors come from.
+ * The key stays visible next to the code rather than behind a disclosure,
+ * because a camera fails often enough that the alternative has to be one
+ * glance away. Grouped in fours: it is transcribed by a human, and twenty-six
+ * unbroken characters is where transcription errors come from.
  */
 function grouped(secret: string): string {
   return (secret.match(/.{1,4}/g) ?? [secret]).join(" ");
@@ -184,35 +187,44 @@ export function TwoFactorCard() {
               <li>
                 <span className="font-semibold">1. Open your authenticator app</span>
                 <span className="block text-xs text-muted-foreground">
-                  Google Authenticator, Authy, 1Password, or whichever you already use. Choose
-                  &quot;enter a setup key&quot; rather than scanning.
+                  Google Authenticator, Authy, 1Password, or whichever you already use, and
+                  choose to add an account by scanning.
                 </span>
               </li>
               <li>
-                <span className="font-semibold">2. Enter this key</span>
-                <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                  <code className="select-all rounded-xl border border-border-strong bg-surface-muted px-3 py-2 font-mono text-sm tracking-wider">
-                    {grouped(enrolment.secret)}
-                  </code>
-                  <Button variant="outline" size="sm" onClick={copySecret}>
-                    {copied ? (
-                      <Check className="mr-1.5 h-3.5 w-3.5" />
-                    ) : (
-                      <Copy className="mr-1.5 h-3.5 w-3.5" />
-                    )}
-                    {copied ? "Copied" : "Copy key"}
-                  </Button>
+                <span className="font-semibold">2. Scan this</span>
+                <div className="mt-2 flex flex-col gap-4 sm:flex-row sm:items-start">
+                  <TotpQr uri={enrolment.provisioningUri} />
+                  <div className="min-w-0 space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      Cannot scan it? Choose &quot;enter a setup key&quot; in your app and type
+                      this instead.
+                    </p>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <code className="select-all rounded-xl border border-border-strong bg-surface-muted px-3 py-2 font-mono text-sm tracking-wider">
+                        {grouped(enrolment.secret)}
+                      </code>
+                      <Button variant="outline" size="sm" onClick={copySecret}>
+                        {copied ? (
+                          <Check className="mr-1.5 h-3.5 w-3.5" />
+                        ) : (
+                          <Copy className="mr-1.5 h-3.5 w-3.5" />
+                        )}
+                        {copied ? "Copied" : "Copy key"}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Reading this on the phone itself?{" "}
+                      <a
+                        href={enrolment.provisioningUri}
+                        className="font-semibold text-primary-strong underline-offset-2 hover:underline"
+                      >
+                        Open it in your authenticator app
+                      </a>
+                      , which beats scanning your own screen.
+                    </p>
+                  </div>
                 </div>
-                <p className="mt-1.5 text-xs text-muted-foreground">
-                  On this phone?{" "}
-                  <a
-                    href={enrolment.provisioningUri}
-                    className="font-semibold text-primary-strong underline-offset-2 hover:underline"
-                  >
-                    Open it in your authenticator app
-                  </a>{" "}
-                  instead of typing it.
-                </p>
               </li>
               <li>
                 <span className="font-semibold">3. Type the code it shows</span>
