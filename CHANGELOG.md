@@ -9,6 +9,8 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-09-08
+
 ### Security
 
 - **`script-src` no longer allows `'unsafe-inline'`.** A per-request nonce
@@ -234,3 +236,4 @@ could be sold.
 [0.9.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.9.0
 [0.10.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.0
 [0.10.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.1
+[0.10.2]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.2
