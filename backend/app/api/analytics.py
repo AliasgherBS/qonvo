@@ -181,6 +181,17 @@ async def summary(
             "messages_out": messages_out,
             "messages": messages_in + messages_out,
             "tokens": tokens,
+            # Still returned, deliberately no longer rendered to the owner
+            # (teardown Y3). This is our cost of goods, and printing it to the
+            # cent for somebody paying a monthly fee invites exactly one
+            # question, so the dashboard dropped the tile. It stays in the
+            # response because this endpoint is the tenant's own usage data
+            # rather than a secret, and because removing a key from a totals
+            # map that clients treat as an open dictionary of numbers is a
+            # breakage with nothing to gain: the fix for "the owner should not
+            # see this" is not to show it. The ops console reads
+            # ``usage_counters`` directly, so /admin/usage is unaffected either
+            # way.
             "cost": round(cost, 4),
             "conversations": conversations,
             "leads": leads,

@@ -806,6 +806,8 @@ interface TenantConfigDto {
   llm_provider: LlmProvider | null;
   llm_model: string | null;
   payment_details: string | null;
+  /** Where billing notices go. Null/empty means the owner's login address. */
+  billing_email: string | null;
   voice_reply_mode: VoiceReplyMode | null;
   reply_language_mode: string | null;
   notify_on_handoff: boolean;
@@ -828,6 +830,8 @@ export interface TenantConfig {
   llmProvider: LlmProvider | "";
   llmModel: string;
   paymentDetails: string;
+  /** Empty means "use the address you sign in with", which is the default. */
+  billingEmail: string;
   voiceReplyMode: VoiceReplyMode;
   /** "match", or a language code. Script-aware: "ur" and "ur-Latn" differ. */
   replyLanguageMode: string;
@@ -852,6 +856,7 @@ function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
     llmProvider: dto.llm_provider ?? "",
     llmModel: dto.llm_model ?? "",
     paymentDetails: dto.payment_details ?? "",
+    billingEmail: dto.billing_email ?? "",
     voiceReplyMode: dto.voice_reply_mode ?? "match",
     replyLanguageMode: dto.reply_language_mode ?? "match",
     notifyOnHandoff: dto.notify_on_handoff ?? true,
@@ -885,6 +890,10 @@ function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
     llm_provider: cfg.llmProvider || null,
     llm_model: cfg.llmModel,
     payment_details: cfg.paymentDetails || null,
+    // Trimmed to null the same way, so clearing the box means "go back to my
+    // login address" rather than storing an empty string the API would have to
+    // treat as one.
+    billing_email: cfg.billingEmail.trim() || null,
     voice_reply_mode: cfg.voiceReplyMode,
     reply_language_mode: cfg.replyLanguageMode,
     notify_on_handoff: cfg.notifyOnHandoff,

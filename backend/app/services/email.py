@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.logging import logger
 from app.models.enums import UserRole
-from app.models.tenant import Tenant, TenantUser, User
+from app.models.tenant import Tenant, TenantConfig, TenantUser, User
 from app.services import email_templates as templates
 
 
@@ -153,6 +153,35 @@ async def send_team_invite_email(to: str, business: str, role: str, accept_url: 
     return await send_email(to, subject, text, html=html)
 
 
+async def billing_recipient(db: AsyncSession, tenant_id: uuid.UUID) -> str | None:
+    """Where this tenant's billing notices go.
+
+    The billing address the business set, falling back to the owner's login
+    address (teardown Z7). The person who signed up is frequently not the
+    person who pays the invoice, and until this existed every billing email
+    went to the signup address with no way to redirect it.
+
+    The fallback is not a nicety: an empty ``billing_email`` is the default and
+    must keep delivering, so "unset" resolves to the old behaviour rather than
+    to nothing.
+    """
+    billing_email = (
+        await db.execute(
+            select(TenantConfig.billing_email).where(TenantConfig.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if billing_email and billing_email.strip():
+        return billing_email.strip()
+    return (
+        await db.execute(
+            select(User.email)
+            .join(TenantUser, TenantUser.user_id == User.id)
+            .where(TenantUser.tenant_id == tenant_id, TenantUser.role == UserRole.owner)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
 async def send_plan_upgraded_email(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -162,12 +191,16 @@ async def send_plan_upgraded_email(
     currency: str | None = None,
     invoice_number: str | None = None,
 ) -> bool:
-    """Confirm a paid plan to the tenant's owner.
+    """Confirm a paid plan to the tenant's billing contact.
 
     Not a receipt. The merchant of record is the seller, issues the invoice and
     emails its own confirmation with a portal link; a second document for one
     sale would be wrong rather than merely redundant. This says the thing the
     provider's receipt cannot: what the product now does.
+
+    Addressed to ``billing_recipient`` rather than to the owner directly: this
+    is a billing notice, so a business that named an accounts address gets it
+    there.
     """
     from app.billing.plans import PLANS
 
@@ -183,6 +216,10 @@ async def send_plan_upgraded_email(
     if row is None or not row.email:
         return False
 
+    # The business name still comes from the owner row above, because that is
+    # the query that also proves the tenant has an owner at all.
+    to = await billing_recipient(db, tenant_id) or row.email
+
     plan = PLANS.get(plan_key)
     subject, text, html = templates.plan_upgraded(
         business=row.name or "Your business",
@@ -193,7 +230,7 @@ async def send_plan_upgraded_email(
         currency=currency,
         invoice_number=invoice_number,
     )
-    return await send_email(row.email, subject, text, html=html)
+    return await send_email(to, subject, text, html=html)
 
 
 async def email_owner(db: AsyncSession, tenant_id: uuid.UUID, subject: str, body: str) -> bool:
@@ -212,6 +249,7 @@ async def email_owner(db: AsyncSession, tenant_id: uuid.UUID, subject: str, body
 
 
 __all__ = [
+    "billing_recipient",
     "email_owner",
     "send_plan_upgraded_email",
     "send_email",

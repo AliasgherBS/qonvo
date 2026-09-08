@@ -152,6 +152,19 @@ class TenantConfig(Base, TenantScopedMixin):
     # ``share_payment_details`` skill when a customer wants to pay (§7). Free text
     # (bank name/title/number/IBAN, JazzCash/Easypaisa, etc.) — never card data.
     payment_details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Where this business wants its billing notices sent (teardown Z7).
+    #:
+    #: A business's accounts department is usually not the person who signed
+    #: up, and until now every billing email went to whoever created the
+    #: account. NULL/empty means "use the owner's login address", which is the
+    #: old behaviour and the right default: a tenant that never fills this in
+    #: must keep receiving its invoices.
+    #:
+    #: Deliberately not accompanied by a tax id or a company address. Which of
+    #: those apply depends on the jurisdiction and on the merchant of record
+    #: that issues the invoice, and a field we collect but never print on
+    #: anything is worse than no field.
+    billing_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
 
 
 class AuditLog(Base, TenantScopedMixin):

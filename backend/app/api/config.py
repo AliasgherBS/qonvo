@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 from uuid import UUID
 
+from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select, update
@@ -46,6 +47,10 @@ class ConfigUpdateRequest(BaseModel):
     llm_provider: str | None = None
     llm_model: str | None = None
     payment_details: str | None = None
+    #: Where this business wants its billing notices sent (teardown Z7). Empty
+    #: means "use the owner's login address". Validated in
+    #: ``_apply_config_update`` rather than here, see the note there.
+    billing_email: str | None = None
     voice_reply_mode: str | None = None  # "match" | "always" | "never"
     # "match", "en", or a language the owner typed. Open on purpose: which
     # languages work is a property of the model, not of Qonvo.
@@ -143,6 +148,7 @@ class ConfigResponse(BaseModel):
     llm_provider: str | None
     llm_model: str | None
     payment_details: str | None
+    billing_email: str | None
     voice_reply_mode: str
     reply_language_mode: str
     notify_on_handoff: bool
@@ -166,6 +172,11 @@ def _config_to_dict(row: TenantConfig) -> ConfigResponse:
         llm_provider=row.llm_provider,
         llm_model=row.llm_model,
         payment_details=row.payment_details,
+        # The raw column, not a fallback to the owner's login address: the
+        # field's own empty state is what tells the Billing page to say
+        # "invoices go to the address you sign in with" rather than to
+        # pre-fill a value the owner never chose and would then be editing.
+        billing_email=row.billing_email,
         voice_reply_mode=((row.providers or {}).get("voice") or {}).get("mode") or "match",
         reply_language_mode=(
             ((row.providers or {}).get("language") or {}).get("mode") or "match"
@@ -173,6 +184,37 @@ def _config_to_dict(row: TenantConfig) -> ConfigResponse:
         # Default on: the owner is alerted on handoff unless they opt out.
         notify_on_handoff=(row.escalation_rules or {}).get("notify_on_handoff", True),
     )
+
+
+def normalise_billing_email(value: str | None) -> str | None:
+    """Empty means "use the owner's login address"; anything else must work.
+
+    Refused rather than stored, and beside the timezone guard rather than in a
+    pydantic validator, for the same two reasons: this is a 400 ("that address
+    is not an address") rather than a schema violation, and a billing address
+    that silently never delivers is the worst of the three states. The owner
+    would not find out from this page. They would find out from a missing
+    invoice, months later.
+
+    ``check_deliverability=False`` because this must not do a DNS lookup on the
+    request path: a save that hangs on somebody else's nameserver, or fails
+    because a valid domain's MX is briefly unreachable, would be a worse
+    failure than the typo it is trying to catch.
+    """
+    if value is None:
+        return None
+    value = value.strip()
+    if not value:
+        # The empty state is a real answer, not a missing one, so it is stored
+        # as NULL rather than as "".
+        return None
+    try:
+        return validate_email(value, check_deliverability=False).normalized
+    except EmailNotValidError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{value!r} is not a valid email address",
+        ) from exc
 
 
 def _apply_config_update(row: TenantConfig, body: ConfigUpdateRequest) -> None:
@@ -186,6 +228,11 @@ def _apply_config_update(row: TenantConfig, body: ConfigUpdateRequest) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"{data['timezone']!r} is not a known timezone",
         )
+    # `in data`, not a truthiness check: an explicit null is how the owner
+    # clears the field and goes back to their login address, and that has to
+    # keep working.
+    if "billing_email" in data:
+        data["billing_email"] = normalise_billing_email(data["billing_email"])
     # These two aren't columns — they live in JSON maps. Pop before the column loop.
     voice_mode = data.pop("voice_reply_mode", None)
     language_mode = data.pop("reply_language_mode", None)
@@ -423,4 +470,10 @@ async def list_skills(
     )
 
 
-__all__ = ["ConfigUpdateRequest", "SkillInfo", "router", "skill_states"]
+__all__ = [
+    "ConfigUpdateRequest",
+    "SkillInfo",
+    "normalise_billing_email",
+    "router",
+    "skill_states",
+]

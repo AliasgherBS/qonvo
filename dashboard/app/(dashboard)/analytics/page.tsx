@@ -13,8 +13,6 @@ import { analytics, type AnalyticsSummary } from "@/lib/api";
 import { useApi, useAuthToken } from "@/lib/use-api";
 import { cn } from "@/lib/utils";
 
-const CURRENCY = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
-
 /** The endpoint already took `?days=`; nothing on the page could change it. */
 const RANGES = [
   { days: 7, label: "7 days" },
@@ -86,12 +84,17 @@ function AnalyticsContent({ data }: { data: AnalyticsSummary }) {
 
   // Demoted, not deleted. Each of these is worth a glance and none of them is
   // the reason somebody pays for the product.
+  //
+  // "AI cost" is deliberately absent (teardown Y3). It was our cost of goods,
+  // printed to the cent in front of somebody paying a monthly fee, and the
+  // only question it invites is a margin conversation. The figure is still
+  // recorded, still billed against, and still shown where it is operationally
+  // useful: /admin/usage, which has a Cost column per tenant per month.
   const smallStats: { label: string; value: string }[] = [
     { label: "Messages received", value: (t.messages_in ?? 0).toLocaleString() },
     { label: "Conversations", value: (t.conversations ?? 0).toLocaleString() },
     { label: "Needs human now", value: (t.needs_human ?? 0).toLocaleString() },
     { label: "Open handoffs", value: (t.handoffs_open ?? 0).toLocaleString() },
-    { label: "AI cost", value: CURRENCY.format(t.cost ?? 0) },
   ];
 
   return (
@@ -117,7 +120,7 @@ function AnalyticsContent({ data }: { data: AnalyticsSummary }) {
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         {smallStats.map((s) => (
           <SmallStat key={s.label} label={s.label} value={s.value} />
         ))}
@@ -296,8 +299,8 @@ function AnalyticsSkeleton() {
           </Card>
         ))}
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-        {[0, 1, 2, 3, 4].map((i) => (
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => (
           <div key={i} className="space-y-2 rounded-xl border border-border bg-surface px-4 py-3">
             <Skeleton className="h-3 w-2/3" />
             <Skeleton className="h-5 w-1/2" />

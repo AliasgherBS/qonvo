@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { BillingContact } from "@/components/billing/billing-contact";
 import { CardOnFile } from "@/components/billing/card-on-file";
 import { ManagePlan } from "@/components/billing/manage-plan";
 import { PaymentHistory } from "@/components/billing/payment-history";
@@ -222,6 +223,10 @@ export default function BillingPage() {
           {/* --- Zone 3: how am I paying, and what have I paid ------------- */}
           <CardOnFile />
           <PaymentHistory />
+          {/* Still zone 3: who the paperwork is addressed to is part of "how
+              am I paying", and it is the question a business asks right after
+              seeing its first invoice (teardown Z7). */}
+          <BillingContact />
 
           {/* --- Zone 4: what else could I be on -------------------------- */}
           <PlanComparison
