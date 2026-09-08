@@ -79,6 +79,9 @@ class InboundFragment:
     body: str = ""
     media_url: str | None = None
     timestamp: float | None = None
+    # The sender's WhatsApp display name, when the payload carried one (I1).
+    # Defaulted, so a fragment buffered by an older webhook still parses.
+    push_name: str | None = None
 
 
 @dataclass(slots=True)
@@ -620,8 +623,21 @@ def escalation_from_tool_results(tool_results: list[dict[str, Any]]) -> dict[str
 # --------------------------------------------------------------------------- #
 # DB-backed orchestration
 # --------------------------------------------------------------------------- #
+def push_name_from(fragments: list[InboundFragment]) -> str | None:
+    """The last push name any fragment carried, if any did."""
+    for fragment in reversed(fragments):
+        if fragment.push_name:
+            return fragment.push_name
+    return None
+
+
 async def _get_or_create_conversation(
-    db: AsyncSession, tenant_id: uuid.UUID, session_row: WhatsAppSession, chat_id: str
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    session_row: WhatsAppSession,
+    chat_id: str,
+    *,
+    push_name: str | None = None,
 ) -> Conversation:
     existing = (
         await db.execute(
@@ -634,9 +650,20 @@ async def _get_or_create_conversation(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        # Refreshed on every turn, not only at creation: a customer who renames
+        # themselves on WhatsApp would otherwise be stuck under the old name
+        # forever, and every conversation that predates name capture would stay
+        # nameless despite the payloads now carrying one.
+        if push_name and existing.customer_name != push_name:
+            existing.customer_name = push_name
         return existing
 
-    conversation = Conversation(tenant_id=tenant_id, session_id=session_row.id, chat_id=chat_id)
+    conversation = Conversation(
+        tenant_id=tenant_id,
+        session_id=session_row.id,
+        chat_id=chat_id,
+        customer_name=push_name,
+    )
     db.add(conversation)
     await db.flush()
     return conversation
@@ -853,7 +880,9 @@ async def _run_pipeline_inner(
             await db.execute(select(TenantConfig).where(TenantConfig.tenant_id == tenant_uuid))
         ).scalar_one_or_none()
 
-        conversation = await _get_or_create_conversation(db, tenant_uuid, session_row, chat_id)
+        conversation = await _get_or_create_conversation(
+            db, tenant_uuid, session_row, chat_id, push_name=push_name_from(fragments)
+        )
         # Voice-in: transcribe before persisting so the inbound Message stores the
         # transcript as its body (§2 voice loop). A failed transcription degrades
         # to a text-only turn rather than raising, so it cannot cost us the row.
@@ -884,7 +913,9 @@ async def _run_pipeline_inner(
             await db.execute(select(TenantConfig).where(TenantConfig.tenant_id == tenant_uuid))
         ).scalar_one_or_none()
 
-        conversation = await _get_or_create_conversation(db, tenant_uuid, session_row, chat_id)
+        conversation = await _get_or_create_conversation(
+            db, tenant_uuid, session_row, chat_id, push_name=push_name_from(fragments)
+        )
 
         now = datetime.now(UTC)
 
@@ -1590,6 +1621,7 @@ __all__ = [
     "refresh_summary_with_usage",
     "is_paused",
     "is_voice_fragment",
+    "push_name_from",
     "should_reply_voice",
     "is_within_business_hours",
     "run_pipeline",

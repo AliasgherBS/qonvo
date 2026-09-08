@@ -1,11 +1,14 @@
 "use client";
 
 import { Bell, Radio, ShieldAlert, TrendingUp, TriangleAlert } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 
-import { notifications, type Notification, type NotificationType } from "@/lib/api";
+import type { NotificationType } from "@/lib/api";
+import { inboxHref, inboxNotifications, type InboxNotification } from "@/lib/api/inbox";
+import { formatRelative } from "@/lib/format";
 import { useAuthToken, usePolling } from "@/lib/use-api";
-import { cn, formatRelativeTime } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 
 const NOTIFICATIONS_POLL_MS = 30_000;
 
@@ -27,8 +30,8 @@ export function NotificationsBell() {
   const token = useAuthToken();
   const [open, setOpen] = useState(false);
 
-  const { data, refetch } = usePolling<Notification[]>(
-    () => notifications.list({}, { token }),
+  const { data, refetch } = usePolling<InboxNotification[]>(
+    () => inboxNotifications.list({}, { token }),
     NOTIFICATIONS_POLL_MS,
     [token],
   );
@@ -38,10 +41,11 @@ export function NotificationsBell() {
 
   async function handleMarkRead(id: string) {
     try {
-      await notifications.markRead(id, { token });
+      await inboxNotifications.markRead(id, { token });
       refetch();
     } catch {
-      // Backend not wired yet - the bell stays inert until it lands.
+      // A failed mark-read is not worth interrupting anybody: the row stays
+      // unread and the next poll will show it that way.
     }
   }
 
@@ -72,37 +76,82 @@ export function NotificationsBell() {
               {items.length === 0 ? (
                 <li className="px-4 py-6 text-center text-sm text-muted-foreground">You&apos;re all caught up.</li>
               ) : (
-                items.map((item) => {
-                  const Icon = iconFor(item.type);
-                  return (
-                    <li key={item.id}>
-                      <button
-                        type="button"
-                        onClick={() => handleMarkRead(item.id)}
-                        className={cn(
-                          "flex w-full items-start gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-surface-muted",
-                          !item.read && "bg-primary/5",
-                        )}
-                      >
-                        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-muted text-muted-foreground">
-                          <Icon className="h-3.5 w-3.5" />
-                        </span>
-                        <span className="flex-1">
-                          <span className="block">{item.message}</span>
-                          <span className="mt-0.5 block text-xs text-muted-foreground">
-                            {formatRelativeTime(item.createdAt)}
-                          </span>
-                        </span>
-                        {!item.read ? <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" /> : null}
-                      </button>
-                    </li>
-                  );
-                })
+                items.map((item) => (
+                  <li key={item.id}>
+                    <NotificationRow
+                      notification={item}
+                      onOpen={() => {
+                        setOpen(false);
+                        void handleMarkRead(item.id);
+                      }}
+                      onMarkRead={() => void handleMarkRead(item.id)}
+                    />
+                  </li>
+                ))
               )}
             </ul>
           </div>
         </>
       ) : null}
     </div>
+  );
+}
+
+function NotificationRow({
+  notification,
+  onOpen,
+  onMarkRead,
+}: {
+  notification: InboxNotification;
+  onOpen: () => void;
+  onMarkRead: () => void;
+}) {
+  const Icon = iconFor(notification.type);
+  const rowClass = cn(
+    "flex w-full items-start gap-3 px-4 py-3 text-left text-sm transition-colors hover:bg-surface-muted",
+    !notification.read && "bg-primary/5",
+  );
+
+  const contents = (
+    <>
+      <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-surface-muted text-muted-foreground">
+        <Icon className="h-3.5 w-3.5" />
+      </span>
+      <span className="min-w-0 flex-1">
+        {/* The customer, named the way the inbox names them, is the headline: an
+            escalation is about a person, and "A customer needs a human" does
+            not say which one (teardown S4). */}
+        <span className="block truncate font-semibold">{notification.subject ?? notification.title}</span>
+        <span dir="auto" className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">
+          {/* The trimmed reason, not the whole body: the tail of an escalation
+              reason is the model explaining itself to the system. */}
+          {[notification.subject ? notification.title : null, notification.summary]
+            .filter(Boolean)
+            .join(" · ")}
+        </span>
+        <span className="mt-0.5 block text-xs text-muted-foreground">
+          {formatRelative(notification.createdAt)}
+          {notification.conversationId ? " · Open chat" : ""}
+        </span>
+      </span>
+      {!notification.read ? <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" /> : null}
+    </>
+  );
+
+  // A notification that names a conversation links to it. Opening the chat is
+  // the only thing an owner wants to do with an escalation, and the bell used
+  // to be a dead end.
+  if (notification.conversationId) {
+    return (
+      <Link href={inboxHref(notification.conversationId)} onClick={onOpen} className={rowClass}>
+        {contents}
+      </Link>
+    );
+  }
+
+  return (
+    <button type="button" onClick={onMarkRead} className={rowClass}>
+      {contents}
+    </button>
   );
 }
