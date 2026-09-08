@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ApiError, auth } from "@/lib/api";
+import { browserTimezone } from "@/lib/timezones";
 
 export function SignupForm() {
   const [businessName, setBusinessName] = useState("");
@@ -23,7 +24,17 @@ export function SignupForm() {
     setError(null);
 
     try {
-      await auth.signup({ businessName, ownerName, email, password });
+      await auth.signup({
+        businessName,
+        ownerName,
+        email,
+        password,
+        // The browser's clock, so a new tenant is on the right one without
+        // anybody visiting a settings page. Every tenant used to start on UTC,
+        // which made opening hours refuse customers during business hours and
+        // put bookings five hours out, both silently (teardown B1/N1).
+        timezone: browserTimezone() ?? undefined,
+      });
     } catch (err) {
       setLoading(false);
       setError(

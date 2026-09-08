@@ -123,6 +123,14 @@ class TenantConfig(Base, TenantScopedMixin):
     # ``providers`` remains the internal per-capability provider map (§4).
     llm_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     llm_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    #: The tenant's own clock, and the only one (teardown B1/N1/V2).
+    #:
+    #: Opening hours used to carry their own timezone inside the
+    #: ``business_hours`` JSON, and bookings used a third value on the Google
+    #: Calendar integration. Both silently meant UTC, and the calendar one was
+    #: unreachable for a tenant with no Google account. One field, read by the
+    #: business-hours gate, the booking skills and the calendar client.
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
     business_hours: Mapped[dict] = mapped_column(JSONBType, nullable=False, default=dict)
     escalation_rules: Mapped[dict] = mapped_column(JSONBType, nullable=False, default=dict)
     owner_alert_number: Mapped[str | None] = mapped_column(String(32), nullable=True)

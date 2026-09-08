@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from datetime import time as dt_time
+from types import SimpleNamespace
 from typing import Any
 
 from sqlalchemy import select
@@ -30,6 +31,7 @@ from app.core import obs
 from app.core.config import settings
 from app.core.logging import logger
 from app.core.tenancy import tenant_session
+from app.core.tenant_time import tenant_zone
 from app.models.conversation import Conversation, Message
 from app.models.enums import ConversationState, MessageAuthor, MessageDirection, MessageType
 from app.models.ops import AnalyticsEvent, UsageCounter
@@ -250,20 +252,33 @@ def _parse_hhmm(value: str) -> dt_time:
     return dt_time(int(hour), int(minute))
 
 
-def is_within_business_hours(business_hours: dict[str, Any], *, now: datetime) -> bool:
-    """``business_hours`` shape: ``{"enabled": bool, "timezone": "UTC",
+def is_within_business_hours(
+    business_hours: dict[str, Any], *, now: datetime, tenant_config: Any | None = None
+) -> bool:
+    """``business_hours`` shape: ``{"enabled": bool,
     "hours": {"mon": [["09:00", "17:00"]], ...}}``. Missing/disabled → always open.
+
+    The timezone comes from the tenant, not from this dict (teardown B1). It
+    used to live in ``business_hours["timezone"]``, where the client sent the
+    literal string ``"UTC"`` and no control anywhere was bound to it, so it
+    could not be changed. Since this function is what decides whether the rep
+    answers at all, the consequence was a rep that refused to talk to customers
+    during business hours -- and only once an owner turned hours on, which is
+    why it went unnoticed.
+
+    ``tenant_config`` is keyword-with-a-default rather than required so the
+    dozens of existing call sites in tests keep working; ``tenant_timezone``
+    reads the legacy key when there is no config, so behaviour is unchanged for
+    those.
     """
     if not business_hours or not business_hours.get("enabled"):
         return True
 
-    tz_name = business_hours.get("timezone", "UTC")
-    try:
-        from zoneinfo import ZoneInfo
-
-        tz = ZoneInfo(tz_name)
-    except Exception:  # noqa: BLE001 — unknown/invalid tz name falls back to UTC
-        tz = UTC
+    tz = tenant_zone(tenant_config) if tenant_config is not None else None
+    if tz is None:
+        # No config to ask: fall back to the legacy key, which is what every
+        # existing caller relied on.
+        tz = tenant_zone(SimpleNamespace(timezone=None, business_hours=business_hours))
     local = now.astimezone(tz)
     day_key = local.strftime("%a").lower()
 
@@ -966,7 +981,9 @@ async def _run_pipeline_inner(
 
         # --- Gate: business hours (§5.2, auto-reply once per conversation) ---
         business_hours = tenant_config.business_hours if tenant_config else {}
-        if business_hours and not is_within_business_hours(business_hours, now=now):
+        if business_hours and not is_within_business_hours(
+            business_hours, now=now, tenant_config=tenant_config
+        ):
             already_replied = any(
                 m.meta.get("auto_reply") == "business_hours" for m in history_rows
             )

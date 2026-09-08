@@ -21,7 +21,7 @@ from uuid import uuid4
 
 import jwt
 from app.core.config import settings
-from app.core.security import hash_password
+from app.core.security import ACCESS_TOKEN_TYPE, decode_jwt, hash_password
 from app.db.session import system_session_factory
 from app.models.enums import UserRole
 from app.models.tenant import Tenant, TenantConfig, TenantUser, User
@@ -79,9 +79,18 @@ async def main() -> None:
             )
 
     now = dt.datetime.now(dt.UTC)
+    # Hand-rolled rather than calling create_access_token, because this one
+    # deliberately lasts a week so a dev token survives a working session.
+    #
+    # `typ` is not optional. decode_jwt requires it and compares it, so a token
+    # without it is refused outright -- which is exactly what this script
+    # produced for one commit after that check landed, making every seeded
+    # token 401 with "Token is missing the typ claim" (teardown X7). If another
+    # required claim is ever added, it has to be added here too.
     token = jwt.encode(
         {
             "sub": DEV_OWNER_EMAIL,
+            "typ": ACCESS_TOKEN_TYPE,
             "tenant_id": str(tenant_id),
             "role": "owner",
             "iat": now,
@@ -90,6 +99,9 @@ async def main() -> None:
         settings.jwt_secret,
         algorithm=settings.jwt_algorithm,
     )
+    # Prove it before printing it. A seed script that prints an unusable token
+    # wastes somebody's afternoon before they think to doubt the token.
+    decode_jwt(token)
     print(f"TENANT_ID={tenant_id}")
     print(f"OWNER_EMAIL={DEV_OWNER_EMAIL}")
     print(f"OWNER_PASSWORD={DEV_OWNER_PASSWORD}")

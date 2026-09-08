@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import Link from "next/link";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,6 +22,7 @@ import {
   OTHER_REPLY_LANGUAGE,
   REPLY_LANGUAGE_PRESETS,
 } from "@/lib/api";
+import { browserTimezone, offsetOf, timeIn, timezoneOptions } from "@/lib/timezones";
 import { useApi, useAuthToken } from "@/lib/use-api";
 import { cn } from "@/lib/utils";
 
@@ -431,7 +433,32 @@ export function HoursSection({ form, setForm }: SectionProps) {
         <div className="flex items-start justify-between gap-3">
           <div>
             <CardTitle>Business hours</CardTitle>
-            <CardDescription>Outside open hours, customers get your auto-reply.</CardDescription>
+            <CardDescription>
+              Outside open hours, customers get your auto-reply.
+              {/* Naming the clock here is what makes the hours legible. These
+                  times used to be evaluated in UTC with no way to change it,
+                  so a 9-to-5 in Karachi silently meant 2 PM to 10 PM and the
+                  rep turned customers away in the middle of the working day
+                  (teardown B1). The setting lives on Business because it also
+                  governs bookings. */}
+              {form.timezone ? (
+                <>
+                  {" "}
+                  Times are in{" "}
+                  <strong className="font-bold text-foreground">
+                    {form.timezone.replace(/_/g, " ")}
+                  </strong>
+                  {timeIn(form.timezone) ? `, where it is ${timeIn(form.timezone)}` : null}.{" "}
+                  <Link
+                    href="/business"
+                    className="font-semibold text-primary-strong underline-offset-2 hover:underline"
+                  >
+                    Change it on Business
+                  </Link>
+                  .
+                </>
+              ) : null}
+            </CardDescription>
           </div>
           <label className="flex items-center gap-2 text-sm">
             <Switch
@@ -659,6 +686,97 @@ export function PaymentsSection({ form, setForm }: SectionProps) {
 }
 
 /* --------------------------------------------------------------- Workspace */
+
+/**
+ * The tenant's clock (teardown B1, N1, V2).
+ *
+ * This control did not exist. The timezone lived in two places, both of which
+ * silently meant UTC: inside the `business_hours` JSON, where the client sent
+ * the literal string "UTC" and nothing was bound to it, and inside the Google
+ * Calendar card on Integrations, where a tenant with no Google account could
+ * not reach it at all.
+ *
+ * Both failures were invisible. Opening hours evaluated in UTC make the rep
+ * refuse to talk to customers standing in the shop, and only once an owner
+ * turns hours on. A booking at "3 PM" lands at 8 PM Karachi time on the
+ * owner's real calendar, with a confirmation message saying three o'clock.
+ *
+ * The live time is shown beside the select on purpose: a timezone name is not
+ * something most people can check, and "Tue 14:32" is. It makes the setting
+ * confirm itself, which is the only defence against the next silent version of
+ * this bug.
+ *
+ * It belongs on Business rather than beside the opening hours, because the same
+ * value governs bookings, and putting it next to only one of its two consumers
+ * is how it ended up inside an optional integration in the first place.
+ */
+export function TimezoneSection({ form, setForm }: SectionProps) {
+  const options = useMemo(() => timezoneOptions(form.timezone), [form.timezone]);
+  const detected = browserTimezone();
+
+  // Re-rendered each minute so the confirmation stays true. A clock that is
+  // wrong by the time somebody reads it confirms nothing.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => tick((n) => n + 1), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const now = timeIn(form.timezone);
+  const offset = offsetOf(form.timezone);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div>
+          <CardTitle>Time zone</CardTitle>
+          <CardDescription>
+            Used for your opening hours and for every appointment your rep books.
+          </CardDescription>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="timezone">Time zone</Label>
+          <select
+            id="timezone"
+            className={SELECT_CLASSES}
+            value={form.timezone}
+            onChange={(e) => setForm({ ...form, timezone: e.target.value })}
+          >
+            {options.map((zone) => (
+              <option key={zone} value={zone}>
+                {zone.replace(/_/g, " ")}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {now ? (
+          <p className="text-sm text-muted-foreground">
+            It is{" "}
+            <strong className="font-bold text-foreground">{now}</strong>
+            {offset ? ` (UTC${offset})` : null} in this time zone.
+          </p>
+        ) : null}
+
+        {detected && detected !== form.timezone ? (
+          <p className="text-xs text-muted-foreground">
+            This device is in <strong className="text-foreground">{detected.replace(/_/g, " ")}</strong>.{" "}
+            <button
+              type="button"
+              className="font-semibold text-primary-strong underline-offset-2 hover:underline"
+              onClick={() => setForm({ ...form, timezone: detected })}
+            >
+              Use that instead
+            </button>
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 
 export function BusinessNameSection({ form, setForm }: SectionProps) {
   return (

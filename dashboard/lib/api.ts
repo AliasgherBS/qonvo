@@ -177,6 +177,8 @@ export interface SignupRequest {
   ownerName: string;
   email: string;
   password: string;
+  /** IANA name from the browser. Omitted means the API's default of UTC. */
+  timezone?: string;
 }
 
 export const auth = {
@@ -200,6 +202,7 @@ export const auth = {
         owner_name: payload.ownerName,
         email: payload.email,
         password: payload.password,
+        timezone: payload.timezone,
       },
       signal: opts.signal,
     }).then((dto): LoginResult => ({
@@ -719,6 +722,14 @@ function configFromDays(
 }
 
 interface TenantConfigDto {
+  /**
+   * The tenant's timezone, IANA name. Governs opening hours and bookings both.
+   *
+   * There used to be no top-level field: the timezone lived inside the
+   * `business_hours` JSON, where this client sent the literal string "UTC" and
+   * nothing was ever bound to it, so it could not be changed (teardown B1).
+   */
+  timezone?: string;
   // The backend leaves every optional field null until it's set (a freshly
   // created tenant_config is all-null), so mirror that here and coerce to
   // safe defaults in mapTenantConfig - the form assumes strings.
@@ -747,7 +758,8 @@ export interface TenantConfig {
   customInstructions: string;
   businessHours: BusinessHoursDay[];
   businessHoursEnabled: boolean;
-  businessHoursTimezone: string;
+  /** IANA name. One clock for opening hours and for bookings. */
+  timezone: string;
   businessHoursClosedMessage: string | null;
   ownerAlertNumber: string;
   llmProvider: LlmProvider | "";
@@ -769,7 +781,9 @@ function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
     customInstructions: dto.custom_instructions ?? "",
     businessHours: daysFromConfig(bh),
     businessHoursEnabled: bh.enabled ?? false,
-    businessHoursTimezone: bh.timezone ?? "UTC",
+    // The column, falling back to the value stranded in the JSON so an owner
+    // who had one there does not see it reset to UTC by the fix.
+    timezone: dto.timezone ?? bh.timezone ?? "UTC",
     businessHoursClosedMessage: bh.closed_message ?? null,
     ownerAlertNumber: dto.owner_alert_number ?? "",
     llmProvider: dto.llm_provider ?? "",
@@ -788,10 +802,15 @@ function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
     primary_language: cfg.primaryLanguage,
     tone: cfg.tone,
     custom_instructions: cfg.customInstructions,
+    timezone: cfg.timezone,
     business_hours: configFromDays(
       cfg.businessHours,
       cfg.businessHoursEnabled,
-      cfg.businessHoursTimezone,
+      // Still written into the JSON as well as sent as its own field. The
+      // worker prefers the column and reads this only as a fallback, so
+      // keeping them in step means a worker still running older code during a
+      // rolling deploy reads the right clock rather than UTC.
+      cfg.timezone,
       cfg.businessHoursClosedMessage,
     ),
     // `|| null` matters: the API validator rejects an empty string for this

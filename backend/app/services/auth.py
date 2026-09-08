@@ -325,12 +325,17 @@ async def provision_tenant(
     email: str,
     password: str | None = None,
     email_verified: bool = False,
+    timezone: str | None = None,
 ) -> AuthResult:
     """Create a tenant + config + owner user + membership on a free trial.
 
     ``password=None`` is the Google-SSO case. ``users.hashed_password`` is nullable
     and ``verify_password`` returns False for a null hash, so such an account
     simply can't be signed into with a password — no placeholder hash needed.
+
+    ``timezone`` is the browser's, passed by the signup form. Absent or
+    unrecognised falls through to the column default of UTC, so an older client
+    is no worse off than it was.
 
     ``email_verified`` has no safe default, so it defaults to the safe one.
     Google has already proven the address by the time this is reached from that
@@ -368,6 +373,11 @@ async def provision_tenant(
             # Derived from the plan catalogue so the trial's entitlements can
             # never drift from what /api/billing/plans advertises.
             entitlements={**get_plan(TRIAL_PLAN).entitlements},
+            # The browser's timezone when the signup form sent one. Every
+            # tenant used to start on UTC, which made opening hours refuse
+            # customers during business hours and put bookings five hours out
+            # (teardown B1/N1). Falls back to the column default.
+            **({"timezone": timezone} if timezone else {}),
         )
     )
 

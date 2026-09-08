@@ -17,12 +17,14 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, get_redis_dep, require_owner, require_tenant
 from app.core.config import settings
 from app.core.logging import logger
 from app.core.tenancy import tenant_session
+from app.core.tenant_time import tenant_timezone
 from app.integrations import GOOGLE_CALENDAR, GOOGLE_SHEETS, SUPPORTED_PROVIDERS
 from app.integrations.google_oauth import (
     GoogleOAuthError,
@@ -55,6 +57,7 @@ from app.integrations.scopes import (
     scopes_for,
 )
 from app.integrations.token_cache import cache_access_token
+from app.models.tenant import TenantConfig
 from app.services import integrations as svc
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
@@ -122,6 +125,19 @@ def _dashboard_redirect(**params: str) -> RedirectResponse:
     return RedirectResponse(f"{base}/integrations?{urlencode(params)}", status_code=302)
 
 
+async def _tenant_timezone(db: AsyncSession, tenant_id: UUID) -> str:
+    """The tenant's configured clock, for anything Google needs a timezone for.
+
+    Reads it rather than taking ``settings.google_default_timezone``, which is
+    a system-wide "UTC" and was how the Qonvo Bookings calendar ended up being
+    created in UTC for every tenant (teardown N1).
+    """
+    row = (
+        await db.execute(select(TenantConfig).where(TenantConfig.tenant_id == tenant_id))
+    ).scalar_one_or_none()
+    return tenant_timezone(row)
+
+
 @router.get("", response_model=list[IntegrationResponse])
 async def list_integrations(
     tenant_id: UUID = Depends(require_tenant),
@@ -186,20 +202,23 @@ async def _persist_connection(state, bundle) -> None:
             granted_scopes=bundle.granted_scopes,
             account_email=bundle.account_email,
         )
+        # The tenant's clock, not the system default. `google_default_timezone`
+        # is a global "UTC", so the Qonvo Bookings calendar was created in UTC
+        # and every event landed there (teardown N1).
+        tz_name = await _tenant_timezone(db, state.tenant_id)
         if state.provider == GOOGLE_CALENDAR and CALENDAR_PROVISIONS_OWN:
             try:
                 calendar_id, created = await ensure_qonvo_calendar(
                     bundle.access_token,
                     existing_calendar_id=(integration.config or {}).get("calendar_id"),
-                    timezone=(integration.config or {}).get("timezone")
-                    or settings.google_default_timezone,
+                    timezone=tz_name,
                 )
                 await svc.set_calendar_target(
                     db,
                     integration,
                     calendar_id=calendar_id,
                     summary=QONVO_CALENDAR_SUMMARY,
-                    timezone=settings.google_default_timezone,
+                    timezone=tz_name,
                 )
                 logger.bind(tenant_id=str(state.tenant_id)).info(
                     f"calendar target {'created' if created else 'reused'}: {calendar_id}"
@@ -281,11 +300,11 @@ async def provision_calendar(
         raise HTTPException(status_code=400, detail="Connect Google Calendar first.")
     try:
         token = await access_token_for(db, tenant_id, integration, redis=redis)
+        tz_name = await _tenant_timezone(db, tenant_id)
         calendar_id, _ = await ensure_qonvo_calendar(
             token,
             existing_calendar_id=(integration.config or {}).get("calendar_id"),
-            timezone=(integration.config or {}).get("timezone")
-            or settings.google_default_timezone,
+            timezone=tz_name,
         )
     except (IntegrationConfigError, ProvisioningError, GoogleOAuthError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -294,7 +313,7 @@ async def provision_calendar(
         integration,
         calendar_id=calendar_id,
         summary=QONVO_CALENDAR_SUMMARY,
-        timezone=settings.google_default_timezone,
+        timezone=tz_name,
     )
     return IntegrationResponse(**svc.sanitized(integration))
 

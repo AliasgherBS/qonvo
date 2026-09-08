@@ -18,6 +18,7 @@ from app.core import throttle
 from app.core.config import settings
 from app.core.redis import get_redis
 from app.core.security import TokenClaims
+from app.core.tenant_time import is_valid_timezone
 from app.models.tenant import Tenant, User
 from app.services.auth import (
     AuthResult,
@@ -128,6 +129,14 @@ class SignupRequest(BaseModel):
     owner_name: str = Field(min_length=1, max_length=255)
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
+    #: The browser's own timezone, sent by the signup form.
+    #:
+    #: Taken here rather than left to a settings page nobody visits. The
+    #: alternative was every tenant starting on UTC, which is what made
+    #: opening hours and bookings both silently wrong (teardown B1/N1). An
+    #: unrecognised or absent value falls back to UTC, so a client that does
+    #: not send it is no worse off than before.
+    timezone: str | None = Field(default=None, max_length=64)
 
 
 @router.post("/auth/signup", response_model=LoginResponse, status_code=status.HTTP_201_CREATED)
@@ -168,6 +177,7 @@ async def signup(
         # Nothing has proven this address yet, and two sign-in paths resolve
         # accounts by email (teardown X2).
         email_verified=False,
+        timezone=body.timezone if is_valid_timezone(body.timezone) else None,
     )
     # Confirmation now, welcome once confirmed. Two emails arriving together
     # compete with each other and the actionable one loses; the welcome's job is

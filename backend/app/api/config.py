@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +21,7 @@ from app.core.limits import (
     MAX_PERSONA,
     exceeded,
 )
+from app.core.tenant_time import is_valid_timezone, tenant_timezone
 from app.models.tenant import Tenant, TenantConfig
 
 router = APIRouter(prefix="/api/config", tags=["config"])
@@ -32,6 +33,9 @@ class ConfigUpdateRequest(BaseModel):
     primary_language: str | None = None
     tone: str | None = None
     custom_instructions: str | None = None
+    #: IANA name, e.g. "Asia/Karachi". Governs opening hours and bookings both
+    #: (teardown B1/N1/V2).
+    timezone: str | None = None
     business_hours: dict | None = None
     owner_alert_number: str | None = None
     escalation_rules: dict | None = None
@@ -128,6 +132,7 @@ class ConfigResponse(BaseModel):
     primary_language: str
     tone: str | None
     custom_instructions: str | None
+    timezone: str
     business_hours: dict
     owner_alert_number: str | None
     escalation_rules: dict
@@ -147,6 +152,10 @@ def _config_to_dict(row: TenantConfig) -> ConfigResponse:
         primary_language=row.primary_language,
         tone=row.tone,
         custom_instructions=row.custom_instructions,
+        # The resolved value, not the raw column: a tenant whose timezone only
+        # ever existed in the business_hours JSON should see that in the
+        # control, not "UTC" (teardown B1).
+        timezone=tenant_timezone(row),
         business_hours=row.business_hours,
         owner_alert_number=row.owner_alert_number,
         escalation_rules=row.escalation_rules,
@@ -164,6 +173,15 @@ def _config_to_dict(row: TenantConfig) -> ConfigResponse:
 
 def _apply_config_update(row: TenantConfig, body: ConfigUpdateRequest) -> None:
     data = body.model_dump(exclude_unset=True)
+    # Validated here rather than trusted, because an unknown name would be
+    # stored happily and then silently resolve back to UTC -- the owner would
+    # see their choice saved and their opening hours still wrong, which is the
+    # same invisible failure this whole change is fixing.
+    if data.get("timezone") is not None and not is_valid_timezone(data["timezone"]):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{data['timezone']!r} is not a known timezone",
+        )
     # These two aren't columns — they live in JSON maps. Pop before the column loop.
     voice_mode = data.pop("voice_reply_mode", None)
     language_mode = data.pop("reply_language_mode", None)
