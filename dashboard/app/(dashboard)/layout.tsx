@@ -31,7 +31,10 @@ export default async function DashboardLayout({ children }: { children: React.Re
           role={session.user.role}
         />
 
-        <main className="flex-1 overflow-y-auto p-4 lg:p-8">
+        {/* pb-28 on mobile: the bottom bar is fixed now, so it no longer
+            reserves its own space in the flex column and would otherwise cover
+            the last of the scrollable content (teardown S1). */}
+        <main className="flex-1 overflow-y-auto p-4 pb-28 lg:p-8">
           {/* Owner-only banners (a cross-tenant admin has no tenant/session). */}
           {session.user.role === "qonvo_admin" ? null : (
             <>

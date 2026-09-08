@@ -98,6 +98,25 @@ function AnalyticsContent({ data }: { data: AnalyticsSummary }) {
   );
 }
 
+/**
+ * Message volume by day (teardown Y1).
+ *
+ * This drew nothing. The data was there and the markup was almost right: every
+ * column carried a real percentage height and a working tooltip, and every one
+ * measured zero pixels. The row was `h-40 items-end`, and `align-items:
+ * flex-end` sizes each column to its content rather than stretching it to the
+ * row, so the columns had no definite height and the percentages resolved
+ * against zero. The empty state never fired either, because the data was not
+ * empty -- the chart simply painted nothing, on the one page whose entire job
+ * is to say whether the product is working.
+ *
+ * `items-stretch` plus `h-full` on the columns is the fix. The axis and the
+ * dates are here because the teardown's second point stands: two bars across
+ * eleven hundred pixels with no scale says very little even once it paints.
+ *
+ * Stacked in and out rather than one total, since both numbers are already in
+ * the response and "we answered" is the interesting half.
+ */
 function VolumeChart({ daily }: { daily: AnalyticsSummary["daily"] }) {
   if (daily.length === 0) {
     return (
@@ -110,25 +129,93 @@ function VolumeChart({ daily }: { daily: AnalyticsSummary["daily"] }) {
       </div>
     );
   }
+
   const max = Math.max(1, ...daily.map((d) => d.messagesIn + d.messagesOut));
+
+  // At most seven date labels, whatever the range. Thirty of them across the
+  // card overlap into a grey smear, which is a different way of saying
+  // nothing.
+  const stride = Math.max(1, Math.ceil(daily.length / 7));
+  const showLabel = (i: number) => i === daily.length - 1 || i % stride === 0;
+
   return (
-    <div className="mt-4 flex h-40 items-end gap-1 overflow-x-auto">
-      {daily.map((d) => {
-        const total = d.messagesIn + d.messagesOut;
-        const height = Math.round((total / max) * 100);
-        return (
-          <div key={d.day} className="flex min-w-[8px] flex-1 flex-col items-center gap-1" title={`${d.day}: ${total} messages`}>
-            <div className="flex w-full flex-1 items-end">
+    <div className="mt-4 flex gap-2">
+      {/* The scale. Without it a tall bar means "the most there has been",
+          which is not a quantity. */}
+      <div className="flex h-40 w-9 shrink-0 flex-col justify-between pb-px text-right text-[10px] font-semibold tabular-nums text-muted-foreground">
+        <span>{max}</span>
+        <span>{Math.round(max / 2)}</span>
+        <span>0</span>
+      </div>
+
+      <div className="min-w-0 flex-1 overflow-x-auto">
+        {/* items-stretch, not items-end: the columns must take the row's
+            height so their children have something to be a percentage of. */}
+        {/* justify-between, because the columns are capped at 56px: with a
+            week of data and a wide card, flex-1 leaves all the slack on the
+            right and the bars bunch against a full-width baseline. Spreading
+            them puts the last bar at today's end of the axis, where it
+            belongs. */}
+        <div className="flex h-40 items-stretch justify-between gap-1 border-b border-border">
+          {daily.map((d) => {
+            const total = d.messagesIn + d.messagesOut;
+            // A day with traffic always shows a sliver. Rounding a real 0.4%
+            // to nothing reads as a day the product was off.
+            const pct = total > 0 ? Math.max((total / max) * 100, 2) : 0;
+            const outShare = total > 0 ? (d.messagesOut / total) * 100 : 0;
+            return (
               <div
-                className="w-full rounded-t bg-primary/70"
-                style={{ height: `${Math.max(height, total > 0 ? 4 : 0)}%` }}
-              />
+                key={d.day}
+                className="flex h-full min-w-[6px] max-w-[56px] flex-1 flex-col justify-end"
+                title={`${d.day}: ${total} messages (${d.messagesIn} in, ${d.messagesOut} out)`}
+              >
+                <div
+                  className="flex w-full flex-col-reverse overflow-hidden rounded-t"
+                  style={{ height: `${pct}%` }}
+                >
+                  <div className="w-full bg-primary/40" style={{ height: `${100 - outShare}%` }} />
+                  <div className="w-full bg-primary" style={{ height: `${outShare}%` }} />
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex justify-between gap-1 pt-1.5">
+          {daily.map((d, i) => (
+            <div
+              key={d.day}
+              className="min-w-[6px] max-w-[56px] flex-1 text-center text-[10px] tabular-nums text-muted-foreground"
+            >
+              {showLabel(i) ? shortDay(d.day) : "\u00A0"}
             </div>
-          </div>
-        );
-      })}
+          ))}
+        </div>
+
+        <div className="flex items-center gap-4 pt-2 text-[11px] text-muted-foreground">
+          <span className="flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-sm bg-primary" />
+            Replies sent
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-2 w-2 rounded-sm bg-primary/40" />
+            Messages received
+          </span>
+        </div>
+      </div>
     </div>
   );
+}
+
+/** "2026-09-05" as "5 Sep". Falls back to the raw string if it will not parse. */
+function shortDay(day: string): string {
+  const parsed = new Date(`${day}T00:00:00Z`);
+  if (Number.isNaN(parsed.getTime())) return day;
+  return parsed.toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  });
 }
 
 function AnalyticsSkeleton() {
