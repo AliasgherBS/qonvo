@@ -96,8 +96,12 @@ function InboxView() {
       </div>
 
       {/* Moved here from Settings: it is a first-run aid, not a setting, and
-          the inbox is the first place a new owner lands. */}
-      <OnboardingChecklist />
+          the inbox is the first place a new owner lands. Compact, because this
+          page is a fixed-height workspace and the expanded card is about 450
+          pixels of it, which pushed the reply box off the bottom of a 900-pixel
+          window for exactly the people who most need the inbox to look
+          finished (teardown I2). */}
+      <OnboardingChecklist compact />
 
       <div className="flex flex-wrap gap-2">
         {TABS.map((t) => (

@@ -17,7 +17,7 @@ import { useEffect, useRef, useState } from "react";
  * the rep switch and the onboarding checklist each appear only sometimes, and
  * each of them appears *after* its own fetch resolves.
  */
-export function useFillViewport(minHeight = 380) {
+export function useFillViewport(minHeight = 260) {
   const ref = useRef<HTMLDivElement | null>(null);
   const [height, setHeight] = useState<number | null>(null);
 
@@ -36,6 +36,12 @@ export function useFillViewport(minHeight = 380) {
       // What the dashboard shell reserves below the content: 2rem of padding on
       // desktop, 7rem on mobile where the fixed bottom bar sits over the page.
       const bottomGap = window.innerWidth >= 1024 ? 32 : 112;
+      // The floor is a last resort, and it is why this was still broken after
+      // the first attempt: with 698px above the panes it clamped to 380, and
+      // 698 + 380 overflows a 900px window, so the composer went back below the
+      // fold. A floor that low means the page scrolls only when the viewport is
+      // genuinely too short for a two-line transcript, rather than whenever
+      // anything is showing above.
       const next = Math.max(minHeight, Math.round(window.innerHeight - top - bottomGap));
       // Only a real change is committed: the observer below fires on every
       // layout, and writing an identical value each time would loop.
