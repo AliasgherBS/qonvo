@@ -159,12 +159,12 @@ Not started. Collected here so the reason is on the record.
 
 | ID | Sev | What | What is needed |
 |---|---|---|---|
-| L1 / Z1 / D1 | Costly | Neither the site nor the plan picker names a price. The report notes three Polar products at **$10 / $18 / $30** | Confirmation that those are the public prices, and in which currency they are shown to a Pakistani buyer |
-| Y3 | Rough | "AI cost $0.02" shows the customer our cost of goods | Whether owners should see this at all, or only staff/admin |
-| Z7 | Polish | No billing email separate from the login address; no tax/VAT id field | Whether invoices need a separate recipient, and which tax fields apply |
-| L7 | Polish | A page selling voice has no voice on it | A real voice sample. Generating one costs API credit |
-| D2 | Not built | Three landing treatments shipped simpler than specified (sticky-stack, animating waveform, hero poster) | Design direction, and the poster frame to use |
-| X4 (enrol) | High | TOTP on `qonvo_admin` | Enrolling an authenticator app |
+| L1 / Z1 / D1 | Costly | Neither the site nor the plan picker names a price | **Still deferred at the owner's request.** Confirmation of the public figures and the currency shown to a Pakistani buyer |
+| ~~Y3~~ | Rough | **Done.** Hidden from owners, kept in the admin console, still returned by the API | decided |
+| ~~Z7~~ | Polish | **Done.** `billing@qonvo.org` as ours, a per-tenant billing address for theirs. **Tax fields skipped deliberately** and guarded by a test | decided |
+| ~~L7~~ | Polish | **Done.** A real clip from OpenAI text-to-speech; the bars are its progress and its seek bar | decided |
+| ~~D2~~ | Not built | **Done.** Scroll-scrubbed sticky stack, playable waveform, and a poster showing the finished booking | decided |
+| X4 (enrol) | High | TOTP on `qonvo_admin` | **The QR now exists and is verified.** Scan it at `/account` |
 
 ---
 
@@ -197,3 +197,20 @@ Not started. Collected here so the reason is on the record.
 |---|---|
 | V2 (`country` only) | Needs both a new column and a key in the shared API type; the rest of V2 was satisfied by rehoming existing fields |
 | S5 (Team dead spot) | The export control and the seat count live in a file the stream that found it did not own |
+
+## Verified by measurement, not by report
+
+Every rendering claim in this remediation was checked in a real browser rather
+than trusted:
+
+| Finding | Before | After |
+|---|---|---|
+| Y1 volume chart | 0 of 2 bars painted in an `h-40` row | 7 of 7, heights proportional (106 messages to 159px, 6 to 9px) |
+| S1 mobile bar | y=1114 in an 1,181px document, in flow | `position: fixed`, bottom edge at 844 in an 844 viewport |
+| S2 reachability | 5 pages reachable only by typing the URL | all 5 in the More sheet, Billing first |
+| I2 composer | bottom at 1061 in a 900px viewport, 210px of scroll | bottom at 851, zero scroll |
+| I3 mobile panes | transcript drew under the full list, off screen | 20 rows to 1, with a back affordance |
+| A1 unknown URL | 307 to `/login` | real 404 |
+| X4 QR | did not exist | screenshotted from the page, decoded independently, secret matches the key shown |
+| L7 voice | nothing to press | playing, 2.4s of 7.5s, 6 of 20 bars filled |
+| Product tour | ringed 0,0 for 3 of 4 steps on mobile | rings the bottom bar at y=782 |
