@@ -14,6 +14,7 @@ import {
   type BillingStatus,
   type CancellationReason,
 } from "@/lib/api";
+import { formatDate } from "@/lib/format";
 import { useAuthToken } from "@/lib/use-api";
 
 /**
@@ -37,15 +38,6 @@ import { useAuthToken } from "@/lib/use-api";
 const SELECT_CLASSES =
   "h-10 w-full rounded-lg border border-border bg-background px-3 text-sm outline-none focus:border-primary";
 
-function formatDate(iso: string | null) {
-  if (!iso) return null;
-  return new Date(iso).toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
-}
-
 export function ManagePlan({
   status,
   onChanged,
@@ -64,7 +56,9 @@ export function ManagePlan({
   // Nothing to manage on a trial: there is no subscription to end.
   if (!sub || status.plan !== "paid") return null;
 
-  const endsOn = formatDate(sub.currentPeriodEnd);
+  // The shared helper, so the renewal date reads identically to the usage
+  // reset date one card below. Two dates in two formats look like two facts.
+  const endsOn = sub.currentPeriodEnd ? formatDate(sub.currentPeriodEnd) : null;
 
   async function run(action: () => Promise<{ ok: boolean; reason: string | null }>, done: string) {
     setBusy(true);

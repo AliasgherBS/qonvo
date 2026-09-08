@@ -107,6 +107,55 @@ async def payment_history(
     ]
 
 
+class CardOnFileInfo(BaseModel):
+    """What is safe and useful to say about the card being charged."""
+
+    brand: str
+    last4: str
+    exp_month: int
+    exp_year: int
+    wallet: str | None
+    #: ok | expiring | expired, decided by the provider seam so the warning
+    #: window lives in one place rather than in a date comparison in the UI.
+    state: str
+
+
+@router.get("/card")
+async def card_on_file(
+    tenant_id: UUID = Depends(require_owner),  # which card is being charged
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """The card the next renewal will be charged to, if the provider reports one.
+
+    Worth a request of its own: an expiring card is the largest preventable
+    cause of involuntary churn, and it is preventable only if the owner is told
+    the expiry before the renewal fails. ``{"card": null}`` rather than an error
+    for a tenant with no gateway, no subscription or no saved method, because
+    all three mean the same thing to the page: show nothing, guess nothing.
+    """
+    customer_id = (
+        await db.execute(
+            select(Subscription.provider_customer_id).where(Subscription.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if not customer_id:
+        return {"card": None}
+
+    card = resolve_billing_provider().card_on_file(customer_id=customer_id)
+    if card is None:
+        return {"card": None}
+    return {
+        "card": CardOnFileInfo(
+            brand=card.brand,
+            last4=card.last4,
+            exp_month=card.exp_month,
+            exp_year=card.exp_year,
+            wallet=card.wallet,
+            state=card.state(),
+        ).model_dump()
+    }
+
+
 class CancelRequest(BaseModel):
     """Why they are leaving, optionally.
 

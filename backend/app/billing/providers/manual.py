@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from app.billing.providers.base import (
     BillingEvent,
+    CardOnFile,
     Checkout,
     InvalidWebhookSignature,
     Payment,
@@ -37,6 +38,11 @@ class ManualProvider:
         # An operator recorded the plan by hand; there is no payment ledger to
         # read. Returning [] rather than raising lets the page render the rest.
         return []
+
+    def card_on_file(self, *, customer_id: str) -> CardOnFile | None:
+        # Nobody entered a card: an operator recorded the plan by hand. The
+        # billing page shows nothing rather than a placeholder.
+        return None
 
     def set_cancellation(
         self,

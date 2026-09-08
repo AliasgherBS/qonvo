@@ -1,26 +1,29 @@
 "use client";
 
-import { CreditCard, Download, Loader2, Receipt } from "lucide-react";
+import { Download, Loader2, Receipt } from "lucide-react";
 import { useState } from "react";
 
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/components/ui/toast";
 import { describeError, payments, type PaymentRow } from "@/lib/api";
+import { formatDate } from "@/lib/format";
 import { useApi, useAuthToken } from "@/lib/use-api";
 
 /**
- * Payment history, and the way into the provider's own billing portal.
+ * Payment history: what has been charged, with the invoice for each line.
  *
- * The split is deliberate. History is read from the provider and shown here,
- * because a customer asking "what have I paid" should get an answer without
- * leaving. Cancelling, changing a card and downloading an invoice all happen in
- * the provider's portal, because the merchant of record owns the subscription
- * and issues the tax document: a cancel button of our own would give two
- * systems an opinion about the same subscription, and ours would be the one
- * that was wrong after a dunning retry.
+ * History is read from the provider and shown here, because a customer asking
+ * "what have I paid" should get an answer without leaving. Card details live
+ * one card above, in `CardOnFile`, which also owns the way into the provider's
+ * hosted portal: the card and the button that changes it belong together, and
+ * splitting them is what produced an "Update card" button with no card beside
+ * it (teardown Z4).
+ *
+ * The invoice document itself stays the provider's. They are the merchant of
+ * record and the seller named on it, so this fetches theirs rather than
+ * rendering one.
  */
 
 const STATUS_TONE: Record<string, string> = {
@@ -39,7 +42,6 @@ export function PaymentHistory() {
   const token = useAuthToken();
   const { toast } = useToast();
   const { data, loading } = useApi(() => payments.list({ token }), [token]);
-  const [opening, setOpening] = useState(false);
   const [fetchingInvoice, setFetchingInvoice] = useState<string | null>(null);
 
   async function openInvoice(orderId: string) {
@@ -60,54 +62,16 @@ export function PaymentHistory() {
     }
   }
 
-  async function openPortal() {
-    setOpening(true);
-    try {
-      const { url, reason } = await payments.portal({ token });
-      if (url) {
-        window.open(url, "_blank", "noopener");
-        return;
-      }
-      toast({
-        title: reason === "no_subscription" ? "Nothing to manage yet" : "Could not open this",
-        description:
-          reason === "no_subscription"
-            ? "You are on the free trial, so there is no subscription to change."
-            : "Try again in a moment, or reply to any Qonvo email and we will sort it.",
-        variant: reason === "no_subscription" ? "success" : "error",
-      });
-    } catch (err) {
-      toast({ title: "Could not open this", description: describeError(err), variant: "error" });
-    } finally {
-      setOpening(false);
-    }
-  }
-
   const rows: PaymentRow[] = data ?? [];
 
   return (
     <Card>
       <CardHeader>
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <CardTitle>Payments</CardTitle>
-            <CardDescription>
-              What you have been charged. Click an invoice to download it.
-            </CardDescription>
-          </div>
-          {/* Card details are the one thing that cannot be hosted here without
-              handling them ourselves, which we must not. Everything else lives
-              in the app, so this button says what it actually does rather than
-              "manage plan", which sent people away to do things they could
-              already do on this page. */}
-          <Button variant="outline" onClick={openPortal} disabled={opening}>
-            {opening ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <CreditCard className="mr-2 h-4 w-4" />
-            )}
-            Update card
-          </Button>
+        <div className="space-y-1">
+          <CardTitle>Payments</CardTitle>
+          <CardDescription>
+            What you have been charged. Click an invoice to download it.
+          </CardDescription>
         </div>
       </CardHeader>
 
@@ -141,11 +105,10 @@ export function PaymentHistory() {
                     className="border-b border-border last:border-0"
                   >
                     <td className="py-2.5 pr-3 tabular-nums">
-                      {new Date(row.date).toLocaleDateString(undefined, {
-                        day: "numeric",
-                        month: "short",
-                        year: "numeric",
-                      })}
+                      {/* One date helper for the whole product (teardown K4):
+                          the browser's locale used to render this month-first
+                          for a Pakistan-first product. */}
+                      {formatDate(row.date)}
                     </td>
                     <td className="py-2.5 pr-3">{row.description ?? "Subscription"}</td>
                     <td className="py-2.5 pr-3 tabular-nums">
@@ -190,9 +153,9 @@ export function PaymentHistory() {
         )}
 
         <p className="mt-4 border-t border-border pt-4 text-xs text-muted-foreground">
-          Change or cancel your plan above. Your rep keeps answering until the end of the period
-          you have paid for, and payments already made are not refunded except where the law
-          requires it.
+          Change or cancel your plan above. Your rep keeps answering until the end of the period you
+          have paid for, and payments already made are not refunded except where the law requires
+          it.
         </p>
       </CardContent>
     </Card>

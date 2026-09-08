@@ -2,21 +2,29 @@
 
 import { useState } from "react";
 
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CardOnFile } from "@/components/billing/card-on-file";
 import { ManagePlan } from "@/components/billing/manage-plan";
 import { PaymentHistory } from "@/components/billing/payment-history";
-import { UsageMeters } from "@/components/usage-meters";
+import { PlanComparison } from "@/components/billing/plan-comparison";
+import { UsageZone } from "@/components/billing/usage-zone";
 import { billing, subscription as subscriptionApi, usage as usageApi } from "@/lib/api";
-import { CONTACT } from "@/lib/contact";
 import { useApi, useAuthToken } from "@/lib/use-api";
 
 /**
- * Plan, entitlements and upgrade. Prices are not published here on purpose:
- * they live with the payment provider, so this page shows what a plan grants
- * and hands off to whatever checkout is configured. With no gateway connected
- * that handoff is a message to us rather than a checkout that does not exist.
+ * Billing, in four zones, because that is the order the questions arrive in
+ * (teardown, "Billing, redesigned"): what am I on and when am I next charged;
+ * am I near a limit; how am I paying and what have I paid; what else could I
+ * be on. It was one card of six meters at a single weight, with the renewal
+ * date in grey at the bottom.
+ *
+ * Prices are still not published here on purpose: they live with the payment
+ * provider, so this page shows what a plan grants and hands off to whatever
+ * checkout is configured. With no gateway connected that handoff is a message
+ * to us rather than a checkout that does not exist.
  */
 
 const BLOCKED_COPY: Record<string, string> = {
@@ -26,8 +34,16 @@ const BLOCKED_COPY: Record<string, string> = {
   canceled: "This plan has ended and your AI rep has paused replying.",
 };
 
+const BLOCKED_BADGE: Record<string, string> = {
+  suspended: "Suspended",
+  trial_expired: "Trial ended",
+  past_due: "Payment failed",
+  canceled: "Ended",
+};
+
 const ENTITLEMENT_LABELS: Record<string, string> = {
   monthly_message_quota: "Messages a month",
+  monthly_voice_minutes: "Voice minutes a month",
   seats: "Team seats",
 };
 
@@ -52,7 +68,11 @@ export default function BillingPage() {
       if (data?.subscription) {
         const result = await subscriptionApi.changePlan(planKey, { token });
         if (result.ok) {
-          setMessage("Your plan has changed. The new allowances are live already.");
+          setMessage(
+            "Your plan has changed and the new allowances are live already. Our payment " +
+              "provider works out the difference for the rest of this month and puts it on " +
+              "your next invoice.",
+          );
           // The provider's webhook writes our row and rewrites the
           // entitlements, so both of these need refetching.
           status.refetch();
@@ -74,6 +94,19 @@ export default function BillingPage() {
     } finally {
       setPending(null);
     }
+  }
+
+  /** Status as form rather than as 12px grey text in a corner: active,
+      cancelling, trialling and blocked should be told apart before a word is
+      read. */
+  function statusBadge() {
+    if (!data) return null;
+    if (data.expired) {
+      return <Badge tone="danger">{BLOCKED_BADGE[data.blockedReason ?? ""] ?? "Paused"}</Badge>;
+    }
+    if (data.subscription?.cancelAtPeriodEnd) return <Badge tone="warning">Cancelling</Badge>;
+    if (data.plan === "trial") return <Badge tone="info">Trial</Badge>;
+    return <Badge tone="success">Active</Badge>;
   }
 
   return (
@@ -101,28 +134,71 @@ export default function BillingPage() {
         </Card>
       ) : data ? (
         <>
+          {/* --- Zone 1: what am I on, and when am I next charged ---------- */}
           <Card>
             <CardHeader>
-              <CardTitle className="capitalize">
-                {data.subscription?.planKey ?? data.plan} plan
-              </CardTitle>
-              <CardDescription>
-                {data.expired
-                  ? (BLOCKED_COPY[data.blockedReason ?? ""] ??
-                    "Your AI rep has paused replying.")
-                  : data.daysLeft !== null
-                    ? `${data.daysLeft} ${data.daysLeft === 1 ? "day" : "days"} left on your trial.`
-                    : `Status: ${data.subscription?.status ?? data.status}.`}
-              </CardDescription>
+              {/* CardHeader lays its children out in a row, so the title, the
+                  badge and the sentence go in one column child rather than
+                  being flung to opposite ends of the card. */}
+              <div className="space-y-1">
+                <div className="flex flex-wrap items-center gap-3">
+                  <CardTitle className="capitalize">
+                    {data.subscription?.planKey ?? data.plan} plan
+                  </CardTitle>
+                  {statusBadge()}
+                </div>
+                {/* Only when there is something to say. An unconditional
+                  "Status: active" is the grey line the teardown found easy to
+                  miss, and the badge above says it better. */}
+                {data.expired || data.daysLeft !== null ? (
+                  <CardDescription>
+                    {data.expired
+                      ? (BLOCKED_COPY[data.blockedReason ?? ""] ??
+                        "Your AI rep has paused replying.")
+                      : `${data.daysLeft} ${data.daysLeft === 1 ? "day" : "days"} left on your trial.`}
+                  </CardDescription>
+                ) : null}
+              </div>
             </CardHeader>
-            <CardContent className="space-y-4">
+            {/* The renewal date, and a way to change or end the plan. The
+                provider stays the system of record: these calls write nothing
+                locally, its webhook does.
+
+                Nothing at all for a suspended account: what happens next there
+                is not the owner's to change, and the badge has said it. */}
+            {data.subscription && data.plan === "paid" ? (
+              <CardContent>
+                <ManagePlan status={data} onChanged={status.refetch} />
+              </CardContent>
+            ) : data.plan === "trial" ? (
+              <CardContent>
+                <p className="text-xs text-muted-foreground">
+                  Nothing is being charged yet. Choose a plan below and your rep keeps answering
+                  when the trial ends; leave it and it stops replying that day.
+                </p>
+              </CardContent>
+            ) : null}
+          </Card>
+
+          {/* --- Zone 2: am I near a limit -------------------------------- */}
+          <Card>
+            <CardHeader>
+              <div className="space-y-1">
+                <CardTitle>Usage</CardTitle>
+                <CardDescription>Worst first, with what happens if one fills up.</CardDescription>
+              </div>
+            </CardHeader>
+            <CardContent>
               {/* Meters rather than a list of allowances. "5,000 messages a
-                  month" answers a question nobody asked; "1,240 of 5,000, resets
-                  1 Oct" answers the one they did. Falls back to the plain list
-                  if the usage call fails, so a slow query never leaves this card
-                  blank. */}
+                  month" answers a question nobody asked; "1,240 of 5,000,
+                  resets 1 Oct" answers the one they did. Falls back to the
+                  plain list if the usage call fails, so a slow query never
+                  leaves this card blank. */}
               {meters.data ? (
-                <UsageMeters usage={meters.data} />
+                <UsageZone
+                  usage={meters.data}
+                  renewsOn={data.subscription?.currentPeriodEnd ?? null}
+                />
               ) : meters.loading ? (
                 <div className="space-y-4">
                   <Skeleton className="h-10 w-full" />
@@ -140,88 +216,25 @@ export default function BillingPage() {
                   ))}
                 </dl>
               )}
-              {/* Replaces a bare "Renews on <date>" line. Same fact, plus what
-                  happens next and a way to change it, which is the part a
-                  hosted provider portal cannot phrase in our words. */}
-              <ManagePlan status={data} onChanged={status.refetch} />
             </CardContent>
           </Card>
 
+          {/* --- Zone 3: how am I paying, and what have I paid ------------- */}
+          <CardOnFile />
           <PaymentHistory />
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Plans</CardTitle>
-              <CardDescription>
-                Change plan any time. Moving up takes effect immediately and moving down is
-                prorated, so you are only charged for what you use.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {plans.loading ? (
-                <Skeleton className="h-24 w-full" />
-              ) : (
-                (plans.data ?? [])
-                  .filter((plan) => plan.key !== "trial")
-                  .map((plan) => {
-                    const isCurrent = plan.key === currentKey;
-                    return (
-                      <div
-                        key={plan.key}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border p-4"
-                      >
-                        <div>
-                          <p className="font-semibold">{plan.name}</p>
-                          <p className="text-sm text-muted-foreground">
-                            {plan.entitlements.monthly_message_quota?.toLocaleString()} messages a
-                            month, {plan.entitlements.seats} team seats
-                          </p>
-                        </div>
-                        <Button
-                          variant={isCurrent ? "outline" : "primary"}
-                          disabled={isCurrent || pending !== null}
-                          onClick={() => upgrade(plan.key)}
-                        >
-                          {isCurrent
-                            ? "Current plan"
-                            : pending === plan.key
-                              ? "Working..."
-                              : /* Say which direction it goes. "Choose" on a
-                                   cheaper plan reads like starting over. */
-                                data?.subscription
-                                ? (plan.entitlements.monthly_message_quota ?? 0) >
-                                  (data.entitlements.monthly_message_quota ?? 0)
-                                  ? "Upgrade"
-                                  : "Switch to this"
-                                : "Choose"}
-                        </Button>
-                      </div>
-                    );
-                  })
-              )}
-
-              {message ? (
-                <div className="rounded-lg border border-border bg-muted/40 p-4 text-sm">
-                  <p>{message}</p>
-                  <div className="mt-3 flex flex-wrap gap-3">
-                    <a
-                      href={CONTACT.whatsappHref}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex"
-                    >
-                      <Button size="sm">Message us on WhatsApp</Button>
-                    </a>
-                    <a href={CONTACT.emailHref} className="inline-flex">
-                      <Button size="sm" variant="outline">
-                        Email us
-                      </Button>
-                    </a>
-                  </div>
-                </div>
-              ) : null}
-            </CardContent>
-          </Card>
+          {/* --- Zone 4: what else could I be on -------------------------- */}
+          <PlanComparison
+            plans={plans.data ?? []}
+            loading={plans.loading}
+            currentKey={currentKey}
+            currentEntitlements={data.entitlements}
+            usage={meters.data ?? null}
+            hasSubscription={Boolean(data.subscription)}
+            pending={pending}
+            message={message}
+            onChoose={upgrade}
+          />
         </>
       ) : null}
     </div>
