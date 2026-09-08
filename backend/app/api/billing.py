@@ -16,13 +16,13 @@ import math
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_db, require_tenant
-from app.billing.plans import PLANS
+from app.billing.plans import PLANS, TRIAL_PLAN
 from app.billing.providers.registry import resolve_billing_provider
 from app.billing.service import get_subscription
 from app.billing.state import service_state
@@ -99,7 +99,7 @@ async def payment_history(
             "status": p.status,
             "invoice_number": p.invoice_number,
             "description": p.description,
-            "invoice_url": p.invoice_url,
+            "order_id": p.order_id,
         }
         for p in payments
     ]
@@ -193,6 +193,89 @@ async def resume_subscription(
         subscription_id=subscription_id, cancel=False
     )
     return {"ok": ok, "reason": None if ok else "provider_unavailable"}
+
+
+class ChangePlanRequest(BaseModel):
+    plan_key: str
+
+
+@router.post("/change-plan")
+async def change_plan(
+    body: ChangePlanRequest,
+    tenant_id: UUID = Depends(require_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Move an existing subscription onto another plan, without leaving here.
+
+    In place rather than cancel-and-resubscribe: that would restart the billing
+    period and charge a full price on the day somebody downgraded. The provider
+    prorates.
+
+    As with cancel, this writes nothing. Their webhook updates our row, so a
+    failure at their end cannot leave us showing a plan the customer is not on,
+    and apply_plan rewrites the entitlements from the catalogue when it lands.
+    """
+    if body.plan_key not in PLANS or body.plan_key == TRIAL_PLAN:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="unknown plan"
+        )
+
+    subscription_id = (
+        await db.execute(
+            select(Subscription.provider_subscription_id).where(
+                Subscription.tenant_id == tenant_id
+            )
+        )
+    ).scalar_one_or_none()
+    if not subscription_id:
+        # No subscription yet: this is a first purchase, which is checkout.
+        return {"ok": False, "reason": "no_subscription"}
+
+    ok = resolve_billing_provider().change_plan(
+        subscription_id=subscription_id, plan_key=body.plan_key
+    )
+    return {"ok": ok, "reason": None if ok else "provider_unavailable"}
+
+
+@router.get("/invoice/{order_id}")
+async def invoice_link(
+    order_id: str,
+    tenant_id: UUID = Depends(require_tenant),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """A link to one invoice, generated on demand.
+
+    Fetched per click because the provider's link is signed and short-lived, so
+    a URL returned with the payment list would be stale before anybody used it.
+
+    The order is confirmed to belong to this tenant before the link is handed
+    over. Without that check any authenticated owner could read any other
+    tenant's invoice by guessing an id, which is the sort of hole a URL like
+    this invites.
+    """
+    customer_id = (
+        await db.execute(
+            select(Subscription.provider_customer_id).where(
+                Subscription.tenant_id == tenant_id
+            )
+        )
+    ).scalar_one_or_none()
+    if not customer_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+
+    provider = resolve_billing_provider()
+    if not any(p.order_id == order_id for p in provider.payments(customer_id=customer_id)):
+        # Deliberately 404 rather than 403: telling a caller that an id exists
+        # but is not theirs is itself information.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not found")
+
+    url = provider.invoice_url(order_id=order_id)
+    if not url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="the invoice is not ready yet, try again in a moment",
+        )
+    return {"url": url}
 
 
 @router.post("/portal")

@@ -12,8 +12,21 @@ import { CONTACT } from "@/lib/contact";
 export const LEGAL = {
   /** Trading name shown throughout both documents. */
   companyName: "Qonvo",
-  /** Registered legal entity, if different from the trading name. */
-  legalEntity: "Qonvo",
+  /**
+   * Who the customer is actually contracting with.
+   *
+   * "Qonvo" alone was wrong here, and wrong in the way a reviewer notices.
+   * Qonvo is a product name; with no company registered, the seller is a
+   * natural person, so the Terms have to name one. A Terms page naming an
+   * entity that does not exist, against a payment provider's KYC naming an
+   * individual, is precisely the mismatch that fails a merchant-of-record
+   * review.
+   *
+   * This must match the name on the identity document used for that KYC,
+   * character for character. Register a company later and this becomes the
+   * company, with no other change needed.
+   */
+  legalEntity: "Aliasghar Ezzy, trading as Qonvo",
   /** Where you are established - governs the Terms and data-protection claims. */
   jurisdiction: "Pakistan",
   /** Must be a monitored address; Google emails this during verification. */
