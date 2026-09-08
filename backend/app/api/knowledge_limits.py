@@ -10,6 +10,7 @@ all until it has been fetched.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 
 from sqlalchemy import BigInteger, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +26,14 @@ from app.core.limits import (
 from app.models.knowledge import KnowledgeChunk, KnowledgeSource
 from app.models.tenant import TenantConfig
 
-__all__ = ["KnowledgeUsage", "check_room_for", "source_chars", "usage_for"]
+__all__ = [
+    "KnowledgeUsage",
+    "SourceStats",
+    "check_room_for",
+    "source_chars",
+    "source_stats",
+    "usage_for",
+]
 
 #: Fallbacks for a tenant whose entitlements predate these keys. The trial
 #: figures, so a missing entitlement is restrictive-but-usable rather than
@@ -105,6 +113,49 @@ async def source_chars(db: AsyncSession, source_id: uuid.UUID) -> int:
         ).scalar_one()
         or 0
     )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceStats:
+    """How much of one source the rep can actually use."""
+
+    chars: int
+    chunks: int
+
+
+async def source_stats(
+    db: AsyncSession, tenant_id: uuid.UUID, *, source_id: uuid.UUID | None = None
+) -> dict[uuid.UUID, SourceStats]:
+    """Stored characters and chunk count, per source.
+
+    One grouped query for the whole list rather than ``source_chars`` per row:
+    the sources table is the first screen an owner lands on, so N+1 there is
+    N+1 on the page that has to feel instant.
+
+    Tombstoned chunks are excluded, and that is deliberately *not* the same
+    measure as ``usage_for``. The two answer different questions: the quota
+    counts every row stored in pgvector, this counts what retrieval can return
+    (``agent/rag.py`` filters tombstoned), and a re-crawl leaves the previous
+    crawl behind as tombstones. Counting those here would double a source's
+    reported size the first time it was refreshed, which is a wrong fact about
+    that source rather than a conservative one.
+    """
+    stmt = (
+        select(
+            KnowledgeChunk.source_id,
+            func.coalesce(func.sum(func.length(KnowledgeChunk.content)), 0),
+            func.count(KnowledgeChunk.id),
+        )
+        .where(
+            KnowledgeChunk.tenant_id == tenant_id,
+            KnowledgeChunk.tombstoned.is_(False),
+        )
+        .group_by(KnowledgeChunk.source_id)
+    )
+    if source_id is not None:
+        stmt = stmt.where(KnowledgeChunk.source_id == source_id)
+    rows = (await db.execute(stmt)).all()
+    return {r[0]: SourceStats(chars=int(r[1] or 0), chunks=int(r[2] or 0)) for r in rows}
 
 
 async def usage_for(db: AsyncSession, tenant_id: uuid.UUID) -> KnowledgeUsage:

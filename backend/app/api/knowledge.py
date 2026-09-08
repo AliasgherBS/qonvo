@@ -8,19 +8,26 @@ covers the concept under that name, so no migration/enum change is needed).
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from uuid import UUID
 
 from arq import ArqRedis
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel, field_validator
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.storage import purge_source_files, source_dir
 from app.api.deps import get_arq, get_claims, get_db, require_owner, require_tenant
-from app.api.knowledge_limits import as_http_detail, check_room_for, source_chars, usage_for
+from app.api.knowledge_limits import (
+    SourceStats,
+    as_http_detail,
+    check_room_for,
+    source_chars,
+    source_stats,
+    usage_for,
+)
 from app.core.limits import MAX_TEXT_ENTRY_CHARS, MAX_UPLOAD_BYTES, LimitExceeded, exceeded
 from app.core.security import TokenClaims
 from app.core.url_guard import UnsafeUrlError, validate_public_url
@@ -28,10 +35,21 @@ from app.models.enums import KnowledgeSourceType
 from app.models.knowledge import KnowledgeSource
 from app.models.ops import AnalyticsEvent
 from app.services import audit
+from app.services.usage import Meter
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
 _SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
+
+#: The two event types a gap row can be built from (see ``knowledge_gaps``).
+_GAP_EVENT_TYPES = ("knowledge_gap", "escalation")
+
+#: Written when an owner answers a gap by adding knowledge for it (teardown K1).
+#: Gaps are *derived* from ``analytics_events`` rather than stored, so the
+#: resolution is an event too: no new table, and a question asked again after
+#: being answered comes back on its own, which is the honest behaviour --
+#: the answer did not work and the owner needs to know that.
+GAP_ANSWERED_EVENT = "knowledge_gap_answered"
 
 
 class SourceTypeIn(StrEnum):
@@ -61,6 +79,11 @@ class CreateSourceRequest(BaseModel):
     title: str
     content: str | None = None
     url: str | None = None  # for type="url": the page to fetch + ingest
+    # The gap this entry answers, if it was written from the Gaps table
+    # (teardown K1). Carried on the create rather than closed by a second call
+    # so the gap is marked answered exactly when the answer exists: there is no
+    # intermediate state where a gap has been dismissed and nothing was taught.
+    answers_gap_id: str | None = None
 
     _cap_content = field_validator("content")(classmethod(lambda cls, v: _cap_entry(v)))
 
@@ -68,6 +91,14 @@ class CreateSourceRequest(BaseModel):
 class UpdateSourceRequest(BaseModel):
     title: str | None = None
     content: str | None = None
+    # Re-run ingestion for a source whose text lives somewhere else (K2). A
+    # website's ``content`` column is NULL, so the content-changed path below
+    # can never re-crawl one, and the only refresh control on the page reloaded
+    # the table. Deliberately a flag on this route rather than a new
+    # ``POST /sources/{id}/refetch``: re-fetching a source is the same
+    # permission as editing one, and a second route is a second gate to keep in
+    # step with the first.
+    refetch: bool = False
 
     _cap_content = field_validator("content")(classmethod(lambda cls, v: _cap_entry(v)))
 
@@ -81,9 +112,19 @@ class SourceResponse(BaseModel):
     status: str
     auto_refresh: bool
     created_at: datetime
+    # What a row could not say before (teardown K2): how much of it the rep
+    # actually holds, how big the upload behind it was, and when a website was
+    # last crawled. All three were already measured -- the size for the quota,
+    # the bytes in ``meta`` -- and none of them reached the page.
+    chars: int
+    chunks: int
+    upload_bytes: int | None
+    last_ingested_at: datetime | None
 
 
-def _to_response(row: KnowledgeSource) -> SourceResponse:
+def _to_response(row: KnowledgeSource, stats: SourceStats | None = None) -> SourceResponse:
+    meta = row.meta or {}
+    upload_bytes = meta.get("upload_bytes")
     return SourceResponse(
         id=row.id,
         type=_TYPE_DB_TO_OUT.get(row.type, row.type.value),
@@ -93,6 +134,12 @@ def _to_response(row: KnowledgeSource) -> SourceResponse:
         status=row.status,
         auto_refresh=row.auto_refresh,
         created_at=row.created_at,
+        chars=stats.chars if stats else 0,
+        chunks=stats.chunks if stats else 0,
+        # Only ever written as an int by the upload route; anything else in
+        # there is somebody else's data and is reported as unknown, not as 0.
+        upload_bytes=upload_bytes if isinstance(upload_bytes, int) else None,
+        last_ingested_at=row.last_ingested_at,
     )
 
 
@@ -123,7 +170,8 @@ async def list_sources(
             .order_by(KnowledgeSource.created_at.desc())
         )
     ).scalars().all()
-    return [_to_response(r) for r in rows]
+    stats = await source_stats(db, tenant_id)
+    return [_to_response(r, stats.get(r.id)) for r in rows]
 
 
 def _checked_url(url: str | None) -> str | None:
@@ -177,6 +225,8 @@ async def create_source(
     )
     db.add(row)
     await db.flush()
+    if body.answers_gap_id:
+        _mark_gap_answered(db, tenant_id, body.answers_gap_id, source_id=row.id)
     # Ingest now if there's inline content OR a URL to fetch (file uploads enqueue
     # from the upload route instead).
     if body.content or url:
@@ -192,7 +242,8 @@ async def get_source(
 ) -> SourceResponse:
     """Full source incl. content — powers the dashboard view/edit dialog."""
     row = await _get_source(db, source_id, tenant_id)
-    return _to_response(row)
+    stats = await source_stats(db, tenant_id, source_id=row.id)
+    return _to_response(row, stats.get(row.id))
 
 
 @router.put("/sources/{source_id}", response_model=SourceResponse)
@@ -203,9 +254,27 @@ async def update_source(
     db: AsyncSession = Depends(get_db),
     arq: ArqRedis = Depends(get_arq),
 ) -> SourceResponse:
-    """Edit a source's title/content. A content change re-runs ingestion so the
-    RAG index reflects the edit (a stale index would answer from old text)."""
+    """Edit a source's title/content, or re-fetch it.
+
+    A content change re-runs ingestion so the RAG index reflects the edit (a
+    stale index would answer from old text). ``refetch`` re-runs it for a source
+    whose text is not held here at all: a website, or an upload still on the
+    volume.
+    """
     row = await _get_source(db, source_id, tenant_id)
+    refetch = False
+    if body.refetch:
+        # A manual entry has nothing to fetch: its text *is* the source, so
+        # re-ingesting it would embed the same characters again. Refused loudly
+        # rather than accepted as a no-op, because the button that sends this
+        # is not offered for manual entries and a silent success would hide a
+        # wiring mistake.
+        refetch = bool(row.url or (row.meta or {}).get("upload_path"))
+        if not refetch:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="this source has nothing to re-fetch — edit its content instead",
+            )
     if body.content is not None:
         try:
             await check_room_for(
@@ -227,12 +296,13 @@ async def update_source(
     content_changed = body.content is not None and body.content != row.content
     if body.content is not None:
         row.content = body.content
-    if content_changed:
+    if content_changed or refetch:
         row.status = "pending_ingest"
     await db.flush()
-    if content_changed and row.content:
+    if (content_changed and row.content) or refetch:
         await arq.enqueue_job("ingest_knowledge_source", str(row.id), str(tenant_id))
-    return _to_response(row)
+    stats = await source_stats(db, tenant_id, source_id=row.id)
+    return _to_response(row, stats.get(row.id))
 
 
 @router.delete("/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -330,14 +400,124 @@ async def upload_source_file(
 async def knowledge_usage(
     tenant_id: UUID = Depends(require_tenant),
     db: AsyncSession = Depends(get_db),
-) -> dict[str, int]:
+) -> dict:
     """What this tenant holds against what its plan allows.
 
     Exists so the knowledge page can show `used / cap` while someone types,
     rather than letting them write for ten minutes and refusing the save. The
     caps are enforced on write regardless; this only makes them visible.
+
+    The raw counts stay where they were, and ``meters`` adds the same shape the
+    billing page renders (teardown K3: these three caps were metered on the
+    billing page and invisible on the page they govern). Meter-shaped rather
+    than three ratios computed in the browser, because ``Meter.state`` is the
+    one place that decides where amber starts -- see ``services/usage.py``.
     """
-    return (await usage_for(db, tenant_id)).as_dict()
+    usage = await usage_for(db, tenant_id)
+    return {
+        **usage.as_dict(),
+        "meters": {
+            "sources": Meter(used=usage.sources, allowed=usage.max_sources).as_dict(),
+            "chars": Meter(used=usage.chars, allowed=usage.max_chars).as_dict(),
+            # Megabytes, for the same reason the billing page uses them: nobody
+            # reads "52,428,800 of 52,428,800" correctly.
+            "upload_mb": Meter(
+                used=usage.upload_bytes // (1024 * 1024),
+                allowed=usage.max_upload_bytes // (1024 * 1024),
+            ).as_dict(),
+        },
+    }
+
+
+def _gap_question(gap_id: str) -> str:
+    """The question inside a gap id.
+
+    Ids are ``f"{event_type}:{question}"`` (see ``knowledge_gaps``), and the
+    resolution is recorded against the question alone. Answering "do you
+    deliver?" answers it whether the rep found nothing or found the wrong thing,
+    and making the owner answer the same sentence twice is the dead end this
+    was meant to remove.
+    """
+    prefix, _, rest = gap_id.partition(":")
+    return rest if prefix in _GAP_EVENT_TYPES and rest else gap_id
+
+
+def _mark_gap_answered(db: AsyncSession, tenant_id: UUID, gap_id: str, *, source_id: UUID) -> None:
+    """Record that a gap now has an answer, so it stops being reported.
+
+    Not flushed here; it rides the request's transaction with the source it
+    answers. A marker without the source would hide a question nobody answered.
+    """
+    db.add(
+        AnalyticsEvent(
+            tenant_id=tenant_id,
+            event_type=GAP_ANSWERED_EVENT,
+            occurred_at=datetime.now(UTC),
+            data={"question": _gap_question(gap_id), "source_id": str(source_id)},
+        )
+    )
+
+
+def answered_gaps_subquery(tenant_id: UUID):
+    """Questions this tenant has answered, and when it last answered them.
+
+    Exported because ``/analytics/summary`` lists the same top gaps: a question
+    that has been answered has to stop appearing on both pages, or the loop
+    still looks like a dead end from one of them.
+    """
+    question = AnalyticsEvent.data["question"].astext
+    return (
+        select(
+            question.label("question"),
+            func.max(AnalyticsEvent.occurred_at).label("answered_at"),
+        )
+        .where(
+            AnalyticsEvent.tenant_id == tenant_id,
+            AnalyticsEvent.event_type == GAP_ANSWERED_EVENT,
+        )
+        .group_by(question)
+        .subquery()
+    )
+
+
+def gaps_query(tenant_id: UUID, limit: int):
+    """The gap aggregation, as a statement.
+
+    Separated from the route so it can be compiled and read in a test without a
+    database. The exclusion below is a HAVING over an outer join, which is the
+    kind of thing that is either right or silently returns every row.
+    """
+    question = AnalyticsEvent.data["question"].astext
+    reason = AnalyticsEvent.data["reason"].astext
+    had_context = AnalyticsEvent.data["had_context"].astext
+    answered = answered_gaps_subquery(tenant_id)
+
+    return (
+        select(
+            question.label("question"),
+            AnalyticsEvent.event_type.label("event_type"),
+            func.max(had_context).label("had_context"),
+            func.max(reason).label("reason"),
+            func.count().label("count"),
+            func.max(AnalyticsEvent.occurred_at).label("last_asked"),
+        )
+        .select_from(AnalyticsEvent)
+        .outerjoin(answered, answered.c.question == question)
+        .where(
+            AnalyticsEvent.tenant_id == tenant_id,
+            AnalyticsEvent.event_type.in_(_GAP_EVENT_TYPES),
+            question.isnot(None),
+        )
+        .group_by(question, AnalyticsEvent.event_type, answered.c.answered_at)
+        .having(
+            or_(
+                answered.c.answered_at.is_(None),
+                func.max(AnalyticsEvent.occurred_at) > answered.c.answered_at,
+            )
+        )
+        .order_by(func.count().desc(), func.max(AnalyticsEvent.occurred_at).desc())
+        .limit(limit)
+    )
 
 
 @router.get("/gaps")
@@ -360,30 +540,13 @@ async def knowledge_gaps(
 
     They answer one question, so they are one list, tagged by kind and ordered
     by how often each was asked.
-    """
-    question = AnalyticsEvent.data["question"].astext
-    reason = AnalyticsEvent.data["reason"].astext
-    had_context = AnalyticsEvent.data["had_context"].astext
 
-    stmt = (
-        select(
-            question.label("question"),
-            AnalyticsEvent.event_type.label("event_type"),
-            func.max(had_context).label("had_context"),
-            func.max(reason).label("reason"),
-            func.count().label("count"),
-            func.max(AnalyticsEvent.occurred_at).label("last_asked"),
-        )
-        .where(
-            AnalyticsEvent.tenant_id == tenant_id,
-            AnalyticsEvent.event_type.in_(("knowledge_gap", "escalation")),
-            question.isnot(None),
-        )
-        .group_by(question, AnalyticsEvent.event_type)
-        .order_by(func.count().desc(), func.max(AnalyticsEvent.occurred_at).desc())
-        .limit(limit)
-    )
-    rows = (await db.execute(stmt)).all()
+    A gap the owner has already answered drops off (teardown K1). It comes back
+    if the same question is asked *after* the answer was written, because then
+    the answer demonstrably did not work -- which is worth more than a list that
+    only ever grows.
+    """
+    rows = (await db.execute(gaps_query(tenant_id, limit))).all()
 
     return [
         {
@@ -404,4 +567,4 @@ async def knowledge_gaps(
     ]
 
 
-__all__ = ["router"]
+__all__ = ["GAP_ANSWERED_EVENT", "answered_gaps_subquery", "gaps_query", "router"]

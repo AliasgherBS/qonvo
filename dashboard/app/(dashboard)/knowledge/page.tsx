@@ -1,8 +1,21 @@
 "use client";
 
-import { BookOpen, FileUp, Globe, HelpCircle, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
+import {
+  BookOpen,
+  FileUp,
+  Globe,
+  HelpCircle,
+  Pencil,
+  Plus,
+  RefreshCw,
+  RotateCw,
+  Trash2,
+  Wand2,
+} from "lucide-react";
 import { useEffect, useRef, useState, type DragEvent, type FormEvent } from "react";
 
+import { AnswerGapDialog } from "@/components/knowledge/answer-gap-dialog";
+import { KnowledgeCaps } from "@/components/knowledge/knowledge-caps";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Dialog } from "@/components/ui/dialog";
@@ -20,6 +33,8 @@ import {
   type KnowledgeSourceStatus,
   type KnowledgeGapKind,
 } from "@/lib/api";
+import { knowledgeExtras, type KnowledgeSourceDetail } from "@/lib/api/knowledge-extras";
+import { formatDate, formatRelative } from "@/lib/format";
 import { useApi, useAuthToken } from "@/lib/use-api";
 import { cn } from "@/lib/utils";
 
@@ -48,8 +63,17 @@ export default function KnowledgePage() {
   const [manualOpen, setManualOpen] = useState(false);
   const [urlOpen, setUrlOpen] = useState(false);
   const [editing, setEditing] = useState<KnowledgeSource | null>(null);
+  const [answering, setAnswering] = useState<KnowledgeGap | null>(null);
 
-  const { data, loading, error, refetch } = useApi(() => knowledge.listSources({ token }), [token]);
+  const { data, loading, error, refetch } = useApi(
+    () => knowledgeExtras.listSources({ token }),
+    [token],
+  );
+  const {
+    data: usage,
+    loading: usageLoading,
+    refetch: refetchUsage,
+  } = useApi(() => knowledgeExtras.usage({ token }), [token]);
   const {
     data: gaps,
     loading: gapsLoading,
@@ -57,14 +81,36 @@ export default function KnowledgePage() {
     refetch: refetchGaps,
   } = useApi(() => knowledge.gaps({ token }), [token]);
 
+  // Anything that changes the sources changes the caps above them, so the two
+  // reads are refreshed together. A meter left at its previous value after an
+  // upload is worse than no meter: it is a number the owner will trust.
+  function refetchSources() {
+    refetch();
+    refetchUsage();
+  }
+
   async function handleDelete(source: KnowledgeSource) {
     if (!window.confirm(`Delete "${source.title}"? This can't be undone.`)) return;
     try {
       await knowledge.deleteSource(source.id, { token });
       toast({ title: "Source deleted", variant: "success" });
-      refetch();
+      refetchSources();
     } catch (err) {
       toast({ title: "Couldn't delete source", description: describeError(err), variant: "error" });
+    }
+  }
+
+  async function handleRefetch(source: KnowledgeSourceDetail) {
+    try {
+      await knowledgeExtras.refetchSource(source.id, { token });
+      toast({
+        title: source.url ? "Re-crawling the page" : "Re-reading the file",
+        description: "The status will turn Ready when it finishes.",
+        variant: "success",
+      });
+      refetchSources();
+    } catch (err) {
+      toast({ title: "Couldn't refresh", description: describeError(err), variant: "error" });
     }
   }
 
@@ -114,14 +160,19 @@ export default function KnowledgePage() {
 
       {tab === "sources" ? (
         <>
-          <UploadDropzone onUploaded={refetch} />
+          <UploadDropzone onUploaded={refetchSources} />
+
+          <KnowledgeCaps usage={usage} loading={usageLoading} />
 
           <div className="overflow-hidden rounded-2xl border border-border bg-surface">
             <div className="flex items-center justify-between border-b border-border px-5 py-4">
               <h2 className="text-sm font-bold">Sources</h2>
-              <Button variant="ghost" size="sm" onClick={refetch}>
+              {/* "Refresh" at the top of a table of crawled websites read as
+                  though it re-fetched them (teardown K2). Re-fetching is now a
+                  per-row control; this one only reloads the list. */}
+              <Button variant="ghost" size="sm" onClick={refetchSources}>
                 <RefreshCw className="h-4 w-4" />
-                Refresh
+                Reload list
               </Button>
             </div>
 
@@ -129,22 +180,34 @@ export default function KnowledgePage() {
               sources={data}
               loading={loading}
               error={error}
-              onRetry={refetch}
+              onRetry={refetchSources}
               onDelete={handleDelete}
               onView={setEditing}
+              onRefetch={handleRefetch}
             />
           </div>
         </>
       ) : (
         <div className="overflow-hidden rounded-2xl border border-border bg-surface">
           <div className="flex items-center justify-between border-b border-border px-5 py-4">
-            <h2 className="text-sm font-bold">Questions the bot couldn&apos;t answer</h2>
+            <div>
+              <h2 className="text-sm font-bold">Questions the bot couldn&apos;t answer</h2>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                Answer one and it becomes knowledge, and drops off this list.
+              </p>
+            </div>
             <Button variant="ghost" size="sm" onClick={refetchGaps}>
               <RefreshCw className="h-4 w-4" />
-              Refresh
+              Reload list
             </Button>
           </div>
-          <GapsTable gaps={gaps} loading={gapsLoading} error={gapsError} onRetry={refetchGaps} />
+          <GapsTable
+            gaps={gaps}
+            loading={gapsLoading}
+            error={gapsError}
+            onRetry={refetchGaps}
+            onAnswer={setAnswering}
+          />
         </div>
       )}
 
@@ -153,7 +216,7 @@ export default function KnowledgePage() {
         onClose={() => setManualOpen(false)}
         onCreated={() => {
           setManualOpen(false);
-          refetch();
+          refetchSources();
         }}
       />
 
@@ -162,7 +225,7 @@ export default function KnowledgePage() {
         onClose={() => setUrlOpen(false)}
         onCreated={() => {
           setUrlOpen(false);
-          refetch();
+          refetchSources();
         }}
       />
 
@@ -171,7 +234,19 @@ export default function KnowledgePage() {
         onClose={() => setEditing(null)}
         onSaved={() => {
           setEditing(null);
-          refetch();
+          refetchSources();
+        }}
+      />
+
+      <AnswerGapDialog
+        gap={answering}
+        onClose={() => setAnswering(null)}
+        onAnswered={() => {
+          setAnswering(null);
+          // Both lists move: the gap is answered and a source now exists. The
+          // owner switching to Sources to check has to find it there.
+          refetchGaps();
+          refetchSources();
         }}
       />
     </div>
@@ -479,13 +554,15 @@ function SourcesTable({
   onRetry,
   onDelete,
   onView,
+  onRefetch,
 }: {
-  sources: KnowledgeSource[] | null;
+  sources: KnowledgeSourceDetail[] | null;
   loading: boolean;
   error: string | null;
   onRetry: () => void;
   onDelete: (source: KnowledgeSource) => void;
   onView: (source: KnowledgeSource) => void;
+  onRefetch: (source: KnowledgeSourceDetail) => void;
 }) {
   if (loading) {
     return (
@@ -532,47 +609,116 @@ function SourcesTable({
   }
 
   return (
-    <table className="w-full text-sm">
-      <thead className="text-left text-xs font-bold uppercase tracking-wider text-muted-foreground">
-        <tr>
-          <th className="px-5 py-3">Title</th>
-          <th className="px-5 py-3">Type</th>
-          <th className="px-5 py-3">Status</th>
-          <th className="px-5 py-3">Added</th>
-          <th className="px-5 py-3" />
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-border">
-        {sources.map((source) => (
-          <tr key={source.id}>
-            <td className="px-5 py-3 font-semibold">{source.title}</td>
-            <td className="px-5 py-3 capitalize text-muted-foreground">{source.type}</td>
-            <td className="px-5 py-3">
-              <Badge tone={statusTone(source.status)}>{statusLabel(source.status)}</Badge>
-            </td>
-            <td className="px-5 py-3 text-muted-foreground">
-              {source.createdAt ? new Date(source.createdAt).toLocaleDateString() : "-"}
-            </td>
-            <td className="px-5 py-3">
-              <div className="flex items-center justify-end gap-1">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => onView(source)}
-                  aria-label={`${source.type === "manual" ? "Edit" : "View"} ${source.title}`}
-                >
-                  <Pencil className="h-4 w-4" />
-                </Button>
-                <Button variant="ghost" size="sm" onClick={() => onDelete(source)} aria-label={`Delete ${source.title}`}>
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            </td>
+    // The table scrolls inside itself. Six columns do not fit a phone, and a
+    // page body that scrolls sideways is the other way to get this wrong.
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[760px] text-sm">
+        <thead className="text-left text-xs font-bold uppercase tracking-wider text-muted-foreground">
+          <tr>
+            <th className="px-5 py-3">Title</th>
+            <th className="px-5 py-3">Type</th>
+            <th className="px-5 py-3">Size</th>
+            <th className="px-5 py-3">Last indexed</th>
+            <th className="px-5 py-3">Status</th>
+            <th className="px-5 py-3">Added</th>
+            <th className="px-5 py-3" />
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {sources.map((source) => (
+            <tr key={source.id}>
+              <td className="max-w-[22rem] px-5 py-3">
+                <p className="truncate font-semibold">{source.title}</p>
+                {source.url ? (
+                  <p className="truncate text-xs text-muted-foreground" title={source.url}>
+                    {source.url}
+                  </p>
+                ) : null}
+              </td>
+              <td className="px-5 py-3 capitalize text-muted-foreground">{source.type}</td>
+              <td className="px-5 py-3 text-muted-foreground">
+                <SourceSize source={source} />
+              </td>
+              <td className="px-5 py-3 text-muted-foreground">
+                {/* A website fetched six weeks ago used to look exactly like one
+                    fetched this morning (teardown K2). Relative, because "how
+                    stale is this" is the only question being asked of it. */}
+                {source.lastIngestedAt ? formatRelative(source.lastIngestedAt) : "Never"}
+              </td>
+              <td className="px-5 py-3">
+                <Badge tone={statusTone(source.status)}>{statusLabel(source.status)}</Badge>
+              </td>
+              <td className="whitespace-nowrap px-5 py-3 text-muted-foreground">
+                {formatDate(source.createdAt)}
+              </td>
+              <td className="px-5 py-3">
+                <div className="flex items-center justify-end gap-1">
+                  {/* Only for sources whose text lives elsewhere. A manual
+                      entry has nothing to re-fetch, and the backend refuses it. */}
+                  {source.url || source.uploadBytes !== null ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => onRefetch(source)}
+                      aria-label={`${source.url ? "Re-crawl" : "Re-read"} ${source.title}`}
+                      title={source.url ? "Crawl this page again" : "Read this file again"}
+                    >
+                      <RotateCw className="h-4 w-4" />
+                    </Button>
+                  ) : null}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onView(source)}
+                    aria-label={`${source.type === "manual" ? "Edit" : "View"} ${source.title}`}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => onDelete(source)} aria-label={`Delete ${source.title}`}>
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
+}
+
+/**
+ * How much of a source the rep actually holds.
+ *
+ * Characters, because that is the cap it counts against and the only measure
+ * that exists for every type. Deliberately not a "contribution" or "hit count":
+ * retrieval hits are not recorded anywhere, and a number invented for a column
+ * is worse than an empty column.
+ */
+function SourceSize({ source }: { source: KnowledgeSourceDetail }) {
+  if (source.chars === 0) {
+    return (
+      <span title="Nothing indexed yet, so this source cannot be used in a reply">
+        {source.status === "error" ? "Nothing indexed" : "Pending"}
+      </span>
+    );
+  }
+  return (
+    <>
+      <p className="tabular-nums">{source.chars.toLocaleString()} chars</p>
+      <p className="text-xs">
+        {source.chunks.toLocaleString()} {source.chunks === 1 ? "passage" : "passages"}
+        {source.uploadBytes !== null ? ` · ${formatBytes(source.uploadBytes)}` : ""}
+      </p>
+    </>
+  );
+}
+
+/** Upload size for a person: "1.4 MB", not 1468006. */
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
 function GapsTable({
@@ -580,11 +726,13 @@ function GapsTable({
   loading,
   error,
   onRetry,
+  onAnswer,
 }: {
   gaps: KnowledgeGap[] | null;
   loading: boolean;
   error: string | null;
   onRetry: () => void;
+  onAnswer: (gap: KnowledgeGap) => void;
 }) {
   if (loading) {
     return (
@@ -626,26 +774,44 @@ function GapsTable({
   }
 
   return (
-    <table className="w-full text-sm">
-      <thead className="text-left text-xs font-bold uppercase tracking-wider text-muted-foreground">
-        <tr>
-          <th className="px-5 py-3">Question</th>
-          <th className="px-5 py-3">What happened</th>
-          <th className="px-5 py-3">Times asked</th>
-        </tr>
-      </thead>
-      <tbody className="divide-y divide-border">
-        {gaps.map((gap) => (
-          <tr key={gap.id}>
-            <td className="px-5 py-3 font-semibold">{gap.question}</td>
-            <td className="px-5 py-3">
-              <GapKind kind={gap.kind} reason={gap.reason} />
-            </td>
-            <td className="px-5 py-3 text-muted-foreground">{gap.count}</td>
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[720px] text-sm">
+        <thead className="text-left text-xs font-bold uppercase tracking-wider text-muted-foreground">
+          <tr>
+            <th className="px-5 py-3">Question</th>
+            <th className="px-5 py-3">What happened</th>
+            <th className="px-5 py-3">Times asked</th>
+            <th className="px-5 py-3">Last asked</th>
+            <th className="px-5 py-3" />
           </tr>
-        ))}
-      </tbody>
-    </table>
+        </thead>
+        <tbody className="divide-y divide-border">
+          {gaps.map((gap) => (
+            <tr key={gap.id}>
+              <td className="px-5 py-3 font-semibold">{gap.question}</td>
+              <td className="px-5 py-3">
+                <GapKind kind={gap.kind} reason={gap.reason} />
+              </td>
+              <td className="px-5 py-3 tabular-nums text-muted-foreground">{gap.count}</td>
+              <td className="whitespace-nowrap px-5 py-3 text-muted-foreground">
+                {formatRelative(gap.lastAsked)}
+              </td>
+              <td className="px-5 py-3">
+                {/* The half that was missing (teardown K1). Knowing what the rep
+                    could not answer is worth nothing from a page that offers no
+                    way to answer it. */}
+                <div className="flex justify-end">
+                  <Button variant="outline" size="sm" onClick={() => onAnswer(gap)}>
+                    <Wand2 className="h-4 w-4" />
+                    Answer this
+                  </Button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

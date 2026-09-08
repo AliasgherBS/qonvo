@@ -12,6 +12,7 @@ Guarantees:
 from __future__ import annotations
 
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -227,6 +228,11 @@ async def ingest_knowledge_source(ctx: dict[str, Any], source_id: str, tenant_id
                 db, source, text=text, embedder=embedder, usage_out=ingest_usage
             )
             source.status = "ready"
+            # Stamped on success only (teardown K2). A source whose last crawl
+            # failed must keep the timestamp of the last one that worked, or
+            # "last crawled 2 minutes ago" would describe a fetch that brought
+            # back nothing.
+            source.last_ingested_at = datetime.now(UTC)
             bound.info(f"ingested source: {len(chunks)} chunks")
 
             # Ingestion embeds every chunk, and that is billed. One-off per

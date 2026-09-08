@@ -1,27 +1,62 @@
 "use client";
 
 import { BarChart3 } from "lucide-react";
+import Link from "next/link";
+import { useState } from "react";
 
+import { HeroStat, SmallStat } from "@/components/analytics/stats";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
 import { analytics, type AnalyticsSummary } from "@/lib/api";
 import { useApi, useAuthToken } from "@/lib/use-api";
+import { cn } from "@/lib/utils";
 
 const CURRENCY = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 });
 
+/** The endpoint already took `?days=`; nothing on the page could change it. */
+const RANGES = [
+  { days: 7, label: "7 days" },
+  { days: 30, label: "30 days" },
+  { days: 90, label: "90 days" },
+] as const;
+
 export default function AnalyticsPage() {
   const token = useAuthToken();
-  const { data, loading, error, refetch } = useApi(() => analytics.summary({ days: 30 }, { token }), [token]);
+  const [days, setDays] = useState<number>(30);
+  const { data, loading, error, refetch } = useApi(
+    () => analytics.summary({ days }, { token }),
+    [token, days],
+  );
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-extrabold tracking-tight">Analytics</h1>
-        <p className="text-sm text-muted-foreground">
-          Volume, speed and outcomes over the last 30 days.
-        </p>
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-extrabold tracking-tight">Analytics</h1>
+          <p className="text-sm text-muted-foreground">
+            What your rep did over the last {days} days, against the {days} before it.
+          </p>
+        </div>
+        <div className="flex gap-2" role="group" aria-label="Date range">
+          {RANGES.map((r) => (
+            <button
+              key={r.days}
+              type="button"
+              onClick={() => setDays(r.days)}
+              aria-pressed={days === r.days}
+              className={cn(
+                "rounded-full px-4 py-1.5 text-sm font-semibold transition-colors",
+                days === r.days
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-surface-muted hover:bg-border",
+              )}
+            >
+              {r.label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {loading ? (
@@ -44,27 +79,47 @@ export default function AnalyticsPage() {
 
 function AnalyticsContent({ data }: { data: AnalyticsSummary }) {
   const t = data.totals;
-  const stats: { label: string; value: string }[] = [
-    { label: "Messages", value: String(t.messages ?? 0) },
-    { label: "Conversations", value: String(t.conversations ?? 0) },
-    { label: "Leads", value: String(t.leads ?? 0) },
-    { label: "Bookings", value: String(t.bookings ?? 0) },
-    { label: "Orders", value: String(t.orders ?? 0) },
-    { label: "Needs human", value: String(t.needs_human ?? 0) },
-    { label: "Open handoffs", value: String(t.handoffs_open ?? 0) },
+  const days = data.rangeDays;
+  const leads = t.leads ?? 0;
+  const bookings = t.bookings ?? 0;
+  const orders = t.orders ?? 0;
+
+  // Demoted, not deleted. Each of these is worth a glance and none of them is
+  // the reason somebody pays for the product.
+  const smallStats: { label: string; value: string }[] = [
+    { label: "Messages received", value: (t.messages_in ?? 0).toLocaleString() },
+    { label: "Conversations", value: (t.conversations ?? 0).toLocaleString() },
+    { label: "Needs human now", value: (t.needs_human ?? 0).toLocaleString() },
+    { label: "Open handoffs", value: (t.handoffs_open ?? 0).toLocaleString() },
     { label: "AI cost", value: CURRENCY.format(t.cost ?? 0) },
   ];
 
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        {stats.map((s) => (
-          <Card key={s.label}>
-            <CardContent className="pt-5">
-              <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">{s.label}</p>
-              <p className="mt-1 text-2xl font-extrabold tracking-tight">{s.value}</p>
-            </CardContent>
-          </Card>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <HeroStat
+          label="Messages answered"
+          value={t.messages_out ?? 0}
+          previous={t.prev_messages_out ?? 0}
+          rangeDays={days}
+          caption="Replies sent from your number, by the rep and by your team."
+        />
+        <HeroStat
+          label="Bookings and leads"
+          value={t.outcomes ?? 0}
+          previous={t.prev_outcomes ?? 0}
+          rangeDays={days}
+          caption={
+            // The breakdown, because a business uses one or two of these three
+            // and the combined figure would otherwise hide which.
+            `${bookings.toLocaleString()} bookings · ${leads.toLocaleString()} leads · ${orders.toLocaleString()} orders`
+          }
+        />
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        {smallStats.map((s) => (
+          <SmallStat key={s.label} label={s.label} value={s.value} />
         ))}
       </div>
 
@@ -77,7 +132,14 @@ function AnalyticsContent({ data }: { data: AnalyticsSummary }) {
 
       <Card>
         <CardContent className="pt-5">
-          <p className="text-sm font-bold">Top questions the bot couldn&apos;t answer</p>
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <p className="text-sm font-bold">Top questions the bot couldn&apos;t answer</p>
+            {/* This card reported a problem and offered nothing to do about it.
+                Answering happens on Knowledge, so it says so. */}
+            <Link href="/knowledge" className="text-xs font-semibold text-primary-strong hover:underline">
+              Answer these in Knowledge
+            </Link>
+          </div>
           {data.topGaps.length === 0 ? (
             <p className="mt-3 text-sm text-muted-foreground">No knowledge gaps yet.</p>
           ) : (
@@ -221,14 +283,25 @@ function shortDay(day: string): string {
 function AnalyticsSkeleton() {
   return (
     <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-        {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
+      {/* Shaped like what arrives: two large tiles then a row of small ones.
+          A skeleton that lays out differently is a visible jump on every load. */}
+      <div className="grid gap-4 sm:grid-cols-2">
+        {[0, 1].map((i) => (
           <Card key={i}>
             <CardContent className="space-y-2 pt-5">
-              <Skeleton className="h-3 w-1/2" />
-              <Skeleton className="h-7 w-2/3" />
+              <Skeleton className="h-3 w-1/3" />
+              <Skeleton className="h-10 w-1/2" />
+              <Skeleton className="h-3 w-2/3" />
             </CardContent>
           </Card>
+        ))}
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        {[0, 1, 2, 3, 4].map((i) => (
+          <div key={i} className="space-y-2 rounded-xl border border-border bg-surface px-4 py-3">
+            <Skeleton className="h-3 w-2/3" />
+            <Skeleton className="h-5 w-1/2" />
+          </div>
         ))}
       </div>
       <Card>
