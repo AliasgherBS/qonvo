@@ -58,6 +58,12 @@ Branding+Marketing/pitch-decks/
 Branding+Marketing/promo-video/
 Branding+Marketing/qonvo-marketing-kit.*
 
+# Generated one-page HTML artefacts (teardowns, reports). Same argument as the
+# brand-kit PDF: git keeps every revision of a large generated file forever and
+# cannot diff it, and this one is 462 KB. It stays on disk.
+qonvo-teardown.html
+*-teardown.html
+
 # Local test data for the end-to-end run (see docs/E2E-LIVE-TEST-PLAN.md).
 fixtures/
 
