@@ -1,6 +1,34 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
+import { cspWithNonce } from "@/lib/security-headers";
+
+/**
+ * A fresh nonce for every response, so the CSP can allow our own inline scripts
+ * without allowing anybody else's.
+ *
+ * `crypto.getRandomValues` rather than `Math.random`: a guessable nonce is the
+ * same as no nonce, since the whole mechanism is that an injected script cannot
+ * know the value. Web Crypto is what the middleware runtime has.
+ */
+function newNonce(): string {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return btoa(String.fromCharCode(...bytes));
+}
+
+/**
+ * Attach the nonce so both Next and our own components can find it.
+ *
+ * Next reads the nonce out of the `Content-Security-Policy` header on the
+ * *request* and stamps its hydration bootstrap with it, which is why the header
+ * is set on the request as well as the response. `x-nonce` is the copy our own
+ * server components read through `headers()`.
+ */
+function withCsp(response: NextResponse, nonce: string): NextResponse {
+  response.headers.set("Content-Security-Policy", cspWithNonce(nonce));
+  return response;
+}
 
 // `/api/auth/*` must be public — Auth.js's own routes serve login callbacks,
 // csrf, and session, and gating them behind auth is a chicken-and-egg lockout
@@ -74,6 +102,15 @@ function sensitiveParams(pathname: string): string[] {
 
 export default auth((req) => {
   const { nextUrl } = req;
+  const nonce = newNonce();
+  const policy = cspWithNonce(nonce);
+
+  // On the request, for Next to find and apply to its own inline scripts, and
+  // for our components to read through headers().
+  const requestHeaders = new Headers(req.headers);
+  requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("Content-Security-Policy", policy);
+  const forward = { request: { headers: requestHeaders } };
 
   // Before anything else, including the auth check: a credential in a URL
   // should not survive one request, and an auth redirect would otherwise carry
@@ -88,7 +125,7 @@ export default auth((req) => {
     if (leaked.length > 0) {
       const clean = new URL(nextUrl.href);
       for (const key of leaked) clean.searchParams.delete(key);
-      return NextResponse.redirect(clean);
+      return withCsp(NextResponse.redirect(clean), nonce);
     }
   }
 
@@ -100,7 +137,7 @@ export default auth((req) => {
   if (nextUrl.hostname === "0.0.0.0") {
     const fixed = new URL(nextUrl.href);
     fixed.hostname = "localhost";
-    return NextResponse.redirect(fixed);
+    return withCsp(NextResponse.redirect(fixed), nonce);
   }
 
   // A session without a backend token isn't usable: it happens when Google SSO
@@ -130,22 +167,22 @@ export default auth((req) => {
   if (!isLoggedIn && !isPublicPath) {
     const loginUrl = new URL("/login", origin);
     loginUrl.searchParams.set("callbackUrl", nextUrl.pathname);
-    return NextResponse.redirect(loginUrl);
+    return withCsp(NextResponse.redirect(loginUrl), nonce);
   }
 
   if (isLoggedIn && (nextUrl.pathname === "/login" || nextUrl.pathname === "/signup")) {
-    return NextResponse.redirect(new URL(isAdmin ? adminHome : "/inbox", origin));
+    return withCsp(NextResponse.redirect(new URL(isAdmin ? adminHome : "/inbox", origin)), nonce);
   }
 
   // Non-admins can't see /admin/*; admins get pulled off owner-only pages.
   if (isLoggedIn && !isAdmin && nextUrl.pathname.startsWith("/admin")) {
-    return NextResponse.redirect(new URL("/inbox", origin));
+    return withCsp(NextResponse.redirect(new URL("/inbox", origin)), nonce);
   }
   if (isLoggedIn && isAdmin && OWNER_ONLY_PREFIXES.some((p) => nextUrl.pathname.startsWith(p))) {
-    return NextResponse.redirect(new URL(adminHome, origin));
+    return withCsp(NextResponse.redirect(new URL(adminHome, origin)), nonce);
   }
 
-  return NextResponse.next();
+  return withCsp(NextResponse.next(forward), nonce);
 });
 
 export const config = {
