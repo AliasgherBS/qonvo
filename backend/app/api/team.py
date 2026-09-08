@@ -24,6 +24,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_claims, get_db, get_system_db, require_owner, require_tenant
 from app.billing.state import seats_available
 from app.core.config import settings
+from app.core.redis import get_redis
+from app.core.revocation import revoke_all_for_subject
 from app.core.security import TokenClaims, hash_password
 from app.models.enums import UserRole
 from app.models.tenant import TeamInvitation, Tenant, TenantConfig, TenantUser, User
@@ -275,6 +277,15 @@ async def remove_member(
     )
     await db.delete(target)
     await db.flush()
+    # The membership row is gone, and their token is not. Without this they
+    # keep working access for up to 24 hours after being removed, which is the
+    # whole of teardown X6 in the case where it matters most: somebody removed
+    # from a team is often removed for a reason.
+    removed_email = (
+        await db.execute(select(User.email).where(User.id == user_id))
+    ).scalar_one_or_none()
+    if removed_email:
+        await revoke_all_for_subject(get_redis(), removed_email)
 
 
 # --------------------------------------------------------------------------- #

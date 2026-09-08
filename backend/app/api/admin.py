@@ -29,6 +29,8 @@ from app.api.deps import get_system_db, get_waha, require_admin
 from app.billing.plans import PLANS
 from app.billing.service import set_subscription
 from app.core.logging import logger
+from app.core.redis import get_redis
+from app.core.revocation import revoke_all_for_tenant
 from app.core.security import TokenClaims, hash_password
 from app.models import TENANT_SCOPED_TABLES
 from app.models.enums import SessionStatus, UserRole
@@ -370,6 +372,12 @@ async def update_tenant(
         meta={"fields": list(fields)},
     )
     await db.flush()
+    if fields.get("status") == "suspended":
+        # Suspending stopped the bot and left every session in somebody's hand
+        # working (teardown X6). Revoked at the tenant level rather than by
+        # walking its members: enumerating them would race with a membership
+        # change, and the point is to stop the workspace, not a person.
+        await revoke_all_for_tenant(get_redis(), tenant_id)
     email, full_name = (await _owner_map(db, [tenant.id])).get(tenant.id, (None, None))
     return {**_tenant_to_dict(tenant), "owner_email": email, "owner_name": full_name}
 

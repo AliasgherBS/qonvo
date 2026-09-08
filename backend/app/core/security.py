@@ -62,6 +62,13 @@ class TokenClaims:
     role: str | None
     is_qonvo_admin: bool
     raw: dict
+    #: This token's unique id, for revoking exactly this session (teardown X6).
+    #: ``None`` for a token minted before the claim existed, which ages out.
+    jti: str | None = None
+    #: When it was issued, as a unix timestamp. Compared against the
+    #: "everything before this moment is void" markers that a password change
+    #: or a member removal writes.
+    issued_at: int | None = None
 
 
 def decode_jwt(token: str) -> TokenClaims:
@@ -112,6 +119,8 @@ def decode_jwt(token: str) -> TokenClaims:
         role=payload.get("role"),
         is_qonvo_admin=bool(payload.get("qonvo_admin", False)),
         raw=payload,
+        jti=payload.get("jti"),
+        issued_at=int(payload["iat"]) if payload.get("iat") is not None else None,
     )
 
 

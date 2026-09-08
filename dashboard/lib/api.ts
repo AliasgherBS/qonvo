@@ -283,6 +283,19 @@ export const auth = {
       }),
     ),
 
+  /**
+   * Revoke the token that made this call (teardown X6).
+   *
+   * Signing out used to clear the browser's copy and leave the credential
+   * valid for the rest of its 24 hours.
+   */
+  logout: (opts: CallOpts = {}) =>
+    apiFetch<void>("/api/auth/logout", { method: "POST", ...opts }),
+
+  /** End every session on every device. */
+  logoutEverywhere: (opts: CallOpts = {}) =>
+    apiFetch<void>("/api/auth/logout-everywhere", { method: "POST", ...opts }),
+
   /** Send the confirmation link again, to the signed-in user's own address. */
   resendVerification: (opts: CallOpts = {}) =>
     apiFetch<unknown>("/api/auth/resend-verification", { method: "POST", ...opts }),

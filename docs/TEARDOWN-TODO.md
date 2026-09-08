@@ -45,7 +45,7 @@ the rehoming that follows.
 | # | ID | Sev | What |
 |---|---|---|---|
 | ~~1~~ | ~~X8~~ | Medium | **Done.** Audit rows for every state-changing owner route, actor resolved and named. Held by a property test over the route table |
-| 2 | X6 | Medium | Token revocation — `jti` + Redis denylist on sign-out, member removal, suspension, password change; align the Auth.js session lifetime with the token's |
+| ~~2~~ | ~~X6~~ | Medium | **Done.** `jti` + denylist for one session, per-subject and per-tenant markers for bulk. Wired to sign-out, sign-out-everywhere, password change, password reset, member removal and suspension. Auth.js session aligned to 24h |
 | 3 | X5 | Medium | Password policy: minimum 12, no composition rules, HIBP k-anonymity check, reject the business name and the email local part, strength meter |
 | 4 | X9 | Low | Pin argon2 parameters explicitly; set `jwt_audience`/`jwt_issuer`; reject disposable signup domains |
 | 5 | X4 | High | Admin second factor (TOTP) + `act` claim on impersonated tokens + log the actions taken, not just the door opening. **Enrolment deferred.** |

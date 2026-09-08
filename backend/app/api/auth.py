@@ -17,6 +17,7 @@ from app.api.deps import get_claims, get_system_db
 from app.core import throttle
 from app.core.config import settings
 from app.core.redis import get_redis
+from app.core.revocation import revoke_all_for_subject, revoke_token
 from app.core.security import TokenClaims
 from app.core.tenant_time import is_valid_timezone
 from app.models.tenant import Tenant, User
@@ -29,6 +30,7 @@ from app.services.auth import (
     create_password_reset_token,
     find_user,
     provision_tenant,
+    read_password_reset_token,
     reset_password,
     resolve_login,
     verify_email,
@@ -375,6 +377,49 @@ async def change_password_route(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Your current password is incorrect."
         )
+    # Ending the sessions the old password opened is the one thing everybody
+    # expects a password change to do, and it did not (teardown X6). The
+    # caller's own token goes too, which is correct: if the reason for the
+    # change is that somebody else had the password, the session they are
+    # holding is the one that matters.
+    await revoke_all_for_subject(get_redis(), user.email)
+
+
+@router.post("/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(claims: TokenClaims = Depends(get_claims)) -> None:
+    """Revoke the token that made this request (teardown X6).
+
+    Signing out used to clear the browser's copy and leave the credential
+    valid for the rest of its 24 hours, which is not what "sign out" means to
+    anybody. Revoking this token only, not every session: signing out on a
+    laptop must not sign the same person out on their phone.
+
+    204 whatever happens. A sign-out that reports failure leaves somebody
+    unsure whether they are signed out, and the client has already discarded
+    its copy by the time it hears back.
+    """
+    await revoke_token(
+        get_redis(), jti=claims.jti, expires_at=claims.raw.get("exp")
+    )
+
+
+@router.post("/auth/logout-everywhere", status_code=status.HTTP_204_NO_CONTENT)
+async def logout_everywhere(claims: TokenClaims = Depends(get_claims)) -> None:
+    """End every session this person has, on every device.
+
+    The thing an owner reaches for after losing a phone, and one of the pieces
+    the teardown found missing from the Account page entirely.
+
+    Both mechanisms, not just the marker. The marker only catches tokens issued
+    *strictly before* it, which is deliberate -- a password change issues a new
+    session in the same request and must not revoke it. But this endpoint
+    issues nothing, so a caller whose token happens to share the marker's
+    second would stay signed in on the very device they pressed the button on.
+    Caught live, at a one-second granularity.
+    """
+    redis = get_redis()
+    await revoke_all_for_subject(redis, claims.subject)
+    await revoke_token(redis, jti=claims.jti, expires_at=claims.raw.get("exp"))
 
 
 class ForgotPasswordRequest(BaseModel):
@@ -424,6 +469,14 @@ async def reset_password_route(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="This reset link is invalid or has expired.",
         )
+    # A reset is the recovery path, so it is the most likely to be happening
+    # *because* somebody else has access. Every outstanding session goes.
+    # Re-read the token for its subject. It parses without a database round
+    # trip, and the fingerprint check that made it single-use has already run
+    # inside reset_password.
+    parsed = read_password_reset_token(body.token)
+    if parsed:
+        await revoke_all_for_subject(get_redis(), parsed[0])
 
 
 @router.get("/me", response_model=MeResponse)

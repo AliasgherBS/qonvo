@@ -10,12 +10,20 @@ from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.redis import get_redis
+from app.core.revocation import is_revoked
 from app.core.security import TokenClaims, TokenError, decode_jwt
 from app.core.tenancy import system_session, tenant_session
 
 
-def get_claims(authorization: str | None = Header(default=None)) -> TokenClaims:
-    """Decode and verify the bearer JWT (DESIGN.md §8)."""
+async def get_claims(authorization: str | None = Header(default=None)) -> TokenClaims:
+    """Decode and verify the bearer JWT, and check it has not been revoked.
+
+    Async because of the revocation lookup (teardown X6). A validly signed
+    token is not enough on its own: signing out, removing a member, suspending
+    a tenant and changing a password all have to make an outstanding token stop
+    working, and none of them could while this was a pure signature check.
+    """
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -24,13 +32,24 @@ def get_claims(authorization: str | None = Header(default=None)) -> TokenClaims:
         )
     token = authorization.split(" ", 1)[1].strip()
     try:
-        return decode_jwt(token)
+        claims = decode_jwt(token)
     except TokenError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"invalid token: {exc}",
             headers={"WWW-Authenticate": "Bearer"},
         ) from exc
+
+    if await is_revoked(get_redis(), claims):
+        # Same 401 shape as an invalid signature, deliberately. "This token was
+        # revoked" tells whoever is holding it something they do not need to
+        # know, and the client's job is identical either way: sign in again.
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="invalid token: revoked",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    return claims
 
 
 def require_tenant(claims: TokenClaims = Depends(get_claims)) -> UUID:

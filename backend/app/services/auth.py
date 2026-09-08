@@ -14,7 +14,7 @@ import hashlib
 import re
 import secrets
 from dataclasses import dataclass
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import jwt
 from sqlalchemy import select
@@ -206,11 +206,24 @@ def create_access_token(
     tenant_id: UUID | None,
     role: str | None,
     is_qonvo_admin: bool,
+    expires_in_hours: int | None = None,
 ) -> str:
-    """Mint a signed JWT with tenant/role claims and a ``jwt_expiry_hours`` TTL."""
+    """Mint a signed JWT with tenant/role claims and a ``jwt_expiry_hours`` TTL.
+
+    ``expires_in_hours`` overrides that TTL, and exists so the dev seed script
+    can mint a week-long token *through this function* rather than beside it.
+    Two hand-rolled copies of this payload have now drifted from it: one missed
+    ``typ`` when that became required and 401'd every seeded token, and one
+    missed ``jti`` and made the token silently unrevocable. There is one minting
+    function for that reason.
+    """
     now = dt.datetime.now(dt.UTC)
     payload: dict = {
         "sub": subject,
+        # A unique id, so one session can be revoked without touching the
+        # others. Without it, signing out cleared the browser's copy and left
+        # the credential valid for the rest of its 24 hours (teardown X6).
+        "jti": uuid4().hex,
         # Says which kind of credential this is. decode_jwt requires it, so a
         # token minted for another purpose cannot authenticate a request even
         # though it is signed with the same secret.
@@ -218,7 +231,8 @@ def create_access_token(
         "role": role,
         "qonvo_admin": is_qonvo_admin,
         "iat": now,
-        "exp": now + dt.timedelta(hours=settings.jwt_expiry_hours),
+        "exp": now
+        + dt.timedelta(hours=expires_in_hours or settings.jwt_expiry_hours),
     }
     if tenant_id is not None:
         payload["tenant_id"] = str(tenant_id)

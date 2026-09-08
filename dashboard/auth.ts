@@ -15,7 +15,19 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   // Behind our own reverse proxy (Caddy) or on localhost — the Host header is
   // ours to trust; without this Auth.js hard-fails on non-configured hosts.
   trustHost: true,
-  session: { strategy: "jwt" },
+  // Aligned with the backend token's own life (teardown X6).
+  //
+  // Auth.js defaults to thirty days. The Qonvo JWT it wraps lasts twenty-four
+  // hours, so for twenty-nine of those days the browser believed it was signed
+  // in while every API call returned 401 -- a signed-in shell over a dead
+  // credential, which reads as the product being broken rather than as a
+  // session having ended.
+  //
+  // Keep this in step with QONVO_JWT_EXPIRY_HOURS. There is no refresh flow
+  // yet, so this is the honest expiry rather than a shorter one that would
+  // sign people out mid-session.
+  session: { strategy: "jwt", maxAge: 24 * 60 * 60 },
+  jwt: { maxAge: 24 * 60 * 60 },
   pages: { signIn: "/login" },
   providers: [
     Credentials({
