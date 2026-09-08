@@ -11,13 +11,15 @@ granted scopes, and the target metadata.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from urllib.parse import urlencode
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_claims, get_db, get_redis_dep, require_owner, require_tenant
@@ -58,6 +60,8 @@ from app.integrations.scopes import (
     scopes_for,
 )
 from app.integrations.token_cache import cache_access_token
+from app.models.business import Booking
+from app.models.skill import SkillExecution
 from app.models.tenant import TenantConfig
 from app.services import audit
 from app.services import integrations as svc
@@ -70,6 +74,23 @@ class IntegrationUpdateRequest(BaseModel):
     enabled: bool | None = None
 
 
+class IntegrationUsage(BaseModel):
+    """Proof the rep has actually used the integration (teardown N3).
+
+    "Connected" only says the token works. The owner's real question is whether
+    the thing has booked anything or written a row, and answering it used to
+    mean opening Google.
+    """
+
+    # ISO timestamp of the most recent use, all time. None = never used.
+    last_at: str | None = None
+    # Uses since the first of the month, in the tenant's own clock.
+    month_count: int = 0
+    # Singular noun for the thing counted, so the dashboard does not have to
+    # keep its own provider -> wording map: "booking", "row".
+    unit: str = ""
+
+
 class IntegrationResponse(BaseModel):
     provider: str
     enabled: bool
@@ -80,6 +101,10 @@ class IntegrationResponse(BaseModel):
     account_email: str | None
     granted_scopes: list[str]
     connected_at: str | None
+    # Omitted for a provider the tenant has never connected -- there is nothing
+    # to have used yet, and a "0 this month" line on an empty card reads as a
+    # failure rather than as an absence.
+    usage: IntegrationUsage | None = None
 
 
 class TestResult(BaseModel):
@@ -140,6 +165,69 @@ async def _tenant_timezone(db: AsyncSession, tenant_id: UUID) -> str:
     return tenant_timezone(row)
 
 
+async def _month_start(db: AsyncSession, tenant_id: UUID) -> datetime:
+    """The first of the current month in the tenant's own clock.
+
+    Not UTC. "14 rows this month" counted from a UTC boundary is wrong for
+    anybody east or west of it on the first and last day of every month, which
+    is the same class of bug as the UTC opening hours (teardown B1/N1).
+    """
+    tz_name = await _tenant_timezone(db, tenant_id)
+    try:
+        zone = ZoneInfo(tz_name)
+    except Exception:  # noqa: BLE001 -- a bad stored name must not 500 the page
+        zone = UTC
+    local = datetime.now(zone)
+    return local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+async def _usage(
+    db: AsyncSession,
+    tenant_id: UUID,
+    provider: str,
+    month_start: datetime,
+) -> IntegrationUsage | None:
+    """Last use and month-to-date count for one provider.
+
+    Both are read from records that already existed. Bookings are rows in
+    ``bookings`` (written by ``book_appointment``). Sheet appends have no table
+    of their own, but every write-skill call lands in ``skill_executions`` as
+    the idempotency ledger (§7), so a successful ``append_to_sheet`` is already
+    on record with its timestamp -- the ledger is the source here rather than a
+    new counter, which could only ever drift from it.
+    """
+    if provider == GOOGLE_CALENDAR:
+        column = Booking.created_at
+        query = select(
+            func.max(column),
+            func.coalesce(func.sum(case((column >= month_start, 1), else_=0)), 0),
+        ).where(Booking.tenant_id == tenant_id)
+        unit = "booking"
+    elif provider == GOOGLE_SHEETS:
+        column = SkillExecution.created_at
+        query = select(
+            func.max(column),
+            func.coalesce(func.sum(case((column >= month_start, 1), else_=0)), 0),
+        ).where(
+            SkillExecution.tenant_id == tenant_id,
+            SkillExecution.skill_key == "append_to_sheet",
+            # The ledger records refusals too ("the spreadsheet isn't connected
+            # yet"), and counting those as rows written would be the exact lie
+            # this line exists to stop telling.
+            SkillExecution.result["status"].as_string() == "recorded",
+        )
+        unit = "row"
+    else:
+        return None
+
+    last_at, month_count = (await db.execute(query)).one()
+    return IntegrationUsage(
+        last_at=last_at.isoformat() if last_at is not None else None,
+        month_count=int(month_count or 0),
+        unit=unit,
+    )
+
+
 @router.get("", response_model=list[IntegrationResponse])
 async def list_integrations(
     tenant_id: UUID = Depends(require_tenant),
@@ -147,16 +235,18 @@ async def list_integrations(
 ) -> list[IntegrationResponse]:
     """Every supported provider, connected or not (stub rows for the unconnected)."""
     existing = {i.provider: i for i in await svc.list_integrations(db, tenant_id)}
-    return [
-        IntegrationResponse(
-            **(
-                svc.sanitized(existing[provider])
-                if provider in existing
-                else svc.unconnected(provider)
-            )
+    month_start = await _month_start(db, tenant_id) if existing else None
+    out: list[IntegrationResponse] = []
+    for provider in SUPPORTED_PROVIDERS:
+        integration = existing.get(provider)
+        payload = svc.sanitized(integration) if integration else svc.unconnected(provider)
+        usage = (
+            await _usage(db, tenant_id, provider, month_start)
+            if integration is not None and month_start is not None
+            else None
         )
-        for provider in SUPPORTED_PROVIDERS
-    ]
+        out.append(IntegrationResponse(**payload, usage=usage))
+    return out
 
 
 @router.post("/{provider}/oauth/start", response_model=OAuthStartResponse)
