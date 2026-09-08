@@ -16,10 +16,12 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_send_gateway, require_tenant
+from app.api.deps import get_claims, get_db, get_send_gateway, require_tenant
+from app.core.security import TokenClaims
 from app.models.conversation import Conversation, Message
 from app.models.enums import ConversationState, MessageAuthor, MessageDirection, MessageType
 from app.models.whatsapp import WhatsAppSession
+from app.services import audit
 from app.services import takeover as takeover_service
 from app.waha.send_gateway import DailyCapExceeded, SendGateway, SessionPacing
 
@@ -172,10 +174,21 @@ async def list_messages(
 async def take_over(
     conversation_id: UUID,
     tenant_id: UUID = Depends(require_tenant),
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> StateResponse:
     conversation = await _get_conversation(db, conversation_id, tenant_id)
     takeover_service.takeover(conversation)
+    # One of the two actions a staff seat is *meant* to take, so this is not
+    # about catching anybody: it is so that "who was handling this customer at
+    # four o'clock" has an answer (teardown X8).
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="conversation_taken_over",
+        target=str(conversation_id),
+    )
     return StateResponse(state=conversation.state.value)
 
 
@@ -183,10 +196,18 @@ async def take_over(
 async def release_conversation(
     conversation_id: UUID,
     tenant_id: UUID = Depends(require_tenant),
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> StateResponse:
     conversation = await _get_conversation(db, conversation_id, tenant_id)
     takeover_service.release(conversation)
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="conversation_released",
+        target=str(conversation_id),
+    )
     return StateResponse(state=conversation.state.value)
 
 

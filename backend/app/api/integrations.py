@@ -20,9 +20,10 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_redis_dep, require_owner, require_tenant
+from app.api.deps import get_claims, get_db, get_redis_dep, require_owner, require_tenant
 from app.core.config import settings
 from app.core.logging import logger
+from app.core.security import TokenClaims
 from app.core.tenancy import tenant_session
 from app.core.tenant_time import tenant_timezone
 from app.integrations import GOOGLE_CALENDAR, GOOGLE_SHEETS, SUPPORTED_PROVIDERS
@@ -58,6 +59,7 @@ from app.integrations.scopes import (
 )
 from app.integrations.token_cache import cache_access_token
 from app.models.tenant import TenantConfig
+from app.services import audit
 from app.services import integrations as svc
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
@@ -161,6 +163,7 @@ async def list_integrations(
 async def oauth_start(
     provider: str,
     tenant_id: UUID = Depends(require_owner),  # chooses which Google account the rep acts as,
+    claims: TokenClaims = Depends(get_claims),
     redis=Depends(get_redis_dep),
 ) -> OAuthStartResponse:
     """Mint a single-use state and hand back Google's consent URL.
@@ -175,7 +178,11 @@ async def oauth_start(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Google sign-in isn't configured on this deployment yet.",
         )
-    state = await issue_state(redis, tenant_id=tenant_id, provider=provider)
+    # The actor rides along in the state, because the callback has no bearer
+    # token and could otherwise never say who connected the account.
+    state = await issue_state(
+        redis, tenant_id=tenant_id, provider=provider, actor=claims.subject
+    )
     return OAuthStartResponse(
         authorize_url=authorize_url(state=state, scopes=scopes_for(provider))
     )
@@ -230,6 +237,22 @@ async def _persist_connection(state, bundle) -> None:
                     f"calendar provisioning failed, token kept: {exc}"
                 )
                 await svc.mark_needs_provisioning(db, state.tenant_id, state.provider)
+
+        # Attributed to whoever started the flow, carried on the single-use
+        # state token. The callback itself has no bearer credential, so this is
+        # the only way the row can name a person (teardown X8).
+        await audit.record(
+            db,
+            tenant_id=state.tenant_id,
+            claims=None,
+            action="integration_connected",
+            target=state.provider,
+            meta={
+                "actor_email": state.actor,
+                "google_account": bundle.account_email,
+                "granted_scopes": bundle.granted_scopes,
+            },
+        )
 
 
 @router.get("/oauth/callback", include_in_schema=False)
@@ -291,6 +314,7 @@ async def oauth_callback(
 @router.post("/google_calendar/provision", response_model=IntegrationResponse)
 async def provision_calendar(
     tenant_id: UUID = Depends(require_owner),  # creates a calendar the rep books into,
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis_dep),
 ) -> IntegrationResponse:
@@ -314,6 +338,13 @@ async def provision_calendar(
         calendar_id=calendar_id,
         summary=QONVO_CALENDAR_SUMMARY,
         timezone=tz_name,
+    )
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="calendar_provisioned",
+        target=calendar_id,
     )
     return IntegrationResponse(**svc.sanitized(integration))
 
@@ -348,6 +379,7 @@ async def picker_token(
 async def select_spreadsheet(
     body: SheetSelectRequest,
     tenant_id: UUID = Depends(require_owner),  # chooses the sheet the rep writes leads to,
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis_dep),
 ) -> SheetTargetResponse:
@@ -380,6 +412,16 @@ async def select_spreadsheet(
         tabs=tabs,
         sheet_range=body.sheet_range,
     )
+    # Which spreadsheet the rep writes customer leads into. Worth attributing:
+    # repointing it sends a business's leads somewhere else.
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="sheet_target_selected",
+        target=body.spreadsheet_id,
+        meta={"title": title},
+    )
     config = integration.config or {}
     return SheetTargetResponse(
         spreadsheet_id=body.spreadsheet_id,
@@ -393,6 +435,7 @@ async def select_spreadsheet(
 async def create_sheet(
     body: SheetCreateRequest,
     tenant_id: UUID = Depends(require_owner),  # creates the sheet the rep writes leads to,
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis_dep),
 ) -> SheetTargetResponse:
@@ -409,6 +452,14 @@ async def create_sheet(
     await svc.set_sheet_target(
         db, integration, spreadsheet_id=spreadsheet_id, title=title, tabs=tabs
     )
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="sheet_created",
+        target=spreadsheet_id,
+        meta={"title": title},
+    )
     config = integration.config or {}
     return SheetTargetResponse(
         spreadsheet_id=spreadsheet_id,
@@ -423,6 +474,7 @@ async def upsert_integration(
     provider: str,
     body: IntegrationUpdateRequest,
     tenant_id: UUID = Depends(require_owner),  # changes what the rep is allowed to do,
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> IntegrationResponse:
     _require_supported(provider)
@@ -432,6 +484,16 @@ async def upsert_integration(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    # Keys only, not values: the same reasoning as the config audit. What is
+    # useful is that the rep's target changed and who changed it.
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="integration_settings_updated",
+        target=provider,
+        meta={"fields": sorted((body.config or {}).keys())},
+    )
     return IntegrationResponse(**svc.sanitized(integration))
 
 
@@ -439,10 +501,18 @@ async def upsert_integration(
 async def delete_integration(
     provider: str,
     tenant_id: UUID = Depends(require_owner),  # disconnects the calendar the rep books into
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     _require_supported(provider)
     await svc.delete_integration(db, tenant_id, provider)
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="integration_disconnected",
+        target=provider,
+    )
 
 
 @router.post("/{provider}/test", response_model=TestResult)

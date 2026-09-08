@@ -16,10 +16,12 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_waha, require_tenant, require_verified_owner
+from app.api.deps import get_claims, get_db, get_waha, require_tenant, require_verified_owner
 from app.core.config import settings
+from app.core.security import TokenClaims
 from app.models.enums import SessionStatus
 from app.models.whatsapp import WhatsAppSession
+from app.services import audit
 from app.waha.client import WahaClient, WahaError
 
 router = APIRouter(prefix="/api/sessions", tags=["sessions"])
@@ -90,6 +92,7 @@ async def create_session(
     # into a live business identity on somebody's real phone number, so it is
     # the one thing an unconfirmed account is held back from (teardown X2).
     tenant_id: UUID = Depends(require_verified_owner),
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
     waha: WahaClient = Depends(get_waha),
 ) -> SessionResponse:
@@ -130,6 +133,19 @@ async def create_session(
         )
     except WahaError as exc:
         raise HTTPException(status_code=502, detail=f"WAHA error: {exc.detail}") from exc
+
+    # Recorded after WAHA accepts it, so the row means "a number was linked"
+    # rather than "somebody tried". This is the action that points the
+    # business's real WhatsApp number at us, which makes it the one worth being
+    # able to look up later.
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="whatsapp_session_created",
+        target=session_name,
+        meta={"label": label, "engine": engine},
+    )
 
     return _to_response(row)
 

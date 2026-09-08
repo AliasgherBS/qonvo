@@ -21,13 +21,15 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, require_owner, require_tenant
+from app.api.deps import get_claims, get_db, require_owner, require_tenant
 from app.billing.plans import PLANS, TRIAL_PLAN
 from app.billing.providers.registry import resolve_billing_provider
 from app.billing.service import get_subscription
 from app.billing.state import service_state
+from app.core.security import TokenClaims
 from app.models.billing import Subscription
 from app.models.tenant import Tenant, TenantConfig
+from app.services import audit
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
@@ -133,6 +135,7 @@ class CancelRequest(BaseModel):
 async def cancel_subscription(
     body: CancelRequest,
     tenant_id: UUID = Depends(require_owner),  # ends the service the business pays for
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Schedule cancellation at the end of the paid period.
@@ -164,12 +167,27 @@ async def cancel_subscription(
     # The row is not written here. The provider's webhook does that, so a
     # failure at their end cannot leave us showing "cancelled" for a
     # subscription that is still billing.
+    #
+    # The audit row is written on the attempt rather than on the webhook,
+    # because it records a person's decision and the webhook records the
+    # provider's. Only a successful call, though: a refused one changed
+    # nothing.
+    if ok:
+        await audit.record(
+            db,
+            tenant_id=tenant_id,
+            claims=claims,
+            action="subscription_cancelled",
+            target=row.provider_subscription_id,
+            meta={"reason": body.reason, "comment": body.comment},
+        )
     return {"ok": ok, "reason": None if ok else "provider_unavailable"}
 
 
 @router.post("/resume")
 async def resume_subscription(
     tenant_id: UUID = Depends(require_owner),  # restores a paid subscription
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Undo a scheduled cancellation.
@@ -192,6 +210,14 @@ async def resume_subscription(
     ok = resolve_billing_provider().set_cancellation(
         subscription_id=subscription_id, cancel=False
     )
+    if ok:
+        await audit.record(
+            db,
+            tenant_id=tenant_id,
+            claims=claims,
+            action="subscription_resumed",
+            target=subscription_id,
+        )
     return {"ok": ok, "reason": None if ok else "provider_unavailable"}
 
 
@@ -203,6 +229,7 @@ class ChangePlanRequest(BaseModel):
 async def change_plan(
     body: ChangePlanRequest,
     tenant_id: UUID = Depends(require_owner),  # changes what is charged
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Move an existing subscription onto another plan, without leaving here.
@@ -234,6 +261,15 @@ async def change_plan(
     ok = resolve_billing_provider().change_plan(
         subscription_id=subscription_id, plan_key=body.plan_key
     )
+    if ok:
+        await audit.record(
+            db,
+            tenant_id=tenant_id,
+            claims=claims,
+            action="plan_changed",
+            target=subscription_id,
+            meta={"to_plan": body.plan_key},
+        )
     return {"ok": ok, "reason": None if ok else "provider_unavailable"}
 
 

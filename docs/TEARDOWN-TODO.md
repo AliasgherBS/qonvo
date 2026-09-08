@@ -44,7 +44,7 @@ the rehoming that follows.
 
 | # | ID | Sev | What |
 |---|---|---|---|
-| 1 | X8 | Medium | Audit rows for owner/staff state-changing actions: integration connect/disconnect, knowledge delete, member removal, plan cancel, config change, takeover |
+| ~~1~~ | ~~X8~~ | Medium | **Done.** Audit rows for every state-changing owner route, actor resolved and named. Held by a property test over the route table |
 | 2 | X6 | Medium | Token revocation — `jti` + Redis denylist on sign-out, member removal, suspension, password change; align the Auth.js session lifetime with the token's |
 | 3 | X5 | Medium | Password policy: minimum 12, no composition rules, HIBP k-anonymity check, reject the business name and the email local part, strength meter |
 | 4 | X9 | Low | Pin argon2 parameters explicitly; set `jwt_audience`/`jwt_issuer`; reject disposable signup domains |

@@ -19,13 +19,15 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.storage import purge_source_files, source_dir
-from app.api.deps import get_arq, get_db, require_owner, require_tenant
+from app.api.deps import get_arq, get_claims, get_db, require_owner, require_tenant
 from app.api.knowledge_limits import as_http_detail, check_room_for, source_chars, usage_for
 from app.core.limits import MAX_TEXT_ENTRY_CHARS, MAX_UPLOAD_BYTES, LimitExceeded, exceeded
+from app.core.security import TokenClaims
 from app.core.url_guard import UnsafeUrlError, validate_public_url
 from app.models.enums import KnowledgeSourceType
 from app.models.knowledge import KnowledgeSource
 from app.models.ops import AnalyticsEvent
+from app.services import audit
 
 router = APIRouter(prefix="/api/knowledge", tags=["knowledge"])
 
@@ -237,9 +239,20 @@ async def update_source(
 async def delete_source(
     source_id: UUID,
     tenant_id: UUID = Depends(require_owner),  # grounding the rep silently loses
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     row = await _get_source(db, source_id, tenant_id)
+    # Recorded before the delete: afterwards the name is gone, and "a source
+    # was deleted" without saying which one is not a record of anything.
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="knowledge_source_deleted",
+        target=str(source_id),
+        meta={"name": row.name, "type": row.type.value, "url": row.url},
+    )
     await db.delete(row)
     # The chunks go with the row; the uploaded file does not, and would
     # otherwise sit on the volume forever.

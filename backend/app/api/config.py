@@ -14,15 +14,18 @@ from pydantic import BaseModel, field_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, require_owner, require_tenant
+from app.api.deps import get_claims, get_db, require_owner, require_tenant
 from app.core.limits import (
     MAX_CUSTOM_INSTRUCTIONS,
     MAX_PAYMENT_DETAILS,
     MAX_PERSONA,
     exceeded,
 )
+from app.core.security import TokenClaims
 from app.core.tenant_time import is_valid_timezone, tenant_timezone
 from app.models.tenant import Tenant, TenantConfig
+from app.services import audit
+from app.services.audit import changed_fields
 
 router = APIRouter(prefix="/api/config", tags=["config"])
 
@@ -230,9 +233,13 @@ async def update_config(
     # Owner-only: this accepts payment_details, the text the bot reads out
     # verbatim when a customer asks how to pay.
     tenant_id: UUID = Depends(require_owner),
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> ConfigResponse:
     row = await _get_or_create_config(db, tenant_id)
+    # Computed before the update is applied, because afterwards there is
+    # nothing left to compare against.
+    changed = changed_fields(row, body.model_dump(exclude_unset=True))
     _apply_config_update(row, body)
     # Keep the tenant's display name in sync with the business name edited here —
     # the topbar/JWT read Tenant.name, so otherwise the two silently diverge.
@@ -241,6 +248,20 @@ async def update_config(
             update(Tenant).where(Tenant.id == tenant_id).values(name=body.business_name.strip())
         )
     await db.flush()
+    if changed:
+        # Field names only. `payment_details` is the text the rep reads out
+        # verbatim when a customer asks how to pay, and a staff seat
+        # substituting their own account number was the whole of teardown X1 --
+        # so "who changed payment_details, and when" is exactly the record
+        # needed, and the value itself is not.
+        await audit.record(
+            db,
+            tenant_id=tenant_id,
+            claims=claims,
+            action="config_updated",
+            target=str(tenant_id),
+            meta={"fields": changed},
+        )
     return _config_to_dict(row)
 
 

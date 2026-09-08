@@ -21,12 +21,13 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_system_db, require_owner, require_tenant
+from app.api.deps import get_claims, get_db, get_system_db, require_owner, require_tenant
 from app.billing.state import seats_available
 from app.core.config import settings
-from app.core.security import hash_password
+from app.core.security import TokenClaims, hash_password
 from app.models.enums import UserRole
 from app.models.tenant import TeamInvitation, Tenant, TenantConfig, TenantUser, User
+from app.services import audit
 from app.services.auth import create_access_token
 from app.services.email import send_team_invite_email
 
@@ -118,6 +119,7 @@ class InviteRequest(BaseModel):
 async def create_invitation(
     body: InviteRequest,
     tenant_id: UUID = Depends(require_owner),
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> InvitationResponse:
     if body.role not in _ROLES:
@@ -200,6 +202,16 @@ async def create_invitation(
     ).scalar_one_or_none() or "the team"
     accept_url = f"{settings.dashboard_base_url}/accept-invite?token={token}"
     await send_team_invite_email(email, business, body.role, accept_url)
+    # An invitation is a seat, and a seat is billed. It is also the way somebody
+    # who is not in the tenant gets into it, which makes it worth attributing.
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="team_member_invited",
+        target=email,
+        meta={"role": body.role},
+    )
 
     return InvitationResponse(
         id=invite.id,
@@ -214,6 +226,7 @@ async def create_invitation(
 async def revoke_invitation(
     invitation_id: UUID,
     tenant_id: UUID = Depends(require_owner),
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     invite = (
@@ -223,12 +236,20 @@ async def revoke_invitation(
         raise HTTPException(status_code=404, detail="invitation not found")
     invite.status = "revoked"
     await db.flush()
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="team_invitation_revoked",
+        target=invite.email,
+    )
 
 
 @router.delete("/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_member(
     user_id: UUID,
     tenant_id: UUID = Depends(require_owner),
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     members = (
@@ -244,6 +265,14 @@ async def remove_member(
         owner_count = sum(1 for m in members if m.role == UserRole.owner)
         if owner_count <= 1:
             raise HTTPException(status_code=400, detail="cannot remove the last owner")
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="team_member_removed",
+        target=str(user_id),
+        meta={"role": target.role.value},
+    )
     await db.delete(target)
     await db.flush()
 
