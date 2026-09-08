@@ -141,6 +141,7 @@ interface LoginResponseDto {
   role: Role;
   tenant_id: string;
   name: string;
+  email_verified?: boolean;
 }
 
 export interface LoginResult {
@@ -149,6 +150,8 @@ export interface LoginResult {
   role: Role;
   tenantId: string;
   name: string;
+  /** False until the address has been confirmed from the emailed link. */
+  emailVerified: boolean;
 }
 
 interface MeDto {
@@ -157,6 +160,7 @@ interface MeDto {
   role: Role;
   tenant_id: string;
   tenant_name: string;
+  email_verified?: boolean;
 }
 
 export interface Me {
@@ -165,6 +169,7 @@ export interface Me {
   role: Role;
   tenantId: string;
   tenantName: string;
+  emailVerified: boolean;
 }
 
 export interface SignupRequest {
@@ -183,6 +188,7 @@ export const auth = {
         role: dto.role,
         tenantId: dto.tenant_id,
         name: dto.name,
+        emailVerified: dto.email_verified ?? true,
       }),
     ),
 
@@ -202,6 +208,7 @@ export const auth = {
       role: dto.role,
       tenantId: dto.tenant_id,
       name: dto.name,
+      emailVerified: dto.email_verified ?? true,
     })),
 
   /**
@@ -220,6 +227,7 @@ export const auth = {
       role: dto.role,
       tenantId: dto.tenant_id,
       name: dto.name,
+      emailVerified: dto.email_verified ?? true,
     })),
 
   changePassword: (payload: { currentPassword: string; newPassword: string }, opts: CallOpts = {}) =>
@@ -247,8 +255,35 @@ export const auth = {
         role: dto.role,
         tenantId: dto.tenant_id,
         tenantName: dto.tenant_name,
+        emailVerified: dto.email_verified ?? true,
       }),
     ),
+
+  /**
+   * Confirm an address from the emailed link. Returns a session, so clicking
+   * the link lands you in the product rather than on a page telling you to go
+   * and log in.
+   */
+  verifyEmail: (token: string, opts: CallOpts = {}) =>
+    apiFetch<LoginResponseDto>("/api/auth/verify-email", {
+      method: "POST",
+      body: { token },
+      signal: opts.signal,
+    }).then(
+      (dto): LoginResult => ({
+        accessToken: dto.access_token,
+        tokenType: dto.token_type,
+        role: dto.role,
+        tenantId: dto.tenant_id,
+        name: dto.name,
+        emailVerified: dto.email_verified ?? true,
+      }),
+    ),
+
+  /** Send the confirmation link again, to the signed-in user's own address. */
+  resendVerification: (opts: CallOpts = {}) =>
+    apiFetch<unknown>("/api/auth/resend-verification", { method: "POST", ...opts }),
+
 };
 
 // ---------------------------------------------------------------------------

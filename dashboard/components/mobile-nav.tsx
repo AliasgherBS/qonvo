@@ -14,6 +14,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import type { Role } from "@/lib/api";
+import { canReach } from "@/lib/nav-access";
 import { cn } from "@/lib/utils";
 
 /**
@@ -40,7 +41,11 @@ const ADMIN_ITEMS = [
 
 export function MobileNav({ role }: { role: Role }) {
   const pathname = usePathname();
-  const items = role === "qonvo_admin" ? ADMIN_ITEMS : OWNER_ITEMS;
+  // Three of the five owner entries are owner-only, so a staff seat gets a
+  // shorter bar rather than one where most taps bounce back.
+  const items = (role === "qonvo_admin" ? ADMIN_ITEMS : OWNER_ITEMS).filter((item) =>
+    canReach(role, item.href),
+  );
 
   return (
     <nav className="flex items-center justify-around border-t border-border bg-surface px-2 py-2 lg:hidden">

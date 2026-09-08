@@ -7,6 +7,7 @@ import { Topbar } from "@/components/topbar";
 import { ProductTour } from "@/components/product-tour";
 import { RepSwitch } from "@/components/rep-switch";
 import { TrialBanner } from "@/components/trial-banner";
+import { VerifyEmailBanner } from "@/components/verify-email-banner";
 import { auth } from "@/auth";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -34,11 +35,17 @@ export default async function DashboardLayout({ children }: { children: React.Re
           {/* Owner-only banners (a cross-tenant admin has no tenant/session). */}
           {session.user.role === "qonvo_admin" ? null : (
             <>
+              {/* Above the trial banner: an unconfirmed address blocks the
+                  next step, so it outranks a countdown. */}
+              <VerifyEmailBanner />
               <TrialBanner />
-              <ConnectionBanner />
+              <ConnectionBanner role={session.user.role} />
               {/* On every page, not only the home one. The reason to reach for
-                  it is usually urgent, and hunting for it is the failure. */}
-              <RepSwitch />
+                  it is usually urgent, and hunting for it is the failure.
+                  Owner-only: switching the rep off silences it for the whole
+                  workspace, so PUT /api/activation refuses a staff seat and the
+                  control would only toast an error. */}
+              {session.user.role === "owner" ? <RepSwitch /> : null}
               {/* Runs once per browser and describes the sidebar and the
                   switch, so it belongs in the layout rather than on a page:
                   both of its targets live here. */}

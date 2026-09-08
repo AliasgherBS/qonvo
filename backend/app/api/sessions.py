@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_waha, require_owner, require_tenant
+from app.api.deps import get_db, get_waha, require_tenant, require_verified_owner
 from app.core.config import settings
 from app.models.enums import SessionStatus
 from app.models.whatsapp import WhatsAppSession
@@ -86,7 +86,10 @@ async def list_sessions(
 @router.post("", response_model=SessionResponse, status_code=201)
 async def create_session(
     body: CreateSessionRequest,
-    tenant_id: UUID = Depends(require_owner),  # re-links the business's WhatsApp number
+    # Owner, and the address confirmed: this is the step that turns a signup
+    # into a live business identity on somebody's real phone number, so it is
+    # the one thing an unconfirmed account is held back from (teardown X2).
+    tenant_id: UUID = Depends(require_verified_owner),
     db: AsyncSession = Depends(get_db),
     waha: WahaClient = Depends(get_waha),
 ) -> SessionResponse:
@@ -155,7 +158,9 @@ async def session_qr(
     # never a cross-tenant leak, but a pairing QR is the credential that links
     # a WhatsApp account: whoever scans it controls the number. That is not a
     # staff act, and it was reachable by any member.
-    _owner: UUID = Depends(require_owner),
+    # Confirmed as well as owner: the QR is the whole of the linking step, so
+    # gating creation and leaving this open would gate nothing.
+    _owner: UUID = Depends(require_verified_owner),
     db: AsyncSession = Depends(get_db),
     waha: WahaClient = Depends(get_waha),
 ) -> Response:

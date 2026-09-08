@@ -141,6 +141,12 @@ async def send_password_reset_email(to: str, name: str | None, reset_url: str) -
     return await send_email(to, subject, text, html=html)
 
 
+async def send_verification_email(to: str, name: str | None, verify_url: str) -> bool:
+    """Address-confirmation link sent at signup (link expires in 24 hours)."""
+    subject, text, html = templates.verify_email(name, verify_url)
+    return await send_email(to, subject, text, html=html)
+
+
 async def send_team_invite_email(to: str, business: str, role: str, accept_url: str) -> bool:
     """Invite email with the accept link (link expires in 7 days)."""
     subject, text, html = templates.team_invite(business, role, accept_url)

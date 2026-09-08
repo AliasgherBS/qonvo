@@ -10,14 +10,35 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+/**
+ * Why a Google sign-in was refused, in words the person can act on.
+ *
+ * `password_account_unverified` is the pre-hijacking guard (teardown X2): an
+ * account with this address exists, was created with a password, and has never
+ * confirmed the address, so signing into it on Google's word alone could hand
+ * over a workspace somebody else created. Without a message here the user
+ * clicks Google and simply arrives back at this page, which is
+ * indistinguishable from a bug.
+ */
+const SIGN_IN_ERRORS: Record<string, string> = {
+  password_account_unverified:
+    "An account with this email already exists and uses a password. Sign in with that " +
+    "password below. If you have forgotten it, reset it and that will confirm your " +
+    "address at the same time.",
+  google_exchange: "We could not complete your Google sign-in. Try again, or use your password.",
+};
+
 export function LoginForm() {
   const searchParams = useSearchParams();
   const callbackUrl = searchParams.get("callbackUrl") ?? "/inbox";
+  const refusal = searchParams.get("error");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(
+    refusal ? (SIGN_IN_ERRORS[refusal] ?? SIGN_IN_ERRORS.google_exchange) : null,
+  );
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

@@ -24,13 +24,19 @@ from app.services.auth import (
     authenticate,
     change_password,
     create_access_token,
+    create_email_verification_token,
     create_password_reset_token,
     find_user,
     provision_tenant,
     reset_password,
     resolve_login,
+    verify_email,
 )
-from app.services.email import send_password_reset_email, send_welcome_email
+from app.services.email import (
+    send_password_reset_email,
+    send_verification_email,
+    send_welcome_email,
+)
 from app.services.google_identity import GoogleIdentityError, verify_google_id_token
 
 router = APIRouter(prefix="/api", tags=["auth"])
@@ -47,6 +53,10 @@ class LoginResponse(BaseModel):
     role: str | None
     tenant_id: str | None
     name: str | None
+    #: On every sign-in rather than only at signup: the banner asking somebody
+    #: to confirm their address has to appear when they come back tomorrow, not
+    #: just in the tab they signed up in.
+    email_verified: bool = True
 
 
 class MeResponse(BaseModel):
@@ -55,6 +65,7 @@ class MeResponse(BaseModel):
     role: str | None
     tenant_id: str | None
     tenant_name: str | None
+    email_verified: bool = True
 
 
 def _login_response(result: AuthResult) -> LoginResponse:
@@ -75,6 +86,7 @@ def _login_response(result: AuthResult) -> LoginResponse:
         role=effective_role,
         tenant_id=str(result.tenant_id) if result.tenant_id else None,
         name=result.user.full_name,
+        email_verified=result.user.email_verified,
     )
 
 
@@ -153,9 +165,90 @@ async def signup(
         owner_name=body.owner_name,
         email=email,
         password=body.password,
+        # Nothing has proven this address yet, and two sign-in paths resolve
+        # accounts by email (teardown X2).
+        email_verified=False,
     )
-    await send_welcome_email(email, body.owner_name, body.business_name)
+    # Confirmation now, welcome once confirmed. Two emails arriving together
+    # compete with each other and the actionable one loses; the welcome's job is
+    # to be excited about a working account, which this is not yet. It also
+    # keeps us from mailing enthusiastic HTML at addresses that never asked for
+    # it, which is what damages a young sending domain's reputation.
+    await _send_verification(result.user)
     return _login_response(result)
+
+
+async def _send_verification(user: User) -> None:
+    """Mail a confirmation link for this user's address."""
+    token = create_email_verification_token(user)
+    url = f"{settings.dashboard_base_url}/verify-email?token={token}"
+    await send_verification_email(user.email, user.full_name, url)
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str
+
+
+@router.post("/auth/verify-email", response_model=LoginResponse)
+async def verify_email_route(
+    body: VerifyEmailRequest, db: AsyncSession = Depends(get_system_db)
+) -> LoginResponse:
+    """Confirm an address from the emailed link, and sign the user in.
+
+    Returning a session rather than a bare 204 is the difference between
+    clicking the link and being in the product, and clicking the link and being
+    told to go and log in. The link is single-use, so this cannot be replayed:
+    the token carries a fingerprint of the unverified state and stops matching
+    the moment it succeeds.
+
+    Deliberately not throttled by account, because guessing a token is not the
+    attack it protects against: the token is a signed JWT, so an attacker who
+    could forge one already has the signing key.
+    """
+    user = await verify_email(db, body.token)
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This confirmation link is invalid, already used, or has expired.",
+        )
+    result = await resolve_login(db, user)
+    # Now the account is real, so the welcome is worth sending.
+    await send_welcome_email(user.email, user.full_name, result.tenant_name or "your business")
+    return _login_response(result)
+
+
+@router.post("/auth/resend-verification", status_code=status.HTTP_202_ACCEPTED)
+async def resend_verification(
+    request: Request,
+    claims: TokenClaims = Depends(get_claims),
+    db: AsyncSession = Depends(get_system_db),
+) -> dict:
+    """Send the confirmation link again, for the signed-in user only.
+
+    Authenticated rather than taking an address in the body, which is the whole
+    reason it is shaped this way: an endpoint that mails a link to any address
+    given to it is a way to use us to send unsolicited mail to a third party,
+    and that costs us our sending reputation rather than costing an attacker
+    anything.
+
+    Throttled on top of that, because a signed-in user holding the button down
+    still sends real email.
+    """
+    if await throttle.check(
+        get_redis(),
+        throttle.PASSWORD_RESET,
+        ip=throttle.client_ip(request),
+        account=claims.subject,
+    ):
+        # 202 regardless, like forgot-password: the caller already knows their
+        # own address exists, so the only thing a 429 adds here is a worse
+        # experience for somebody who clicked twice.
+        return {"status": "ok"}
+
+    user = await find_user(db, claims.subject)
+    if user is not None and user.is_active and not user.email_verified:
+        await _send_verification(user)
+    return {"status": "ok"}
 
 
 class GoogleAuthRequest(BaseModel):
@@ -192,6 +285,38 @@ async def google_auth(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN, detail="this account is disabled"
             )
+        # The account pre-hijacking check (teardown X2). Google has proven the
+        # address belongs to whoever is standing here; it has not proven that
+        # *this row* does. A row with a password nobody has ever confirmed the
+        # address for was created by somebody who typed the address in, and
+        # signing into it would hand them everything the real owner does next:
+        # their WhatsApp session, their knowledge base, every customer number.
+        #
+        # An unverified row with no password is a different thing entirely and
+        # is safe to adopt: with no password there is no second way in, so
+        # Google's assertion is the only credential that row has ever had.
+        if not user.email_verified and user.hashed_password is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                # A machine-readable code, because the dashboard has to tell
+                # these apart to offer the right next step, and matching on
+                # prose breaks the first time the prose is improved.
+                detail={
+                    "code": "password_account_unverified",
+                    "message": (
+                        "An account with this email already exists and was created with a "
+                        "password. Sign in with that password instead. If you have "
+                        "forgotten it, reset it from the sign-in page and that will "
+                        "confirm this address at the same time."
+                    ),
+                },
+            )
+        # Google asserted the address, so a row that only Google can reach is
+        # now proven. Recording it means the WhatsApp gate opens for accounts
+        # that never had a confirmation mail to click.
+        if not user.email_verified:
+            user.email_verified = True
+            await db.flush()
         # Backfill a name for accounts created before they had one.
         if not user.full_name and identity.full_name:
             user.full_name = identity.full_name
@@ -211,6 +336,10 @@ async def google_auth(
         business_name=business_name,
         owner_name=identity.full_name,
         email=identity.email,
+        # Google verifies the address before asserting it, and
+        # verify_google_id_token refuses an id_token whose email_verified claim
+        # is false. So this address is proven and no confirmation mail is owed.
+        email_verified=True,
         password=None,
     )
     await send_welcome_email(identity.email, identity.full_name, business_name)
@@ -308,6 +437,7 @@ async def me(
         role="qonvo_admin" if claims.is_qonvo_admin else claims.role,
         tenant_id=str(claims.tenant_id) if claims.tenant_id else None,
         tenant_name=tenant_name,
+        email_verified=user.email_verified,
     )
 
 

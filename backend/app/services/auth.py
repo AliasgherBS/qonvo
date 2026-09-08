@@ -36,6 +36,14 @@ TRIAL_MESSAGE_QUOTA = get_plan(TRIAL_PLAN).entitlements["monthly_message_quota"]
 # Password-reset links expire after this long.
 PASSWORD_RESET_TTL_MINUTES = 30
 
+# Verification links live much longer than reset links, because the two are
+# reached differently. A reset is something you asked for thirty seconds ago; a
+# verification mail arrives during signup and is often opened on a phone, later,
+# after the tab has been closed. Thirty minutes here would mostly generate
+# support requests, and the link proves control of a mailbox rather than
+# granting a session.
+EMAIL_VERIFICATION_TTL_HOURS = 24
+
 
 def _password_fingerprint(user: User) -> str:
     """A short token that changes whenever the user's password changes.
@@ -76,6 +84,80 @@ def read_password_reset_token(token: str) -> tuple[str, str] | None:
     return email, pwf
 
 
+def _verification_fingerprint(user: User) -> str:
+    """A short token that changes once the address is verified.
+
+    Same trick as :func:`_password_fingerprint`, and for the same reason: it
+    makes the link single-use with no verification-token table to expire or
+    clean up. Once ``email_verified`` flips, every outstanding link stops
+    matching.
+
+    The email is in the fingerprint too, so changing the address also
+    invalidates a pending link rather than leaving one that would verify an
+    address the account no longer has.
+    """
+    base = f"{user.id}:{user.email}:{user.email_verified}"
+    return hashlib.sha256(base.encode()).hexdigest()[:16]
+
+
+def create_email_verification_token(user: User) -> str:
+    now = dt.datetime.now(dt.UTC)
+    payload = {
+        "sub": user.email,
+        "typ": "emailverify",
+        "evf": _verification_fingerprint(user),
+        "iat": now,
+        "exp": now + dt.timedelta(hours=EMAIL_VERIFICATION_TTL_HOURS),
+    }
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+
+
+def read_email_verification_token(token: str) -> tuple[str, str] | None:
+    """Return ``(email, fingerprint)`` for a valid, unexpired verification
+    token, else ``None``. The caller re-checks the fingerprint against the live
+    user to enforce single-use.
+
+    The ``typ`` check is the whole reason these are separate functions: a reset
+    token and a verification token are both signed with the same key, so
+    without it either would satisfy the other. ``decode_token`` used to have
+    this gap for access tokens.
+    """
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=[settings.jwt_algorithm])
+    except jwt.PyJWTError:
+        return None
+    if payload.get("typ") != "emailverify":
+        return None
+    email, evf = payload.get("sub"), payload.get("evf")
+    if not isinstance(email, str) or not isinstance(evf, str):
+        return None
+    return email, evf
+
+
+async def verify_email(db: AsyncSession, token: str) -> User | None:
+    """Consume a verification token and mark the address verified.
+
+    Returns the user so the caller can sign them in, which is what makes this
+    pleasant to use: clicking the link in the mail lands you in the product
+    rather than on a page telling you to go and log in.
+
+    Idempotent from the user's point of view but not replayable: a second click
+    on the same link finds ``email_verified`` already true, so the fingerprint
+    no longer matches and this returns ``None``. That is the correct answer for
+    a link that has done its job.
+    """
+    parsed = read_email_verification_token(token)
+    if parsed is None:
+        return None
+    email, evf = parsed
+    user = await find_user(db, email)
+    if user is None or not user.is_active or _verification_fingerprint(user) != evf:
+        return None
+    user.email_verified = True
+    await db.flush()
+    return user
+
+
 async def change_password(db: AsyncSession, user: User, current: str, new: str) -> bool:
     """Set a new password after verifying the current one. False if it's wrong."""
     if not verify_password(current, user.hashed_password):
@@ -97,6 +179,12 @@ async def reset_password(db: AsyncSession, token: str, new: str) -> bool:
     if user is None or not user.is_active or _password_fingerprint(user) != pwf:
         return False
     user.hashed_password = hash_password(new)
+    # Using this link proves control of the mailbox, which is the same proof the
+    # verification link asks for. Not recording it would leave somebody who
+    # reset their password still nagged to confirm an address they just
+    # demonstrably read mail at, and would leave the only route back from the
+    # Google 409 a dead end for anyone who had forgotten their password.
+    user.email_verified = True
     await db.flush()
     return True
 
@@ -236,12 +324,21 @@ async def provision_tenant(
     owner_name: str | None,
     email: str,
     password: str | None = None,
+    email_verified: bool = False,
 ) -> AuthResult:
     """Create a tenant + config + owner user + membership on a free trial.
 
     ``password=None`` is the Google-SSO case. ``users.hashed_password`` is nullable
     and ``verify_password`` returns False for a null hash, so such an account
     simply can't be signed into with a password — no placeholder hash needed.
+
+    ``email_verified`` has no safe default, so it defaults to the safe one.
+    Google has already proven the address by the time this is reached from that
+    path, and passing True there is correct; self-serve signup has proven
+    nothing and must leave it False until the mail is clicked. Required
+    explicitly at both call sites rather than inferred from ``password is
+    None``, because "no password" and "address proven" are two different facts
+    that only coincide today.
 
     Cross-tenant by nature (there is no tenant yet), so callers pass the system
     session.
@@ -278,6 +375,7 @@ async def provision_tenant(
         email=email.lower().strip(),
         hashed_password=hash_password(password) if password else None,
         full_name=(owner_name or "").strip() or None,
+        email_verified=email_verified,
     )
     db.add(user)
     await db.flush()
@@ -299,11 +397,14 @@ __all__ = [
     "authenticate",
     "change_password",
     "create_access_token",
+    "create_email_verification_token",
     "create_password_reset_token",
     "find_user",
     "provision_tenant",
+    "read_email_verification_token",
     "read_password_reset_token",
     "reset_password",
     "resolve_login",
     "slugify",
+    "verify_email",
 ]

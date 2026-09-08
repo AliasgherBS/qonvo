@@ -11,6 +11,12 @@ declare module "next-auth" {
 
   interface Session {
     accessToken: string;
+    /**
+     * Why the Google exchange refused, when it did. Present only for a failed
+     * sign-in, so that /login can say what happened instead of just showing
+     * itself again.
+     */
+    authError?: string;
     user: DefaultSession["user"] & {
       tenantId: string;
       tenantName: string;
@@ -25,5 +31,6 @@ declare module "@auth/core/jwt" {
     tenantName: string;
     role: Role;
     accessToken: string;
+    authError?: string;
   }
 }

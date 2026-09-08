@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
+import { isOwnerOnlyPath, isTenantPath } from "@/lib/nav-access";
 import { cspWithNonce } from "@/lib/security-headers";
 
 /**
@@ -41,6 +42,7 @@ const PUBLIC_PREFIXES = [
   "/forgot-password",
   "/reset-password",
   "/accept-invite",
+  "/verify-email",
   "/api/auth",
   "/terms",
   "/privacy",
@@ -89,11 +91,12 @@ const ALWAYS_SENSITIVE = [
  * reset and every invitation, which is a worse outcome than the leak this is
  * trying to prevent.
  *
- * Those two are single-use by design: a reset token carries a fingerprint of
- * the current password hash, so using it invalidates it. A URL that stops
- * working once used is a different risk from one that keeps working.
+ * All three are single-use by design: a reset token carries a fingerprint of
+ * the current password hash and a verification token a fingerprint of the
+ * unverified state, so using either invalidates it. A URL that stops working
+ * once used is a different risk from one that keeps working.
  */
-const TOKEN_PARAM_ALLOWED_ON = ["/reset-password", "/accept-invite"];
+const TOKEN_PARAM_ALLOWED_ON = ["/reset-password", "/accept-invite", "/verify-email"];
 
 function sensitiveParams(pathname: string): string[] {
   const allowed = TOKEN_PARAM_ALLOWED_ON.some((prefix) => pathname.startsWith(prefix));
@@ -158,15 +161,21 @@ export default auth((req) => {
     ? `${req.headers.get("x-forwarded-proto") ?? "https"}://${fwdHost}`
     : nextUrl.origin;
 
-  // A cross-tenant admin has no tenant, so the owner pages (inbox, knowledge,
-  // …) 403 for them. Funnel admins to the admin console instead of ever landing
-  // them on a broken tenant-scoped page.
-  const OWNER_ONLY_PREFIXES = ["/inbox", "/knowledge", "/integrations", "/settings", "/analytics", "/onboarding"];
+  // A cross-tenant admin has no tenant, so the tenant-scoped pages (inbox,
+  // knowledge, …) 403 for them. Funnel admins to the admin console instead of
+  // ever landing them on a broken page. The prefix lists live in
+  // lib/nav-access so this and the two navs cannot disagree about who may go
+  // where -- a hidden sidebar entry is decoration if the URL still loads.
   const adminHome = "/admin/tenants";
 
   if (!isLoggedIn && !isPublicPath) {
     const loginUrl = new URL("/login", origin);
     loginUrl.searchParams.set("callbackUrl", nextUrl.pathname);
+    // A Google sign-in that was refused for a reason leaves the reason on the
+    // session. Carrying it through means /login can say what happened; without
+    // it the user clicks Google, arrives back at the sign-in page, and has no
+    // way to tell a refusal from a bug.
+    if (req.auth?.authError) loginUrl.searchParams.set("error", req.auth.authError);
     return withCsp(NextResponse.redirect(loginUrl), nonce);
   }
 
@@ -178,8 +187,16 @@ export default auth((req) => {
   if (isLoggedIn && !isAdmin && nextUrl.pathname.startsWith("/admin")) {
     return withCsp(NextResponse.redirect(new URL("/inbox", origin)), nonce);
   }
-  if (isLoggedIn && isAdmin && OWNER_ONLY_PREFIXES.some((p) => nextUrl.pathname.startsWith(p))) {
+  if (isLoggedIn && isAdmin && isTenantPath(nextUrl.pathname)) {
     return withCsp(NextResponse.redirect(new URL(adminHome, origin)), nonce);
+  }
+
+  // A staff seat has no business on the owner pages, and every one of them
+  // refuses its primary action at the API now. Redirecting rather than
+  // rendering a form that cannot save: the alternative is a page that looks
+  // functional until the moment somebody presses the button.
+  if (isLoggedIn && req.auth?.user?.role === "staff" && isOwnerOnlyPath(nextUrl.pathname)) {
+    return withCsp(NextResponse.redirect(new URL("/inbox", origin)), nonce);
   }
 
   return withCsp(NextResponse.next(forward), nonce);

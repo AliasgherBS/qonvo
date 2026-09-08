@@ -53,6 +53,15 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_qonvo_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: Whether this address has been proven to belong to whoever holds the
+    #: account. Load-bearing rather than informational: the Google sign-in path
+    #: resolves accounts by email, so without this a stranger can pre-register
+    #: somebody else's address and inherit their workspace (teardown X2).
+    #:
+    #: ``default=False`` is a real default here, unlike ``warmup_stage`` -- the
+    #: two callers that create users (provision_tenant and accept_invitation)
+    #: both set it explicitly, and both are tested for it.
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class TenantUser(Base, TenantScopedMixin):

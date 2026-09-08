@@ -7,6 +7,7 @@ from uuid import UUID
 
 from arq import ArqRedis
 from fastapi import Depends, Header, HTTPException, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.security import TokenClaims, TokenError, decode_jwt
@@ -75,6 +76,48 @@ async def get_db(tenant_id: UUID = Depends(require_tenant)) -> AsyncIterator[Asy
     """Yield a tenant-scoped session (RLS enforced via ``app.tenant_id``)."""
     async with tenant_session(tenant_id) as session:
         yield session
+
+
+async def require_verified_owner(
+    claims: TokenClaims = Depends(get_claims),
+    db: AsyncSession = Depends(get_db),
+) -> UUID:
+    """Owner, and the address on the account has been confirmed (teardown X2).
+
+    Guards the two routes that link a WhatsApp number. Everything else about
+    the trial stays open to an unconfirmed account -- they can explore, add
+    knowledge, invite nobody and spend nothing -- because the point is to make
+    a pre-registered account inert rather than to hold the product hostage
+    until somebody checks their mail. What an unconfirmed account must not do
+    is start answering real customers from a number, because that is the step
+    that turns a squatted address into a live business identity.
+
+    Read from the database rather than from a claim in the token. Putting it in
+    the JWT would save a query and cache an authorization decision for the
+    token's whole lifetime, so confirming on a laptop would leave the phone
+    refusing for an hour. It is the same reason a revocation list is needed at
+    all: state that can change does not belong baked into a bearer token.
+    """
+    tenant_id = require_owner(claims)
+    # Imported here rather than at module scope: app.models imports pull in the
+    # whole metadata, and deps is imported by every router.
+    from app.models.tenant import User
+
+    verified = (
+        await db.execute(select(User.email_verified).where(User.email == claims.subject))
+    ).scalar_one_or_none()
+    if not verified:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "code": "email_unverified",
+                "message": (
+                    "Confirm your email address before connecting a WhatsApp number. "
+                    "Check your inbox for the link we sent when you signed up."
+                ),
+            },
+        )
+    return tenant_id
 
 
 def require_admin(claims: TokenClaims = Depends(get_claims)) -> TokenClaims:

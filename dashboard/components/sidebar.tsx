@@ -20,6 +20,7 @@ import { usePathname } from "next/navigation";
 
 import { Logo } from "@/components/logo";
 import type { Role } from "@/lib/api";
+import { canReach } from "@/lib/nav-access";
 import { cn } from "@/lib/utils";
 import { HelpMenu } from "@/components/help-menu";
 
@@ -89,18 +90,26 @@ export function Sidebar({ role }: { role: Role }) {
             ))}
           </div>
         ) : (
-          NAV_GROUPS.map((group, i) => (
-            <div key={group.label ?? i} className="flex flex-col gap-1">
-              {group.label ? (
-                <p className="px-3 pb-1 text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
-                  {group.label}
-                </p>
-              ) : null}
-              {group.items.map((item) => (
-                <NavLink key={item.href} {...item} active={pathname.startsWith(item.href)} />
-              ))}
-            </div>
-          ))
+          NAV_GROUPS.map((group, i) => {
+            // A staff seat gets the pages it can act on and no others. Showing
+            // a role a destination it cannot use is the cheapest kind of
+            // broken, and a group whose every item is filtered out would
+            // otherwise leave its heading behind with nothing under it.
+            const items = group.items.filter((item) => canReach(role, item.href));
+            if (items.length === 0) return null;
+            return (
+              <div key={group.label ?? i} className="flex flex-col gap-1">
+                {group.label ? (
+                  <p className="px-3 pb-1 text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                    {group.label}
+                  </p>
+                ) : null}
+                {items.map((item) => (
+                  <NavLink key={item.href} {...item} active={pathname.startsWith(item.href)} />
+                ))}
+              </div>
+            );
+          })
         )}
       </nav>
 

@@ -78,13 +78,22 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           token.accessToken = login.accessToken;
           token.email = me.email;
           if (login.name) token.name = login.name;
+          delete token.authError;
           return token;
-        } catch {
+        } catch (err) {
           // No Qonvo token means no usable session; blank the access token so
           // middleware bounces the user back to /login instead of landing them
           // on an inbox that 401s on every request. Empty rather than deleted so
           // the JWT shape stays typed, and it's falsy either way.
           token.accessToken = "";
+          // A 409 here is not a broken sign-in, it is a refusal with a reason:
+          // an account with this address exists, was created with a password,
+          // and has never confirmed the address, so adopting it could hand a
+          // stranger's workspace over (teardown X2). Carrying the code lets
+          // /login explain it rather than silently showing itself again, which
+          // is indistinguishable from the product being broken.
+          const status = (err as { status?: number } | null)?.status;
+          token.authError = status === 409 ? "password_account_unverified" : "google_exchange";
           return token;
         }
       }
@@ -102,6 +111,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       session.user.tenantName = token.tenantName;
       session.user.role = token.role;
       session.accessToken = token.accessToken;
+      if (token.authError) session.authError = token.authError;
       return session;
     },
   },

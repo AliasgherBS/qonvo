@@ -22,7 +22,7 @@ from __future__ import annotations
 import inspect
 
 import pytest
-from app.api.deps import require_owner, require_tenant
+from app.api.deps import require_owner, require_tenant, require_verified_owner
 from app.main import app
 
 
@@ -71,7 +71,11 @@ def _gate(route) -> str:
     for param in params.values():
         default = param.default
         dependency = getattr(default, "dependency", None)
-        if dependency is require_owner:
+        # require_verified_owner is require_owner plus a confirmed address, so
+        # it counts as owner here. Treating it as ungated would make the two
+        # routes it guards look like regressions for being *more* strictly
+        # gated, which is how a test starts arguing against its own purpose.
+        if dependency in (require_owner, require_verified_owner):
             found.add("owner")
         elif dependency is require_tenant:
             found.add("tenant")
