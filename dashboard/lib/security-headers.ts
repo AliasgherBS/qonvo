@@ -37,7 +37,23 @@ const GOOGLE_CONNECT = ["https://apis.google.com", "https://content-sheets.googl
 /** The API host, which is a different origin now the domain is live. */
 const API_ORIGIN = process.env.NEXT_PUBLIC_API_URL ?? "";
 
-function csp(): string {
+/**
+ * The policy, with a per-request nonce in place of `'unsafe-inline'`.
+ *
+ * Built in middleware rather than in `next.config.ts`, because a nonce has to
+ * be different on every response and `headers()` there is evaluated once at
+ * build time. That is the whole reason this moved.
+ *
+ * How the nonce reaches Next's own inline scripts: Next looks for one in the
+ * `Content-Security-Policy` on the *request*, so middleware sets it there as
+ * well as on the response, and Next stamps its hydration bootstrap with it.
+ * Our own inline scripts read it from `headers()` and apply it themselves.
+ */
+export function cspWithNonce(nonce: string): string {
+  return csp(`'nonce-${nonce}'`);
+}
+
+function csp(scriptInline = "'unsafe-inline'"): string {
   const directives: Record<string, string[]> = {
     "default-src": ["'self'"],
 
@@ -47,7 +63,11 @@ function csp(): string {
     // right fix and needs middleware-generated nonces threaded through the
     // document, which is a change worth making separately rather than
     // alongside a security-headers pass.
-    "script-src": ["'self'", "'unsafe-inline'", ...GOOGLE_SCRIPTS, ...CLOUDFLARE_ANALYTICS],
+    // A nonce when one is available, and 'unsafe-inline' only as the fallback
+    // for a response that never passed through middleware. Note that a browser
+    // ignores 'unsafe-inline' entirely once a nonce is present, so these do not
+    // quietly cancel each other out: whichever is passed is the one in force.
+    "script-src": ["'self'", scriptInline, ...GOOGLE_SCRIPTS, ...CLOUDFLARE_ANALYTICS],
 
     // Tailwind emits a stylesheet, but Next also inlines critical CSS.
     "style-src": ["'self'", "'unsafe-inline'"],
@@ -98,10 +118,10 @@ export const SECURITY_HEADERS = [
     key: "Strict-Transport-Security",
     value: "max-age=63072000; includeSubDomains",
   },
-  {
-    key: "Content-Security-Policy",
-    value: csp(),
-  },
+  // Content-Security-Policy is deliberately absent here: middleware sets it,
+  // because it carries a per-request nonce. Setting it in both places would
+  // mean one silently overwriting the other, and the static one would win for
+  // any route middleware does not match.
   {
     // The reason this pass started. Without it the full URL, query string and
     // all, is sent as `Referer` to every third party the user clicks through
