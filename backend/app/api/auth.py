@@ -20,6 +20,7 @@ from app.core.passwords import MAX_LENGTH, PasswordRejected, check_password
 from app.core.redis import get_redis
 from app.core.revocation import revoke_all_for_subject, revoke_token
 from app.core.security import TokenClaims
+from app.core.signup_guard import is_disposable_email
 from app.core.tenant_time import is_valid_timezone
 from app.models.tenant import Tenant, User
 from app.services.auth import (
@@ -169,6 +170,21 @@ async def signup(
         )
 
     email = body.email.lower().strip()
+    if is_disposable_email(email):
+        # A speed bump rather than a wall: anybody determined can register a
+        # domain for a dollar. What it stops is the cheap version, where each
+        # signup provisions a tenant, a config row and a session slot and
+        # carries a trial quota that costs real credit (teardown X9).
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={
+                "code": "disposable_email",
+                "message": (
+                    "Please sign up with your business email address. We need to be able "
+                    "to reach you about your account."
+                ),
+            },
+        )
     try:
         await check_password(
             body.password, email=email, business_name=body.business_name

@@ -46,10 +46,17 @@ def test_hmac_wrong_secret():
 
 
 def _make_token(**claims) -> str:
-    # `typ` is part of what makes a token an access token, so the helper mints
-    # it by default. Pass typ=None to build one without, which is what the
-    # rejection tests below need.
-    payload = {"sub": "user-1", "exp": int(time.time()) + 300, "typ": ACCESS_TOKEN_TYPE, **claims}
+    # `typ`, `aud` and `iss` are all part of what makes a token an access
+    # token, so the helper mints them by default. Pass any of them as None to
+    # build a token without, which is what the rejection tests below need.
+    payload = {
+        "sub": "user-1",
+        "exp": int(time.time()) + 300,
+        "typ": ACCESS_TOKEN_TYPE,
+        "aud": settings.jwt_audience,
+        "iss": settings.jwt_issuer,
+        **claims,
+    }
     payload = {k: v for k, v in payload.items() if v is not None or k != "typ"}
     if claims.get("typ", "unset") is None:
         payload.pop("typ", None)

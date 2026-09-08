@@ -230,6 +230,12 @@ def create_access_token(
         "typ": ACCESS_TOKEN_TYPE,
         "role": role,
         "qonvo_admin": is_qonvo_admin,
+        # Only on access tokens. The reset and verification tokens are decoded
+        # by plain jwt.decode with no audience argument, and PyJWT raises
+        # InvalidAudienceError for a token that *carries* aud when none is
+        # expected -- so adding these there would break every reset link.
+        "aud": settings.jwt_audience,
+        "iss": settings.jwt_issuer,
         "iat": now,
         "exp": now
         + dt.timedelta(hours=expires_in_hours or settings.jwt_expiry_hours),

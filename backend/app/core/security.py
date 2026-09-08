@@ -87,7 +87,18 @@ def decode_jwt(token: str) -> TokenClaims:
     # decision. The day somebody adds a tenant id to that payload, to greet the
     # user by business name on the reset page say, every reset email becomes a
     # thirty-minute full-access credential sitting in a URL.
-    options = {"require": ["exp", "sub", "typ"]}
+    # `aud` and `iss` are required, not merely verified-if-present: PyJWT
+    # skips a claim that is absent, so without this a token minted with neither
+    # would sail through the very check that was added for them (teardown X9).
+    options = {
+        "require": [
+            "exp",
+            "sub",
+            "typ",
+            *(["aud"] if settings.jwt_audience else []),
+            *(["iss"] if settings.jwt_issuer else []),
+        ]
+    }
     try:
         payload = jwt.decode(
             token,
@@ -150,7 +161,40 @@ def decrypt_secret(token: str) -> str:
 # --------------------------------------------------------------------------- #
 from passlib.context import CryptContext  # noqa: E402
 
-_pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+#: Argon2id parameters, pinned rather than inherited (teardown X9).
+#:
+#: These were passlib's defaults, which means a library upgrade could change
+#: the work factor silently -- downwards as easily as upwards, and nothing in
+#: the codebase would say so. Pinned, so a change to how expensive it is to
+#: guess a password is a change to this file.
+#:
+#: The values are the ones already in effect, so pinning them changes nothing
+#: except making them a decision. That matters: the first attempt at this
+#: pinned OWASP's published *minimum* for Argon2id (19 MiB, t=2, p=1), which is
+#: markedly weaker than what passlib was already doing, and would have quietly
+#: halved the work factor for every password set from then on. A floor is not a
+#: target, and checking what the library actually did before pinning it is the
+#: whole job.
+#:
+#: 64 MiB comfortably exceeds that floor. Memory is the parameter that matters
+#: against GPU cracking, which is why it is the large one.
+#:
+#: Changing these later is safe in both directions for *reading*: passlib
+#: records the parameters in the hash, so an existing hash still verifies, and
+#: ``deprecated="auto"`` marks it for rehash on the owner's next successful
+#: login. It is only new hashes that get the new cost.
+ARGON2_TIME_COST = 3
+ARGON2_MEMORY_COST_KIB = 65536
+ARGON2_PARALLELISM = 4
+
+_pwd_context = CryptContext(
+    schemes=["argon2"],
+    deprecated="auto",
+    argon2__type="ID",
+    argon2__time_cost=ARGON2_TIME_COST,
+    argon2__memory_cost=ARGON2_MEMORY_COST_KIB,
+    argon2__parallelism=ARGON2_PARALLELISM,
+)
 
 
 def hash_password(password: str) -> str:
