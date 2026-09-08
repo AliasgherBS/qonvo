@@ -503,10 +503,18 @@ def test_a_refund_is_surfaced_as_a_status_not_hidden_in_the_amount(monkeypatch):
     assert payment.amount_cents == 1800  # what was charged, unchanged
 
 
-def test_no_invoice_link_until_the_provider_has_generated_one(monkeypatch):
-    """is_invoice_generated stays False until someone asks for the document, and
-    a link to a PDF that does not exist is worse than a reference the customer
-    can quote. Observed on the real order: gen=False."""
+def test_the_payment_row_carries_an_order_id_not_a_url(monkeypatch):
+    """Replaced an earlier version that expected a URL in the list response.
+
+    Polar's invoice link is signed and short-lived, so one returned alongside
+    the payment history would be stale before anybody clicked it. The row
+    carries the order id and the link is fetched per click instead.
+
+    Which also fixed a second problem: the old code only offered a link when
+    is_invoice_generated was true, and it is false on every fresh order because
+    Polar issues an invoice *number* at purchase and renders the document only
+    when asked. So the customer with one payment had no way to get an invoice
+    at all."""
     monkeypatch.setattr(settings, "polar_access_token", "polar_oat_x")
     import app.billing.providers.polar as module
 
@@ -516,7 +524,7 @@ def test_no_invoice_link_until_the_provider_has_generated_one(monkeypatch):
         lambda *a, **k: _orders_response(
             [
                 {
-                    "id": "o1",
+                    "id": "ord_abc",
                     "created_at": "2026-09-07T00:00:00Z",
                     "total_amount": 1800,
                     "currency": "usd",
@@ -529,8 +537,57 @@ def test_no_invoice_link_until_the_provider_has_generated_one(monkeypatch):
     )
 
     [payment] = PolarProvider().payments(customer_id="cus_1")
-    assert payment.invoice_url is None
-    assert payment.invoice_number == "INV-1"  # still quotable
+    assert payment.order_id == "ord_abc"
+    assert payment.invoice_number == "INV-1"
+
+
+def test_the_invoice_is_generated_before_it_is_fetched(monkeypatch):
+    """POST asks Polar to render the PDF and returns 202; GET then returns a
+    signed URL. Without the POST, a fresh order's invoice is never available."""
+    monkeypatch.setattr(settings, "polar_access_token", "polar_oat_x")
+    import app.billing.providers.polar as module
+
+    calls: list[str] = []
+
+    class _R:
+        def raise_for_status(self):
+            pass
+
+        @staticmethod
+        def json():
+            return {"url": "https://example.invalid/invoice.pdf"}
+
+    monkeypatch.setattr(module.httpx, "post", lambda *a, **k: calls.append("post") or _R())
+    monkeypatch.setattr(module.httpx, "get", lambda *a, **k: calls.append("get") or _R())
+
+    url = PolarProvider().invoice_url(order_id="ord_abc")
+
+    assert url == "https://example.invalid/invoice.pdf"
+    assert calls == ["post", "get"]
+
+
+def test_a_failing_generate_does_not_stop_the_fetch(monkeypatch):
+    """A second POST on an existing invoice is a no-op, and may error. The GET
+    still works for an order that already has one, so the generate step is best
+    effort rather than a precondition."""
+    monkeypatch.setattr(settings, "polar_access_token", "polar_oat_x")
+    import app.billing.providers.polar as module
+
+    class _R:
+        def raise_for_status(self):
+            pass
+
+        @staticmethod
+        def json():
+            return {"url": "https://example.invalid/invoice.pdf"}
+
+    def boom(*a, **k):
+        raise RuntimeError("already generated")
+
+    monkeypatch.setattr(module.httpx, "post", boom)
+    monkeypatch.setattr(module.httpx, "get", lambda *a, **k: _R())
+
+    assert PolarProvider().invoice_url(order_id="ord_abc") is not None
 
 
 def test_history_survives_a_provider_outage(monkeypatch):

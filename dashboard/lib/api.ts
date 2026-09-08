@@ -58,6 +58,22 @@ async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promise<T> {
   const isPlainObject =
     body != null && typeof body === "object" && !(body instanceof FormData) && !(body instanceof Blob);
 
+  // Pass the object, not JSON.stringify(object). This function does the
+  // stringifying *and* sets Content-Type, and only for a plain object: a
+  // pre-stringified body skips both, so the API receives JSON with no content
+  // type and answers 422 "Input should be a valid dictionary". That shipped
+  // twice, in cancel and the rep toggle, and looked like a backend bug.
+  if (process.env.NODE_ENV !== "production" && typeof body === "string") {
+    try {
+      JSON.parse(body);
+      console.error(
+        `apiFetch(${path}): body was already stringified. Pass the object instead.`,
+      );
+    } catch {
+      /* a genuinely non-JSON string body is fine */
+    }
+  }
+
   const res = await fetch(`${API_BASE_URL}${path}`, {
     ...rest,
     body: isPlainObject ? JSON.stringify(body) : (body as BodyInit | null | undefined),
@@ -941,7 +957,9 @@ export interface PaymentRow {
   status: string;
   invoiceNumber: string | null;
   description: string | null;
-  invoiceUrl: string | null;
+  /** Fetch the link with `payments.invoice(orderId)`. It is signed and expires,
+      so it is deliberately not returned with the list. */
+  orderId: string | null;
 }
 
 interface PaymentRowDto {
@@ -951,7 +969,7 @@ interface PaymentRowDto {
   status: string;
   invoice_number: string | null;
   description: string | null;
-  invoice_url: string | null;
+  order_id: string | null;
 }
 
 export const CANCELLATION_REASONS = [
@@ -968,6 +986,14 @@ export const CANCELLATION_REASONS = [
 export type CancellationReason = (typeof CANCELLATION_REASONS)[number]["value"];
 
 export const subscription = {
+  /** Move to another plan in place. The provider prorates. */
+  changePlan: (planKey: string, opts: CallOpts = {}) =>
+    apiFetch<{ ok: boolean; reason: string | null }>("/api/billing/change-plan", {
+      ...opts,
+      method: "POST",
+      body: { plan_key: planKey },
+    }),
+
   /** Schedules cancellation for the end of the paid period, never immediately. */
   cancel: (
     payload: { reason?: CancellationReason; comment?: string } = {},
@@ -976,7 +1002,7 @@ export const subscription = {
     apiFetch<{ ok: boolean; reason: string | null }>("/api/billing/cancel", {
       ...opts,
       method: "POST",
-      body: JSON.stringify(payload),
+      body: payload,
     }),
 
   /** Undoes a scheduled cancellation. A real undo, not a new subscription. */
@@ -1002,14 +1028,25 @@ export const payments = {
           status: d.status,
           invoiceNumber: d.invoice_number,
           description: d.description,
-          invoiceUrl: d.invoice_url,
+          orderId: d.order_id,
         }),
       ),
     ),
 
   /**
-   * A fresh link into the provider's billing portal: cancel, change card,
-   * download invoices. POST because it mints a session, and the token expires.
+   * One invoice's download link, generated on demand.
+   *
+   * Not returned with the list: the provider's link is signed and short-lived,
+   * so one handed over with the history would be stale before it was clicked.
+   */
+  invoice: (orderId: string, opts: CallOpts = {}) =>
+    apiFetch<{ url: string }>(`/api/billing/invoice/${orderId}`, opts),
+
+  /**
+   * A link into the provider's portal, for the one thing we cannot host: card
+   * details. Everything else (cancel, resume, change plan, invoices) happens
+   * here, because sending somebody to a third-party page to manage a
+   * subscription they bought from us is a seam they should never see.
    */
   portal: (opts: CallOpts = {}) =>
     apiFetch<{ url: string | null; reason: string | null }>("/api/billing/portal", {
@@ -1038,7 +1075,7 @@ export const activation = {
     apiFetch<ActivationDto>("/api/activation", {
       ...opts,
       method: "PUT",
-      body: JSON.stringify({ rep_active: repActive }),
+      body: { rep_active: repActive },
     }).then(mapActivation),
 };
 

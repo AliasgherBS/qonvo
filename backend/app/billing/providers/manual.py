@@ -50,6 +50,14 @@ class ManualProvider:
         # hand and would remove it the same way.
         return False
 
+    def change_plan(self, *, subscription_id: str, plan_key: str) -> bool:
+        # An operator moves the plan by hand through the admin endpoint.
+        return False
+
+    def invoice_url(self, *, order_id: str) -> str | None:
+        # No gateway, so no invoices to serve.
+        return None
+
     def parse_event(self, headers: dict[str, str], raw: bytes) -> BillingEvent | None:
         # There is no signing scheme, so nothing arriving here can be shown to
         # be authentic. Raising rather than returning None is the honest answer:

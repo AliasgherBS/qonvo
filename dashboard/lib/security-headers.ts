@@ -19,6 +19,18 @@
  * Sheets integration. `accounts.google.com` is sign-in.
  */
 const GOOGLE_SCRIPTS = ["https://apis.google.com", "https://accounts.google.com"];
+
+/**
+ * Cloudflare injects its Web Analytics beacon into responses served through the
+ * tunnel. We do not add the tag; the edge does, so blocking it produces a CSP
+ * violation on every page load plus a follow-on TypeError from the half-loaded
+ * script, and no amount of editing this codebase stops it.
+ *
+ * Two honest options: allow it, or turn Web Analytics off in the Cloudflare
+ * dashboard. Allowed here, because a console full of violations trains everyone
+ * to ignore the console, and that costs more than this script does.
+ */
+const CLOUDFLARE_ANALYTICS = ["https://static.cloudflareinsights.com"];
 const GOOGLE_FRAMES = ["https://accounts.google.com", "https://content-sheets.googleapis.com"];
 const GOOGLE_CONNECT = ["https://apis.google.com", "https://content-sheets.googleapis.com"];
 
@@ -35,7 +47,7 @@ function csp(): string {
     // right fix and needs middleware-generated nonces threaded through the
     // document, which is a change worth making separately rather than
     // alongside a security-headers pass.
-    "script-src": ["'self'", "'unsafe-inline'", ...GOOGLE_SCRIPTS],
+    "script-src": ["'self'", "'unsafe-inline'", ...GOOGLE_SCRIPTS, ...CLOUDFLARE_ANALYTICS],
 
     // Tailwind emits a stylesheet, but Next also inlines critical CSS.
     "style-src": ["'self'", "'unsafe-inline'"],
@@ -48,7 +60,14 @@ function csp(): string {
     // Where fetch/XHR may go. The API is its own origin now, so omitting it
     // would break every authenticated call while curl kept working, which is
     // the exact failure mode CORS already caused once on this project.
-    "connect-src": ["'self'", API_ORIGIN, ...GOOGLE_CONNECT].filter(Boolean),
+    // The beacon reports back to cloudflareinsights.com, so allowing the script
+    // without the connect target would swap one console error for another.
+    "connect-src": [
+      "'self'",
+      API_ORIGIN,
+      ...GOOGLE_CONNECT,
+      ...CLOUDFLARE_ANALYTICS,
+    ].filter(Boolean),
 
     // The Picker renders in an iframe, and Google sign-in may.
     "frame-src": ["'self'", ...GOOGLE_FRAMES],
