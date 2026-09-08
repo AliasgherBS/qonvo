@@ -334,6 +334,15 @@ class Settings(BaseSettings):
         }
     )
 
+    #: Allow knowledge ingestion to fetch private and loopback addresses.
+    #:
+    #: Off everywhere that matters. On this development machine the whole stack
+    #: is on 127.0.0.1, so without an opt-in a local test page cannot be
+    #: ingested at all; in production the same permission is a read primitive
+    #: aimed at postgres, redis, waha, minio and the cloud metadata endpoint
+    #: (teardown X3).
+    knowledge_allow_private_urls: bool = False
+
     @property
     def is_production(self) -> bool:
         return self.environment.lower() in {"production", "prod"}

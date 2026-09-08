@@ -22,6 +22,7 @@ from app.agent.storage import purge_source_files, source_dir
 from app.api.deps import get_arq, get_db, require_owner, require_tenant
 from app.api.knowledge_limits import as_http_detail, check_room_for, source_chars, usage_for
 from app.core.limits import MAX_TEXT_ENTRY_CHARS, MAX_UPLOAD_BYTES, LimitExceeded, exceeded
+from app.core.url_guard import UnsafeUrlError, validate_public_url
 from app.models.enums import KnowledgeSourceType
 from app.models.knowledge import KnowledgeSource
 from app.models.ops import AnalyticsEvent
@@ -123,6 +124,23 @@ async def list_sources(
     return [_to_response(r) for r in rows]
 
 
+def _checked_url(url: str | None) -> str | None:
+    """Refuse a private or non-http URL here, not only in the worker.
+
+    The worker validates again, and that is the check that matters because it
+    is the one that sees each redirect hop. This one exists so the owner is
+    told while the dialog is still open. Without it the only feedback is a
+    source that quietly turns to "error" a few seconds later, which reads as
+    the product failing rather than as the address being refused.
+    """
+    if not url:
+        return url
+    try:
+        return validate_public_url(url)
+    except UnsafeUrlError as err:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(err)) from err
+
+
 @router.post("/sources", response_model=SourceResponse, status_code=status.HTTP_201_CREATED)
 async def create_source(
     body: CreateSourceRequest,
@@ -136,6 +154,7 @@ async def create_source(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="a URL is required for a website source"
         )
+    url = _checked_url(url)
     try:
         await check_room_for(
             db, tenant_id, new_source=True, added_chars=len(body.content or "")

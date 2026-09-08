@@ -16,11 +16,11 @@ from __future__ import annotations
 import csv
 import io
 
-import httpx
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.url_guard import fetch_public_url
 from app.models.knowledge import KnowledgeChunk, KnowledgeSource
 from app.providers.base import EmbeddingProvider
 
@@ -30,14 +30,15 @@ async def fetch_url_text(url: str) -> str:
 
     Strips script/style/nav/header/footer chrome and collapses whitespace so the
     chunker gets clean prose. Raises on a bad status or an empty page.
+
+    The fetch goes through :func:`fetch_public_url`, which validates the host on
+    every hop and caps the response. This used to call httpx directly with
+    ``follow_redirects=True`` and no validation at all, which made it a read
+    primitive pointed at our own Docker network with the answer delivered to the
+    tenant's dashboard: a website source of ``http://api:8000/metrics`` was
+    enough (teardown X3).
     """
-    async with httpx.AsyncClient(
-        timeout=20.0,
-        follow_redirects=True,
-        headers={"User-Agent": "QonvoBot/1.0 (+knowledge ingestion)"},
-    ) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
+    resp = await fetch_public_url(url, user_agent="QonvoBot/1.0 (+knowledge ingestion)")
 
     from lxml import html as lxml_html  # lazy — heavy import, only for URL sources
 
