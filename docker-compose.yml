@@ -179,13 +179,31 @@ services:
       api:
         condition: service_started
 
-  # Built by the dashboard agent; entry included so the stack is complete.
+  # The containerised dashboard, used on a real host. In dev and on staging the
+  # dashboard runs as a host node process instead (run-dashboard.sh), which is
+  # why this service went unexercised for so long — and why its env was wrong.
   dashboard:
     build:
       context: ./dashboard
+      args:
+        # BUILD-time, not runtime: `next build` inlines NEXT_PUBLIC_* into the
+        # client bundle. Derived from DOMAIN so there is one thing to set, and
+        # matching the Caddyfile: the app is on the apex, the API on api.*.
+        NEXT_PUBLIC_API_URL: https://api.${DOMAIN}
+        NEXT_PUBLIC_SITE_URL: https://${DOMAIN}
+        NEXT_PUBLIC_GOOGLE_AUTH_ENABLED: ${NEXT_PUBLIC_GOOGLE_AUTH_ENABLED:-true}
     restart: unless-stopped
+    env_file:
+      # AUTH_SECRET, AUTH_URL and AUTH_GOOGLE_* live with the dashboard, not in
+      # the backend .env. Required on purpose: without AUTH_SECRET, Auth.js
+      # cannot sign a session cookie and login fails at runtime, so a missing
+      # file should stop the stack rather than start a broken one.
+      - ${QONVO_DASHBOARD_ENV_FILE:-./dashboard/.env.local}
     environment:
-      NEXT_PUBLIC_API_URL: https://api.${DOMAIN}
+      # Overrides the host-process value: inside the compose network the API is
+      # a service name. This one IS a runtime variable — it is read by
+      # next.config.ts at server start, not baked into the bundle.
+      INTERNAL_API_URL: http://api:8000
     expose:
       - "3000"
     depends_on:

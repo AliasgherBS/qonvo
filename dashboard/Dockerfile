@@ -11,7 +11,31 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+
+# NEXT_PUBLIC_* values are inlined into the client bundle by `next build`, so
+# they have to be present HERE. Setting them on the container at runtime does
+# nothing — the value is already compiled in. This is the single most expensive
+# gotcha in this project (see CLAUDE.md, "Deploy gotchas"), and the compose
+# `dashboard` service used to get it wrong.
+ARG NEXT_PUBLIC_API_URL
+ARG NEXT_PUBLIC_SITE_URL
+ARG NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=false
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
+    NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
+    NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=$NEXT_PUBLIC_GOOGLE_AUTH_ENABLED
 ENV NEXT_TELEMETRY_DISABLED=1
+
+# Fail loudly rather than baking a default. Unset, `lib/api.ts` falls back to
+# http://localhost:8000 and `lib/site.ts` to http://localhost:3002 — an image
+# that builds cleanly, starts cleanly, and sends every browser call to the
+# user's own machine. Same reasoning as the required `pacing` argument on the
+# send gateway: a silent default is worse than a failed build.
+RUN set -e; \
+    for v in NEXT_PUBLIC_API_URL NEXT_PUBLIC_SITE_URL; do \
+      eval "val=\$$v"; \
+      [ -n "$val" ] || { echo "ERROR: build-arg $v is required"; exit 1; }; \
+    done
+
 RUN npm run build
 
 # ---- runtime ---------------------------------------------------------------
