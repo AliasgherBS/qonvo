@@ -32,12 +32,37 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
+# Read a key the way docker does: the LAST assignment wins.
+#
+# This matters here more than anywhere. The documented way to build
+# .env.staging is `cp .env` followed by appending .env.staging.example, so
+# every staging override is a *second* assignment of a key production already
+# set -- twelve of them, including QONVO_EMAIL_PROVIDER. A guard that read the
+# first match would be reading production's value and checking it against
+# itself, passing while the container ran on something else entirely.
+env_value() {
+  grep -E "^$2=" "$1" 2>/dev/null | tail -n 1 | cut -d= -f2- || true
+}
+
 # Guard against the one mistake that would matter: a .env.staging that still
 # points at production's database port would migrate or reset the real data.
-prod_port=$(grep -E '^POSTGRES_HOST_PORT=' .env 2>/dev/null | cut -d= -f2 || echo 5433)
-stage_port=$(grep -E '^POSTGRES_HOST_PORT=' "$ENV_FILE" | cut -d= -f2 || echo "")
+prod_port=$(env_value .env POSTGRES_HOST_PORT)
+stage_port=$(env_value "$ENV_FILE" POSTGRES_HOST_PORT)
 if [[ -z "$stage_port" || "$stage_port" == "${prod_port:-5433}" ]]; then
   echo "$ENV_FILE must set POSTGRES_HOST_PORT to something other than production's (${prod_port:-5433})." >&2
+  exit 1
+fi
+
+# The other mistake that would matter, and the reason staging exists at all:
+# staging carries production's tenant data often enough that a real email
+# provider here mails a real customer. That is why .env.staging.example forces
+# QONVO_EMAIL_PROVIDER=log -- but nothing checked it, and the value only ends
+# up as `log` because the append happens to come last. One reorder, one hand
+# edit at the bottom of the file, and staging is on production's SMTP.
+stage_email=$(env_value "$ENV_FILE" QONVO_EMAIL_PROVIDER)
+if [[ "$stage_email" != "log" ]]; then
+  echo "$ENV_FILE has QONVO_EMAIL_PROVIDER=${stage_email:-<unset>}; staging must be 'log' so it cannot mail a real customer." >&2
+  echo "Note that the effective value is the LAST assignment in the file, not the first." >&2
   exit 1
 fi
 

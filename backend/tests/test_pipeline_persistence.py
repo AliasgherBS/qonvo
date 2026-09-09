@@ -84,6 +84,14 @@ async def tenant(monkeypatch):
                 slug=f"outage-{tenant_id.hex[:8]}",
                 plan="trial",
                 trial_ends_at=dt.datetime.now(dt.UTC) + dt.timedelta(days=5),
+                # Required, and it is the whole reason these tests went quiet.
+                # `rep_active` defaults to False, and the gate for it returns
+                # before the LLM is ever resolved -- so every test in this file
+                # that monkeypatches `resolve_llm` to explode was exercising
+                # "rep is switched off" instead, and asserting nothing about
+                # surviving an outage. They failed loudly rather than passing
+                # vacuously, which is the only reason it was noticeable.
+                rep_active=True,
             )
         )
         await db.flush()

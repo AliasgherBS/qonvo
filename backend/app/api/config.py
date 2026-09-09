@@ -7,6 +7,7 @@ surfaces validate and serialize identically.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 from uuid import UUID
 
@@ -25,11 +26,15 @@ from app.core.limits import (
 )
 from app.core.security import TokenClaims
 from app.core.tenant_time import is_valid_timezone, tenant_timezone
+
+# Re-exported: this module owned them until three other routers needed them.
+from app.core.validation import QuietValidationRoute, quiet_errors
+from app.integrations import GOOGLE_CALENDAR
 from app.models.tenant import Tenant, TenantConfig
 from app.services import audit
 from app.services.audit import changed_fields
 
-router = APIRouter(prefix="/api/config", tags=["config"])
+router = APIRouter(prefix="/api/config", tags=["config"], route_class=QuietValidationRoute)
 
 
 class ConfigUpdateRequest(BaseModel):
@@ -383,6 +388,44 @@ CONFIG_KEY_NEEDS: dict[str, str] = {
 }
 
 
+# --------------------------------------------------------------------------- #
+# Instructions that fight a connected integration (E4)
+# --------------------------------------------------------------------------- #
+# The live tenant's instructions said "Never say a time slot is free or booked.
+# You cannot see any diary." while Google Calendar was connected and passing
+# its test, and this page went on saying "Check availability: Available". Two
+# surfaces of the same product contradicted each other, neither knew, and the
+# owner's only route to finding out was reading a WhatsApp transcript.
+#
+# The decision made is that a connected integration wins: the pipeline now
+# tells the model the tool is the authority (``pipeline.tool_authority``). That
+# is the right default and it is also invisible, so the conflict is said out
+# loud here, naming which one wins.
+#
+# The detection is ``app.agent.instruction_review.detect_conflicts`` rather
+# than a second phrase table of our own. One list of phrases in the codebase,
+# not two that drift; it is already gated on the integration actually being
+# connected, which is what stops "you cannot see any diary" being flagged for a
+# tenant who genuinely has no calendar.
+
+#: Which integration a conflict kind is about. ``integration_denial`` is the
+#: only kind that concerns one, and the detector only raises it when Google
+#: Calendar is connected, so this is a one-entry map by construction rather
+#: than by omission.
+CONFLICT_INTEGRATION: dict[str, str] = {"integration_denial": GOOGLE_CALENDAR}
+
+#: Said on the row itself, because that is where the owner is looking when they
+#: wonder whether the skill works. Names the winner explicitly, and admits to
+#: being a keyword check: claiming to understand someone's instructions would
+#: be a bigger promise than this makes.
+CONFLICT_NOTICE = (
+    "Your instructions look like they tell your rep it cannot do this. The "
+    "connected integration wins, so your rep will still use this skill. This "
+    "is a keyword check, not a reading of your instructions, so it can be "
+    "wrong."
+)
+
+
 class SkillInfo(BaseModel):
     key: str
     label: str
@@ -393,6 +436,11 @@ class SkillInfo(BaseModel):
     requires_config_key: str | None = None
     #: What to do about it, when it is not available. None when it is.
     needs: str | None = None
+    #: Set when the tenant's own instructions appear to contradict this working
+    #: skill. Says which one wins, and admits to being a heuristic.
+    conflict: str | None = None
+    #: The owner's own sentence that triggered it, so they can find and fix it.
+    conflict_quote: str | None = None
 
 
 def skill_states(
@@ -401,6 +449,7 @@ def skill_states(
     ready: set[str],
     config_row: Any,
     configured: dict[str, bool],
+    conflicts: Sequence[Any] = (),
 ) -> list[SkillInfo]:
     """Turn the registry plus this tenant's state into rows for the page.
 
@@ -409,7 +458,21 @@ def skill_states(
     :func:`app.skills.registry.enabled_skill_names` -- the page telling an owner
     a skill is live while the pipeline never offers it is worse than the page
     not existing. Same three conditions, in the same order.
+
+    ``conflicts`` are ``instruction_review.Conflict`` records from the owner's
+    ``custom_instructions``. They are passed in rather than computed here so
+    this stays pure, and so the instruction text never has to be threaded
+    through the signature.
     """
+    # Only a *working* skill can be contradicted. A skill blocked on a
+    # connection the owner never made is not in conflict with an instruction
+    # saying it cannot be done: that instruction is simply true.
+    denied: dict[str, Any] = {}
+    for conflict in conflicts:
+        provider = CONFLICT_INTEGRATION.get(getattr(conflict, "kind", ""))
+        if provider:
+            denied.setdefault(provider, conflict)
+
     rows: list[SkillInfo] = []
     for name, definition in definitions.items():
         label, description = SKILL_COPY.get(name, (name.replace("_", " "), definition.description))
@@ -430,6 +493,7 @@ def skill_states(
                 definition.requires_config_key,
                 f"Set {definition.requires_config_key.replace('_', ' ')}",
             )
+        clash = denied.get(definition.requires_integration) if needs is None else None
         rows.append(
             SkillInfo(
                 key=name,
@@ -439,6 +503,8 @@ def skill_states(
                 requires_integration=definition.requires_integration,
                 requires_config_key=definition.requires_config_key,
                 needs=needs,
+                conflict=CONFLICT_NOTICE if clash else None,
+                conflict_quote=getattr(clash, "quote", None) if clash else None,
             )
         )
     return rows
@@ -455,6 +521,7 @@ async def list_skills(
     # Imported here rather than at module scope: the registry pulls in the
     # integration resolver and every handler, and app.api.admin imports this
     # module for its own config surface.
+    from app.agent.instruction_review import detect_conflicts
     from app.integrations.resolver import ready_providers
     from app.models.skill import Skill
     from app.skills.registry import SKILL_REGISTRY
@@ -462,18 +529,26 @@ async def list_skills(
     rows = (
         await db.execute(select(Skill.key, Skill.enabled).where(Skill.tenant_id == tenant_id))
     ).all()
+    ready = await ready_providers(db, tenant_id)
+    config_row = await _get_or_create_config(db, tenant_id)
     return skill_states(
         SKILL_REGISTRY,
-        ready=await ready_providers(db, tenant_id),
-        config_row=await _get_or_create_config(db, tenant_id),
+        ready=ready,
+        config_row=config_row,
         configured=dict(rows),
+        # The same detector the Behavior page's instruction review uses, gated
+        # on the same `connected` set, so the two surfaces cannot disagree
+        # about whether a sentence is a problem.
+        conflicts=detect_conflicts(config_row.custom_instructions or "", connected=sorted(ready)),
     )
 
 
 __all__ = [
+    "CONFLICT_NOTICE",
     "ConfigUpdateRequest",
     "SkillInfo",
     "normalise_billing_email",
+    "quiet_errors",
     "router",
     "skill_states",
 ]

@@ -130,20 +130,56 @@ async def test_create_manual_source(client, tenant_id):
     assert body["type"] == "manual"
     assert body["title"] == "Return policy"
     assert body["content"] == "Returns within 14 days."
-    assert body["status"] == "ready"
+    # Not "ready". This test used to assert that, and asserting it was asserting
+    # the bug: a manual entry was marked ready on insert while it still had no
+    # chunks, so RAG could not see a word of it. Everything now goes through the
+    # ingestion worker and reaches "ready" when it has actually been embedded.
+    assert body["status"] == "pending_ingest"
 
 
-async def test_create_url_source_maps_to_website_and_pending(client, tenant_id):
+async def test_a_website_source_without_a_url_is_refused(client, tenant_id):
+    """The type says a page will be fetched; there has to be a page.
+
+    This used to be accepted, which created a website source with a NULL url:
+    nothing to fetch, so it sat at pending_ingest for ever with no way for the
+    owner to tell why.
+    """
     headers = {"Authorization": f"Bearer {_token_for(tenant_id)}"}
     resp = await client.post(
         "/api/knowledge/sources",
         json={"type": "url", "title": "FAQ page"},
         headers=headers,
     )
-    assert resp.status_code == 201
+    assert resp.status_code == 400
+    assert "URL is required" in resp.json()["detail"]
+
+
+async def test_create_url_source_maps_to_website_and_pending(client, tenant_id):
+    """Needs DNS: ``validate_public_url`` resolves the host to refuse private
+    addresses, so a made-up hostname would be rejected as unresolvable rather
+    than accepted."""
+    headers = {"Authorization": f"Bearer {_token_for(tenant_id)}"}
+    resp = await client.post(
+        "/api/knowledge/sources",
+        json={"type": "url", "title": "FAQ page", "url": "https://example.com/faq"},
+        headers=headers,
+    )
+    assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["type"] == "url"
     assert body["status"] == "pending_ingest"
+
+
+async def test_a_private_url_is_refused_at_the_dialog(client, tenant_id):
+    """The SSRF guard runs on create too, so the owner hears about it while the
+    dialog is open instead of watching the source turn to "error"."""
+    headers = {"Authorization": f"Bearer {_token_for(tenant_id)}"}
+    resp = await client.post(
+        "/api/knowledge/sources",
+        json={"type": "url", "title": "Internal", "url": "http://169.254.169.254/latest/meta-data/"},
+        headers=headers,
+    )
+    assert resp.status_code == 400, resp.text
 
 
 async def test_list_and_delete_source(client, tenant_id):
