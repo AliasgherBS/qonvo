@@ -8,7 +8,8 @@ import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { auth, describeError } from "@/lib/api";
+import { MIN_PASSWORD_LENGTH, PasswordStrength } from "@/components/password-strength";
+import { ApiError, auth, describeError } from "@/lib/api";
 
 function ResetPasswordForm() {
   const token = useSearchParams().get("token") ?? "";
@@ -17,6 +18,7 @@ function ResetPasswordForm() {
   const [loading, setLoading] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [weakReasons, setWeakReasons] = useState<string[] | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -26,11 +28,16 @@ function ResetPasswordForm() {
     }
     setLoading(true);
     setError(null);
+    setWeakReasons(null);
     try {
       await auth.resetPassword({ token, newPassword: password });
       setDone(true);
     } catch (err) {
-      setError(describeError(err, "Couldn't reset your password. The link may have expired."));
+      if (err instanceof ApiError && err.detail?.code === "weak_password") {
+        setWeakReasons(err.detail.reasons ?? []);
+      } else {
+        setError(describeError(err, "Couldn't reset your password. The link may have expired."));
+      }
     } finally {
       setLoading(false);
     }
@@ -65,11 +72,15 @@ function ResetPasswordForm() {
           type="password"
           autoComplete="new-password"
           required
-          minLength={8}
+          minLength={MIN_PASSWORD_LENGTH}
           value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="At least 8 characters"
+          onChange={(e) => {
+            setPassword(e.target.value);
+            setWeakReasons(null);
+          }}
+          placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
         />
+        <PasswordStrength password={password} serverReasons={weakReasons ?? undefined} />
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="confirm">Confirm password</Label>
@@ -78,7 +89,7 @@ function ResetPasswordForm() {
           type="password"
           autoComplete="new-password"
           required
-          minLength={8}
+          minLength={MIN_PASSWORD_LENGTH}
           value={confirm}
           onChange={(e) => setConfirm(e.target.value)}
           placeholder="Re-enter your new password"

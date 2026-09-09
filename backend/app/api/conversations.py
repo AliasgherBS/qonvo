@@ -13,22 +13,105 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_send_gateway, require_tenant
+from app.api.deps import get_claims, get_db, get_send_gateway, require_tenant
+from app.core.security import TokenClaims
 from app.models.conversation import Conversation, Message
 from app.models.enums import ConversationState, MessageAuthor, MessageDirection, MessageType
 from app.models.whatsapp import WhatsAppSession
+from app.services import audit
 from app.services import takeover as takeover_service
 from app.waha.send_gateway import DailyCapExceeded, SendGateway, SessionPacing
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
+# 1:1 chat id suffixes. ``@c.us`` (and NOWEB's ``@s.whatsapp.net``) carry a real
+# phone number; ``@lid`` is WhatsApp's privacy-preserving Linked ID and is NOT a
+# number, so formatting it as one would invent a phone that does not exist.
+_PHONE_SUFFIXES = ("@c.us", "@s.whatsapp.net")
+_LID_SUFFIX = "@lid"
+
+# Country calling code lengths, so "+92 300 999 8877" splits at the right place
+# without pulling in libphonenumber for one label. Codes beginning 1 or 7 are a
+# single digit, the ranges below are two, everything else is three (ITU E.164).
+_TWO_DIGIT_CC = {
+    "20", "27", "30", "31", "32", "33", "34", "36", "39", "40", "41", "43", "44",
+    "45", "46", "47", "48", "49", "51", "52", "53", "54", "55", "56", "57", "58",
+    "60", "61", "62", "63", "64", "65", "66", "81", "82", "84", "86", "90", "91",
+    "92", "93", "94", "95", "98",
+}
+
+
+def _country_code_length(digits: str) -> int:
+    if digits[:1] in ("1", "7"):
+        return 1
+    if digits[:2] in _TWO_DIGIT_CC:
+        return 2
+    return 3
+
+
+def _group_national(digits: str) -> list[str]:
+    """Split a national number into readable groups (3-3-4 for ten digits).
+
+    The last four digits are kept together and the rest is cut into threes, so
+    a group is never a single orphan digit ("+92 300 999 8 877" reads as a
+    typo). A one- or two-digit remainder at the end of the head is merged back,
+    which is also what the local convention happens to be where it matters
+    (Malta's 9900 1234, China's 138 0013 8000).
+    """
+    if len(digits) <= 4:
+        return [digits]
+    head, tail = digits[:-4], digits[-4:]
+    groups = [head[i : i + 3] for i in range(0, len(head), 3)]
+    if len(groups) > 1 and len(groups[-1]) < 3:
+        groups[-2:] = ["".join(groups[-2:])]
+    return [*groups, tail]
+
+
+def format_phone_number(chat_id: str) -> str:
+    """``923009998877@c.us`` -> ``+92 300 999 8877``."""
+    digits = "".join(ch for ch in chat_id.split("@", 1)[0] if ch.isdigit())
+    if not digits:
+        return chat_id
+    if len(digits) <= 5:
+        # Too short to be a real international number (a test double, usually).
+        return f"+{digits}"
+    cc_len = _country_code_length(digits)
+    cc, national = digits[:cc_len], digits[cc_len:]
+    return " ".join([f"+{cc}", *_group_national(national)])
+
+
+def customer_display_name(chat_id: str, customer_name: str | None = None) -> str:
+    """What the owner should see instead of a WhatsApp internal address (teardown I1).
+
+    The push name when WhatsApp gave us one, a formatted phone number when the
+    chat id contains one, and a short stable label for a Linked ID, which is not
+    a phone number and must not be dressed up as one. The raw address is still
+    returned by the API so the UI can keep it in a tooltip.
+    """
+    name = (customer_name or "").strip()
+    if name:
+        return name
+    if chat_id.endswith(_PHONE_SUFFIXES):
+        return format_phone_number(chat_id)
+    if chat_id.endswith(_LID_SUFFIX):
+        # Last four digits are enough to tell two unnamed customers apart in a
+        # list, which is the whole job of this label.
+        digits = "".join(ch for ch in chat_id.split("@", 1)[0] if ch.isdigit())
+        return f"WhatsApp user {digits[-4:]}" if digits else "WhatsApp user"
+    return chat_id
+
 
 class ConversationItem(BaseModel):
     id: UUID
     chat_id: str
+    # The WhatsApp push name, when a payload has carried one. NULL until then.
+    customer_name: str | None
+    # Server-rendered label so the inbox, the notification bell and anything
+    # added later cannot drift apart on how a customer is named.
+    display_name: str
     state: str
     last_message_preview: str | None
     last_activity_at: datetime
@@ -38,6 +121,10 @@ class ConversationItem(BaseModel):
 class ConversationListResponse(BaseModel):
     items: list[ConversationItem]
     total: int
+    # Conversations with at least one unread inbound message, over the whole
+    # active set rather than the current page or tab: it drives the count on the
+    # All tab, which must not change when you page or filter (teardown I4).
+    unread_conversations: int
 
 
 class MessageItem(BaseModel):
@@ -84,6 +171,7 @@ async def _get_conversation(
 @router.get("", response_model=ConversationListResponse)
 async def list_conversations(
     state: ConversationState | None = None,
+    q: str | None = Query(default=None, max_length=64, description="Search name or number"),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     tenant_id: UUID = Depends(require_tenant),
@@ -92,9 +180,35 @@ async def list_conversations(
     filters = [Conversation.tenant_id == tenant_id, Conversation.active.is_(True)]
     if state is not None:
         filters.append(Conversation.state == state)
+    if q and q.strip():
+        # Search happens here rather than in the browser because the inbox is
+        # paged: filtering the loaded page would hide the match the owner is
+        # looking for as soon as a tenant has more conversations than one page
+        # (teardown I4). Digits are matched against the raw chat id, so a typed
+        # "+92 300" still finds 923009998877@c.us.
+        needle = q.strip()
+        digits = "".join(ch for ch in needle if ch.isdigit())
+        clauses = [Conversation.customer_name.ilike(f"%{needle}%")]
+        if digits:
+            clauses.append(Conversation.chat_id.like(f"%{digits}%"))
+        else:
+            clauses.append(Conversation.chat_id.ilike(f"%{needle}%"))
+        filters.append(or_(*clauses))
 
     total = (
         await db.execute(select(func.count()).select_from(Conversation).where(*filters))
+    ).scalar_one()
+
+    unread_conversations = (
+        await db.execute(
+            select(func.count())
+            .select_from(Conversation)
+            .where(
+                Conversation.tenant_id == tenant_id,
+                Conversation.active.is_(True),
+                Conversation.unread_count > 0,
+            )
+        )
     ).scalar_one()
 
     preview_subq = (
@@ -122,13 +236,19 @@ async def list_conversations(
             ConversationItem(
                 id=conversation.id,
                 chat_id=conversation.chat_id,
+                customer_name=conversation.customer_name,
+                display_name=customer_display_name(
+                    conversation.chat_id, conversation.customer_name
+                ),
                 state=conversation.state.value,
                 last_message_preview=preview,
                 last_activity_at=conversation.last_activity_at,
                 unread=conversation.unread_count,
             )
         )
-    return ConversationListResponse(items=items, total=total)
+    return ConversationListResponse(
+        items=items, total=total, unread_conversations=unread_conversations
+    )
 
 
 @router.get("/{conversation_id}/messages", response_model=MessageListResponse)
@@ -172,10 +292,21 @@ async def list_messages(
 async def take_over(
     conversation_id: UUID,
     tenant_id: UUID = Depends(require_tenant),
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> StateResponse:
     conversation = await _get_conversation(db, conversation_id, tenant_id)
     takeover_service.takeover(conversation)
+    # One of the two actions a staff seat is *meant* to take, so this is not
+    # about catching anybody: it is so that "who was handling this customer at
+    # four o'clock" has an answer (teardown X8).
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="conversation_taken_over",
+        target=str(conversation_id),
+    )
     return StateResponse(state=conversation.state.value)
 
 
@@ -183,10 +314,18 @@ async def take_over(
 async def release_conversation(
     conversation_id: UUID,
     tenant_id: UUID = Depends(require_tenant),
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> StateResponse:
     conversation = await _get_conversation(db, conversation_id, tenant_id)
     takeover_service.release(conversation)
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="conversation_released",
+        target=str(conversation_id),
+    )
     return StateResponse(state=conversation.state.value)
 
 
@@ -241,4 +380,4 @@ async def reply(
     return ReplyResponse(message_id=message.id)
 
 
-__all__ = ["router"]
+__all__ = ["customer_display_name", "format_phone_number", "router"]

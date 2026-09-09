@@ -6,10 +6,13 @@ import { FAQ } from "@/lib/faq";
  * pattern, and more importantly the answer text has to be in the DOM without
  * JavaScript for crawlers and LLMs to read it. This section is the citation
  * surface, and it is the source for the FAQPage JSON-LD.
+ *
+ * `id` is the target of the header's "FAQ" anchor (teardown L3). It sits
+ * 6,000px down the page, which is why an anchor to it was the fix.
  */
 export function Faq() {
   return (
-    <section className="border-t border-border/60">
+    <section id="faq" className="border-t border-border/60">
       <div className="mx-auto w-full max-w-7xl px-4 py-24 sm:py-32">
         <Reveal>
           <h2 className="text-4xl font-extrabold leading-tight tracking-tight md:text-5xl">

@@ -49,9 +49,25 @@ export function Hero() {
         <Reveal delay={0.24} className="flex justify-center lg:justify-end">
           {/*
             muted + playsInline are both required or mobile Safari refuses to
-            autoplay and the hero shows a black box. The poster is the video's
-            own first frame, so play begins without a visible jump, and it is
-            what shows under prefers-reduced-motion.
+            autoplay and the hero shows a black box.
+
+            The poster is the frame at 7.0s of a 12.5s loop: the question, two
+            offered slots, the customer's choice, a voice note mid-play and the
+            booking confirmed. It used to be the video's own first frame, which
+            is a nearly empty chat window. That bought a seamless handoff into
+            playback and paid for it with the one image every visitor sees
+            first, every reduced-motion visitor only ever sees, and every
+            connection too slow to autoplay is left with. The argument for the
+            product is in this frame and not in that one.
+
+            The handoff cost is smaller than it looks: the loop already cuts
+            from the finished conversation back to the empty one every 12.5
+            seconds, so poster to first frame is a cut the visitor sees on
+            every lap anyway.
+
+            WebP at quality 0.8, 30 KB against 59 KB for the same frame as
+            JPEG. Extracted with headless Chromium (canvas drawImage on the
+            webm, then toDataURL) because this box has no ffmpeg.
           */}
           <video
             className="w-full max-w-[380px] rounded-[2rem] shadow-xl motion-reduce:hidden"
@@ -60,7 +76,7 @@ export function Hero() {
             loop
             playsInline
             preload="metadata"
-            poster="/hero-poster.jpg"
+            poster="/hero-poster.webp"
             aria-label="A customer asks to book a cleaning. Qonvo offers two open slots, takes a voice note, and confirms the three o'clock booking."
           >
             <source src="/hero.webm" type="video/webm" />
@@ -68,7 +84,7 @@ export function Hero() {
           </video>
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/hero-poster.jpg"
+            src="/hero-poster.webp"
             alt="A WhatsApp chat in which Qonvo answers a booking request and confirms the appointment."
             className="hidden w-full max-w-[380px] rounded-[2rem] shadow-xl motion-reduce:block"
           />

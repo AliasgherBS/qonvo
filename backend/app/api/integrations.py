@@ -11,18 +11,23 @@ granted scopes, and the target metadata.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from urllib.parse import urlencode
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, get_redis_dep, require_tenant
+from app.api.deps import get_claims, get_db, get_redis_dep, require_owner, require_tenant
 from app.core.config import settings
 from app.core.logging import logger
+from app.core.security import TokenClaims
 from app.core.tenancy import tenant_session
+from app.core.tenant_time import tenant_timezone
 from app.integrations import GOOGLE_CALENDAR, GOOGLE_SHEETS, SUPPORTED_PROVIDERS
 from app.integrations.google_oauth import (
     GoogleOAuthError,
@@ -55,6 +60,10 @@ from app.integrations.scopes import (
     scopes_for,
 )
 from app.integrations.token_cache import cache_access_token
+from app.models.business import Booking
+from app.models.skill import SkillExecution
+from app.models.tenant import TenantConfig
+from app.services import audit
 from app.services import integrations as svc
 
 router = APIRouter(prefix="/api/integrations", tags=["integrations"])
@@ -63,6 +72,23 @@ router = APIRouter(prefix="/api/integrations", tags=["integrations"])
 class IntegrationUpdateRequest(BaseModel):
     config: dict | None = None
     enabled: bool | None = None
+
+
+class IntegrationUsage(BaseModel):
+    """Proof the rep has actually used the integration (teardown N3).
+
+    "Connected" only says the token works. The owner's real question is whether
+    the thing has booked anything or written a row, and answering it used to
+    mean opening Google.
+    """
+
+    # ISO timestamp of the most recent use, all time. None = never used.
+    last_at: str | None = None
+    # Uses since the first of the month, in the tenant's own clock.
+    month_count: int = 0
+    # Singular noun for the thing counted, so the dashboard does not have to
+    # keep its own provider -> wording map: "booking", "row".
+    unit: str = ""
 
 
 class IntegrationResponse(BaseModel):
@@ -75,6 +101,10 @@ class IntegrationResponse(BaseModel):
     account_email: str | None
     granted_scopes: list[str]
     connected_at: str | None
+    # Omitted for a provider the tenant has never connected -- there is nothing
+    # to have used yet, and a "0 this month" line on an empty card reads as a
+    # failure rather than as an absence.
+    usage: IntegrationUsage | None = None
 
 
 class TestResult(BaseModel):
@@ -122,6 +152,133 @@ def _dashboard_redirect(**params: str) -> RedirectResponse:
     return RedirectResponse(f"{base}/integrations?{urlencode(params)}", status_code=302)
 
 
+async def _tenant_timezone(db: AsyncSession, tenant_id: UUID) -> str:
+    """The tenant's configured clock, for anything Google needs a timezone for.
+
+    Reads it rather than taking ``settings.google_default_timezone``, which is
+    a system-wide "UTC" and was how the Qonvo Bookings calendar ended up being
+    created in UTC for every tenant (teardown N1).
+    """
+    row = (
+        await db.execute(select(TenantConfig).where(TenantConfig.tenant_id == tenant_id))
+    ).scalar_one_or_none()
+    return tenant_timezone(row)
+
+
+def _http_status(exc: BaseException) -> int | None:
+    """The HTTP status inside a googleapiclient ``HttpError``, if it is one.
+
+    Read by duck-typing rather than by importing ``googleapiclient.errors``:
+    this module is deliberately free of the heavy Google client imports (see
+    ``app.integrations.google_auth``), and a test that injects a fake client
+    should be able to raise a fake error without installing them either.
+    """
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+    resp_status = getattr(getattr(exc, "resp", None), "status", None)
+    if isinstance(resp_status, int):
+        return resp_status
+    return None
+
+
+def _ping_failure_message(provider: str, exc: BaseException) -> str:
+    """What to tell the owner when the live read failed.
+
+    ``str(HttpError)`` is a full request dump — it names the API endpoint and
+    embeds the spreadsheet or calendar id, and it ends with a Google phrase
+    ("Requested entity was not found.") that tells an owner nothing about what
+    to do. Two statuses have exactly one owner-actionable cause each, so they
+    get an instruction instead:
+
+    * **Sheets 404/403** — under per-file ``drive.file`` scope the grant only
+      reaches files picked through the Picker with this client id. A stored id
+      that has stopped resolving means the selection no longer grants access
+      (the file was deleted, or Qonvo's access to it was removed), and the fix
+      is to choose the sheet again. Nothing else the owner can do helps, and
+      "Reconnect" specifically does not.
+    * **Calendar 404** — the "Qonvo Bookings" calendar is gone from the
+      account, which the Create-it button re-provisions.
+
+    Anything else keeps Google's own text, which is more useful than a guess.
+    """
+    code = _http_status(exc)
+    if provider == GOOGLE_SHEETS and code in (403, 404):
+        return (
+            "Qonvo can't open that spreadsheet any more. Click Change sheet and "
+            "pick it again — choosing it in the chooser is what grants access."
+        )
+    if provider == GOOGLE_CALENDAR and code == 404:
+        return (
+            "The Qonvo Bookings calendar no longer exists in this Google account. "
+            "Disconnect and reconnect to have Qonvo create it again."
+        )
+    return str(exc)
+
+
+async def _month_start(db: AsyncSession, tenant_id: UUID) -> datetime:
+    """The first of the current month in the tenant's own clock.
+
+    Not UTC. "14 rows this month" counted from a UTC boundary is wrong for
+    anybody east or west of it on the first and last day of every month, which
+    is the same class of bug as the UTC opening hours (teardown B1/N1).
+    """
+    tz_name = await _tenant_timezone(db, tenant_id)
+    try:
+        zone = ZoneInfo(tz_name)
+    except Exception:  # noqa: BLE001 -- a bad stored name must not 500 the page
+        zone = UTC
+    local = datetime.now(zone)
+    return local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+
+async def _usage(
+    db: AsyncSession,
+    tenant_id: UUID,
+    provider: str,
+    month_start: datetime,
+) -> IntegrationUsage | None:
+    """Last use and month-to-date count for one provider.
+
+    Both are read from records that already existed. Bookings are rows in
+    ``bookings`` (written by ``book_appointment``). Sheet appends have no table
+    of their own, but every write-skill call lands in ``skill_executions`` as
+    the idempotency ledger (§7), so a successful ``append_to_sheet`` is already
+    on record with its timestamp -- the ledger is the source here rather than a
+    new counter, which could only ever drift from it.
+    """
+    if provider == GOOGLE_CALENDAR:
+        column = Booking.created_at
+        query = select(
+            func.max(column),
+            func.coalesce(func.sum(case((column >= month_start, 1), else_=0)), 0),
+        ).where(Booking.tenant_id == tenant_id)
+        unit = "booking"
+    elif provider == GOOGLE_SHEETS:
+        column = SkillExecution.created_at
+        query = select(
+            func.max(column),
+            func.coalesce(func.sum(case((column >= month_start, 1), else_=0)), 0),
+        ).where(
+            SkillExecution.tenant_id == tenant_id,
+            SkillExecution.skill_key == "append_to_sheet",
+            # The ledger records refusals too ("the spreadsheet isn't connected
+            # yet"), and counting those as rows written would be the exact lie
+            # this line exists to stop telling.
+            SkillExecution.result["status"].as_string() == "recorded",
+        )
+        unit = "row"
+    else:
+        return None
+
+    last_at, month_count = (await db.execute(query)).one()
+    return IntegrationUsage(
+        last_at=last_at.isoformat() if last_at is not None else None,
+        month_count=int(month_count or 0),
+        unit=unit,
+    )
+
+
 @router.get("", response_model=list[IntegrationResponse])
 async def list_integrations(
     tenant_id: UUID = Depends(require_tenant),
@@ -129,22 +286,25 @@ async def list_integrations(
 ) -> list[IntegrationResponse]:
     """Every supported provider, connected or not (stub rows for the unconnected)."""
     existing = {i.provider: i for i in await svc.list_integrations(db, tenant_id)}
-    return [
-        IntegrationResponse(
-            **(
-                svc.sanitized(existing[provider])
-                if provider in existing
-                else svc.unconnected(provider)
-            )
+    month_start = await _month_start(db, tenant_id) if existing else None
+    out: list[IntegrationResponse] = []
+    for provider in SUPPORTED_PROVIDERS:
+        integration = existing.get(provider)
+        payload = svc.sanitized(integration) if integration else svc.unconnected(provider)
+        usage = (
+            await _usage(db, tenant_id, provider, month_start)
+            if integration is not None and month_start is not None
+            else None
         )
-        for provider in SUPPORTED_PROVIDERS
-    ]
+        out.append(IntegrationResponse(**payload, usage=usage))
+    return out
 
 
 @router.post("/{provider}/oauth/start", response_model=OAuthStartResponse)
 async def oauth_start(
     provider: str,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # chooses which Google account the rep acts as,
+    claims: TokenClaims = Depends(get_claims),
     redis=Depends(get_redis_dep),
 ) -> OAuthStartResponse:
     """Mint a single-use state and hand back Google's consent URL.
@@ -159,7 +319,11 @@ async def oauth_start(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Google sign-in isn't configured on this deployment yet.",
         )
-    state = await issue_state(redis, tenant_id=tenant_id, provider=provider)
+    # The actor rides along in the state, because the callback has no bearer
+    # token and could otherwise never say who connected the account.
+    state = await issue_state(
+        redis, tenant_id=tenant_id, provider=provider, actor=claims.subject
+    )
     return OAuthStartResponse(
         authorize_url=authorize_url(state=state, scopes=scopes_for(provider))
     )
@@ -186,20 +350,23 @@ async def _persist_connection(state, bundle) -> None:
             granted_scopes=bundle.granted_scopes,
             account_email=bundle.account_email,
         )
+        # The tenant's clock, not the system default. `google_default_timezone`
+        # is a global "UTC", so the Qonvo Bookings calendar was created in UTC
+        # and every event landed there (teardown N1).
+        tz_name = await _tenant_timezone(db, state.tenant_id)
         if state.provider == GOOGLE_CALENDAR and CALENDAR_PROVISIONS_OWN:
             try:
                 calendar_id, created = await ensure_qonvo_calendar(
                     bundle.access_token,
                     existing_calendar_id=(integration.config or {}).get("calendar_id"),
-                    timezone=(integration.config or {}).get("timezone")
-                    or settings.google_default_timezone,
+                    timezone=tz_name,
                 )
                 await svc.set_calendar_target(
                     db,
                     integration,
                     calendar_id=calendar_id,
                     summary=QONVO_CALENDAR_SUMMARY,
-                    timezone=settings.google_default_timezone,
+                    timezone=tz_name,
                 )
                 logger.bind(tenant_id=str(state.tenant_id)).info(
                     f"calendar target {'created' if created else 'reused'}: {calendar_id}"
@@ -211,6 +378,22 @@ async def _persist_connection(state, bundle) -> None:
                     f"calendar provisioning failed, token kept: {exc}"
                 )
                 await svc.mark_needs_provisioning(db, state.tenant_id, state.provider)
+
+        # Attributed to whoever started the flow, carried on the single-use
+        # state token. The callback itself has no bearer credential, so this is
+        # the only way the row can name a person (teardown X8).
+        await audit.record(
+            db,
+            tenant_id=state.tenant_id,
+            claims=None,
+            action="integration_connected",
+            target=state.provider,
+            meta={
+                "actor_email": state.actor,
+                "google_account": bundle.account_email,
+                "granted_scopes": bundle.granted_scopes,
+            },
+        )
 
 
 @router.get("/oauth/callback", include_in_schema=False)
@@ -271,7 +454,8 @@ async def oauth_callback(
 
 @router.post("/google_calendar/provision", response_model=IntegrationResponse)
 async def provision_calendar(
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # creates a calendar the rep books into,
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis_dep),
 ) -> IntegrationResponse:
@@ -281,11 +465,11 @@ async def provision_calendar(
         raise HTTPException(status_code=400, detail="Connect Google Calendar first.")
     try:
         token = await access_token_for(db, tenant_id, integration, redis=redis)
+        tz_name = await _tenant_timezone(db, tenant_id)
         calendar_id, _ = await ensure_qonvo_calendar(
             token,
             existing_calendar_id=(integration.config or {}).get("calendar_id"),
-            timezone=(integration.config or {}).get("timezone")
-            or settings.google_default_timezone,
+            timezone=tz_name,
         )
     except (IntegrationConfigError, ProvisioningError, GoogleOAuthError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -294,7 +478,14 @@ async def provision_calendar(
         integration,
         calendar_id=calendar_id,
         summary=QONVO_CALENDAR_SUMMARY,
-        timezone=settings.google_default_timezone,
+        timezone=tz_name,
+    )
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="calendar_provisioned",
+        target=calendar_id,
     )
     return IntegrationResponse(**svc.sanitized(integration))
 
@@ -328,7 +519,8 @@ async def picker_token(
 @router.post("/google_sheets/select", response_model=SheetTargetResponse)
 async def select_spreadsheet(
     body: SheetSelectRequest,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # chooses the sheet the rep writes leads to,
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis_dep),
 ) -> SheetTargetResponse:
@@ -361,6 +553,16 @@ async def select_spreadsheet(
         tabs=tabs,
         sheet_range=body.sheet_range,
     )
+    # Which spreadsheet the rep writes customer leads into. Worth attributing:
+    # repointing it sends a business's leads somewhere else.
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="sheet_target_selected",
+        target=body.spreadsheet_id,
+        meta={"title": title},
+    )
     config = integration.config or {}
     return SheetTargetResponse(
         spreadsheet_id=body.spreadsheet_id,
@@ -373,7 +575,8 @@ async def select_spreadsheet(
 @router.post("/google_sheets/create", response_model=SheetTargetResponse)
 async def create_sheet(
     body: SheetCreateRequest,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # creates the sheet the rep writes leads to,
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
     redis=Depends(get_redis_dep),
 ) -> SheetTargetResponse:
@@ -390,6 +593,14 @@ async def create_sheet(
     await svc.set_sheet_target(
         db, integration, spreadsheet_id=spreadsheet_id, title=title, tabs=tabs
     )
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="sheet_created",
+        target=spreadsheet_id,
+        meta={"title": title},
+    )
     config = integration.config or {}
     return SheetTargetResponse(
         spreadsheet_id=spreadsheet_id,
@@ -403,7 +614,8 @@ async def create_sheet(
 async def upsert_integration(
     provider: str,
     body: IntegrationUpdateRequest,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # changes what the rep is allowed to do,
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> IntegrationResponse:
     _require_supported(provider)
@@ -413,17 +625,35 @@ async def upsert_integration(
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    # Keys only, not values: the same reasoning as the config audit. What is
+    # useful is that the rep's target changed and who changed it.
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="integration_settings_updated",
+        target=provider,
+        meta={"fields": sorted((body.config or {}).keys())},
+    )
     return IntegrationResponse(**svc.sanitized(integration))
 
 
 @router.delete("/{provider}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_integration(
     provider: str,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # disconnects the calendar the rep books into
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     _require_supported(provider)
     await svc.delete_integration(db, tenant_id, provider)
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="integration_disconnected",
+        target=provider,
+    )
 
 
 @router.post("/{provider}/test", response_model=TestResult)
@@ -478,8 +708,17 @@ async def test_integration(
 
     try:
         await client.ping()
-    except Exception as exc:  # noqa: BLE001
-        return TestResult(ok=False, message=str(exc), account_email=email)
+    except Exception as exc:  # noqa: BLE001 — surfaced as a failed test, not a 500
+        # Logged, because this is the only branch of this route that actually
+        # reaches Google and it used to record nothing at all: a live failure
+        # left the reason in one owner's browser and nowhere on the server, so
+        # "Test connection failed" was unanswerable afterwards.
+        logger.bind(tenant_id=str(tenant_id)).warning(
+            f"integration test ping failed for {provider}: {exc}"
+        )
+        return TestResult(
+            ok=False, message=_ping_failure_message(provider, exc), account_email=email
+        )
 
     label = "Calendar" if provider == GOOGLE_CALENDAR else "Sheet"
     return TestResult(ok=True, message=f"{label} connected.", account_email=email)

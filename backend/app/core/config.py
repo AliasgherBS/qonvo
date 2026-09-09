@@ -68,8 +68,19 @@ class Settings(BaseSettings):
     # --- Security ---
     jwt_secret: str = "change-me"
     jwt_algorithm: str = "HS256"
-    jwt_audience: str | None = None
-    jwt_issuer: str | None = None
+    #: Who the access token is for, and who minted it (teardown X9).
+    #:
+    #: These defaulted to ``None``, which disabled audience verification
+    #: entirely. Harmless while there is one issuer and one consumer, and it is
+    #: the same missing-claim discipline that produced X7: a claim nobody
+    #: verifies is a claim that stops being true without anybody noticing.
+    #:
+    #: Names rather than URLs on purpose. The public hostname is already
+    #: coupled to four other settings, and adding a fifth thing to change when
+    #: the domain moves would be a footgun for no benefit -- the value only has
+    #: to be stable and unambiguous.
+    jwt_audience: str | None = "qonvo-api"
+    jwt_issuer: str | None = "qonvo"
     # Fernet key for encrypting per-tenant integration credentials at rest.
     fernet_key: str = "change-me"
 
@@ -333,6 +344,15 @@ class Settings(BaseSettings):
             },
         }
     )
+
+    #: Allow knowledge ingestion to fetch private and loopback addresses.
+    #:
+    #: Off everywhere that matters. On this development machine the whole stack
+    #: is on 127.0.0.1, so without an opt-in a local test page cannot be
+    #: ingested at all; in production the same permission is a read primitive
+    #: aimed at postgres, redis, waha, minio and the cloud metadata endpoint
+    #: (teardown X3).
+    knowledge_allow_private_urls: bool = False
 
     @property
     def is_production(self) -> bool:

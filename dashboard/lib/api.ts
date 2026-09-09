@@ -19,11 +19,25 @@ const API_BASE_URL =
 
 export class ApiError extends Error {
   status: number;
+  /**
+   * The parsed `detail` when the API sent a structured one.
+   *
+   * Some refusals are not a sentence: a weak password has a list of reasons to
+   * render beside the field, and an unconfirmed address has a `code` the page
+   * has to branch on. Matching on prose would break the first time the prose
+   * is improved, so the shape is carried through.
+   */
+  detail?: { code?: string; message?: string; reasons?: string[] };
 
-  constructor(message: string, status: number) {
+  constructor(
+    message: string,
+    status: number,
+    detail?: { code?: string; message?: string; reasons?: string[] },
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;
+    this.detail = detail;
   }
 }
 
@@ -48,12 +62,21 @@ export function describeError(err: unknown, fallback = "Something went wrong. Pl
   return err instanceof Error && err.message ? err.message : fallback;
 }
 
-interface ApiFetchInit extends Omit<RequestInit, "body"> {
+export interface ApiFetchInit extends Omit<RequestInit, "body"> {
   token?: string;
   body?: BodyInit | object | null;
 }
 
-async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promise<T> {
+/**
+ * Exported so a domain can own its own client module.
+ *
+ * This file is well past a thousand lines and every feature that touches the
+ * API grows it, which makes it the one file several concurrent changes all
+ * collide in. New endpoint groups belong in `lib/api/<domain>.ts` importing
+ * this; what is already here stays here rather than being churned for the sake
+ * of tidiness.
+ */
+export async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promise<T> {
   const { token, headers, body, ...rest } = init;
   const isPlainObject =
     body != null && typeof body === "object" && !(body instanceof FormData) && !(body instanceof Blob);
@@ -89,17 +112,25 @@ async function apiFetch<T>(path: string, init: ApiFetchInit = {}): Promise<T> {
     let message = raw || res.statusText;
     // FastAPI errors are {"detail": "..."} or a validation array - extract the
     // real detail so callers can show what actually went wrong.
+    let detail: ApiError["detail"];
     try {
       const parsed = JSON.parse(raw) as { detail?: unknown };
       if (typeof parsed.detail === "string") message = parsed.detail;
       else if (Array.isArray(parsed.detail)) {
         const first = parsed.detail[0] as { msg?: string } | undefined;
         if (first?.msg) message = first.msg;
+      } else if (parsed.detail && typeof parsed.detail === "object") {
+        // An object detail. Without this branch `message` stayed as the raw
+        // JSON body, so every structured refusal -- a weak password, an
+        // unconfirmed address -- rendered as `{"code":"...","reasons":[...]}`
+        // in front of the user.
+        detail = parsed.detail as ApiError["detail"];
+        message = detail?.message ?? detail?.reasons?.join(" ") ?? message;
       }
     } catch {
       /* body isn't JSON - keep the raw text / status text */
     }
-    throw new ApiError(message, res.status);
+    throw new ApiError(message, res.status, detail);
   }
 
   if (res.status === 204) {
@@ -133,6 +164,16 @@ export type Role = "owner" | "staff" | "qonvo_admin";
 export interface LoginRequest {
   email: string;
   password: string;
+  /**
+   * The six-digit code, for an account with two-factor enabled.
+   *
+   * Optional here and required in effect: the API refuses an enrolled account
+   * without one, answering `totp_required`. Optional so the form can ask for
+   * the password first and only then discover a code is needed, rather than
+   * having to know in advance which addresses have 2FA, which would be an
+   * enumeration oracle.
+   */
+  totpCode?: string;
 }
 
 interface LoginResponseDto {
@@ -141,6 +182,7 @@ interface LoginResponseDto {
   role: Role;
   tenant_id: string;
   name: string;
+  email_verified?: boolean;
 }
 
 export interface LoginResult {
@@ -149,6 +191,8 @@ export interface LoginResult {
   role: Role;
   tenantId: string;
   name: string;
+  /** False until the address has been confirmed from the emailed link. */
+  emailVerified: boolean;
 }
 
 interface MeDto {
@@ -157,6 +201,7 @@ interface MeDto {
   role: Role;
   tenant_id: string;
   tenant_name: string;
+  email_verified?: boolean;
 }
 
 export interface Me {
@@ -165,6 +210,7 @@ export interface Me {
   role: Role;
   tenantId: string;
   tenantName: string;
+  emailVerified: boolean;
 }
 
 export interface SignupRequest {
@@ -172,17 +218,31 @@ export interface SignupRequest {
   ownerName: string;
   email: string;
   password: string;
+  /** IANA name from the browser. Omitted means the API's default of UTC. */
+  timezone?: string;
 }
 
 export const auth = {
   login: (payload: LoginRequest, opts: CallOpts = {}) =>
-    apiFetch<LoginResponseDto>("/api/auth/login", { method: "POST", body: payload, signal: opts.signal }).then(
+    apiFetch<LoginResponseDto>("/api/auth/login", {
+      method: "POST",
+      // snake_case on the wire: the API field is `totp_code`, and passing the
+      // camelCase key silently sends nothing, which looks exactly like a
+      // missing code.
+      body: {
+        email: payload.email,
+        password: payload.password,
+        ...(payload.totpCode ? { totp_code: payload.totpCode } : {}),
+      },
+      signal: opts.signal,
+    }).then(
       (dto): LoginResult => ({
         accessToken: dto.access_token,
         tokenType: dto.token_type,
         role: dto.role,
         tenantId: dto.tenant_id,
         name: dto.name,
+        emailVerified: dto.email_verified ?? true,
       }),
     ),
 
@@ -194,6 +254,7 @@ export const auth = {
         owner_name: payload.ownerName,
         email: payload.email,
         password: payload.password,
+        timezone: payload.timezone,
       },
       signal: opts.signal,
     }).then((dto): LoginResult => ({
@@ -202,6 +263,7 @@ export const auth = {
       role: dto.role,
       tenantId: dto.tenant_id,
       name: dto.name,
+      emailVerified: dto.email_verified ?? true,
     })),
 
   /**
@@ -220,6 +282,7 @@ export const auth = {
       role: dto.role,
       tenantId: dto.tenant_id,
       name: dto.name,
+      emailVerified: dto.email_verified ?? true,
     })),
 
   changePassword: (payload: { currentPassword: string; newPassword: string }, opts: CallOpts = {}) =>
@@ -247,8 +310,67 @@ export const auth = {
         role: dto.role,
         tenantId: dto.tenant_id,
         tenantName: dto.tenant_name,
+        emailVerified: dto.email_verified ?? true,
       }),
     ),
+
+  /**
+   * Confirm an address from the emailed link. Returns a session, so clicking
+   * the link lands you in the product rather than on a page telling you to go
+   * and log in.
+   */
+  verifyEmail: (token: string, opts: CallOpts = {}) =>
+    apiFetch<LoginResponseDto>("/api/auth/verify-email", {
+      method: "POST",
+      body: { token },
+      signal: opts.signal,
+    }).then(
+      (dto): LoginResult => ({
+        accessToken: dto.access_token,
+        tokenType: dto.token_type,
+        role: dto.role,
+        tenantId: dto.tenant_id,
+        name: dto.name,
+        emailVerified: dto.email_verified ?? true,
+      }),
+    ),
+
+  /**
+   * Extend a live session without asking for the password (teardown X6).
+   *
+   * Rotating: the presenting token is revoked as the new one is issued, so the
+   * old value must be discarded. Capped at a fortnight from the original
+   * sign-in, after which this answers 401 with `session_expired`.
+   */
+  refresh: (opts: CallOpts = {}) =>
+    apiFetch<LoginResponseDto>("/api/auth/refresh", { method: "POST", ...opts }).then(
+      (dto): LoginResult => ({
+        accessToken: dto.access_token,
+        tokenType: dto.token_type,
+        role: dto.role,
+        tenantId: dto.tenant_id,
+        name: dto.name,
+        emailVerified: dto.email_verified ?? true,
+      }),
+    ),
+
+  /**
+   * Revoke the token that made this call (teardown X6).
+   *
+   * Signing out used to clear the browser's copy and leave the credential
+   * valid for the rest of its 24 hours.
+   */
+  logout: (opts: CallOpts = {}) =>
+    apiFetch<void>("/api/auth/logout", { method: "POST", ...opts }),
+
+  /** End every session on every device. */
+  logoutEverywhere: (opts: CallOpts = {}) =>
+    apiFetch<void>("/api/auth/logout-everywhere", { method: "POST", ...opts }),
+
+  /** Send the confirmation link again, to the signed-in user's own address. */
+  resendVerification: (opts: CallOpts = {}) =>
+    apiFetch<unknown>("/api/auth/resend-verification", { method: "POST", ...opts }),
+
 };
 
 // ---------------------------------------------------------------------------
@@ -684,6 +806,14 @@ function configFromDays(
 }
 
 interface TenantConfigDto {
+  /**
+   * The tenant's timezone, IANA name. Governs opening hours and bookings both.
+   *
+   * There used to be no top-level field: the timezone lived inside the
+   * `business_hours` JSON, where this client sent the literal string "UTC" and
+   * nothing was ever bound to it, so it could not be changed (teardown B1).
+   */
+  timezone?: string;
   // The backend leaves every optional field null until it's set (a freshly
   // created tenant_config is all-null), so mirror that here and coerce to
   // safe defaults in mapTenantConfig - the form assumes strings.
@@ -697,6 +827,8 @@ interface TenantConfigDto {
   llm_provider: LlmProvider | null;
   llm_model: string | null;
   payment_details: string | null;
+  /** Where billing notices go. Null/empty means the owner's login address. */
+  billing_email: string | null;
   voice_reply_mode: VoiceReplyMode | null;
   reply_language_mode: string | null;
   notify_on_handoff: boolean;
@@ -712,12 +844,15 @@ export interface TenantConfig {
   customInstructions: string;
   businessHours: BusinessHoursDay[];
   businessHoursEnabled: boolean;
-  businessHoursTimezone: string;
+  /** IANA name. One clock for opening hours and for bookings. */
+  timezone: string;
   businessHoursClosedMessage: string | null;
   ownerAlertNumber: string;
   llmProvider: LlmProvider | "";
   llmModel: string;
   paymentDetails: string;
+  /** Empty means "use the address you sign in with", which is the default. */
+  billingEmail: string;
   voiceReplyMode: VoiceReplyMode;
   /** "match", or a language code. Script-aware: "ur" and "ur-Latn" differ. */
   replyLanguageMode: string;
@@ -734,12 +869,15 @@ function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
     customInstructions: dto.custom_instructions ?? "",
     businessHours: daysFromConfig(bh),
     businessHoursEnabled: bh.enabled ?? false,
-    businessHoursTimezone: bh.timezone ?? "UTC",
+    // The column, falling back to the value stranded in the JSON so an owner
+    // who had one there does not see it reset to UTC by the fix.
+    timezone: dto.timezone ?? bh.timezone ?? "UTC",
     businessHoursClosedMessage: bh.closed_message ?? null,
     ownerAlertNumber: dto.owner_alert_number ?? "",
     llmProvider: dto.llm_provider ?? "",
     llmModel: dto.llm_model ?? "",
     paymentDetails: dto.payment_details ?? "",
+    billingEmail: dto.billing_email ?? "",
     voiceReplyMode: dto.voice_reply_mode ?? "match",
     replyLanguageMode: dto.reply_language_mode ?? "match",
     notifyOnHandoff: dto.notify_on_handoff ?? true,
@@ -753,10 +891,15 @@ function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
     primary_language: cfg.primaryLanguage,
     tone: cfg.tone,
     custom_instructions: cfg.customInstructions,
+    timezone: cfg.timezone,
     business_hours: configFromDays(
       cfg.businessHours,
       cfg.businessHoursEnabled,
-      cfg.businessHoursTimezone,
+      // Still written into the JSON as well as sent as its own field. The
+      // worker prefers the column and reads this only as a fallback, so
+      // keeping them in step means a worker still running older code during a
+      // rolling deploy reads the right clock rather than UTC.
+      cfg.timezone,
       cfg.businessHoursClosedMessage,
     ),
     // `|| null` matters: the API validator rejects an empty string for this
@@ -768,6 +911,10 @@ function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
     llm_provider: cfg.llmProvider || null,
     llm_model: cfg.llmModel,
     payment_details: cfg.paymentDetails || null,
+    // Trimmed to null the same way, so clearing the box means "go back to my
+    // login address" rather than storing an empty string the API would have to
+    // treat as one.
+    billing_email: cfg.billingEmail.trim() || null,
     voice_reply_mode: cfg.voiceReplyMode,
     reply_language_mode: cfg.replyLanguageMode,
     notify_on_handoff: cfg.notifyOnHandoff,
@@ -904,6 +1051,15 @@ export interface TenantUsage {
   periodEnd: string;
   messages: UsageMeter;
   voiceMinutes: UsageMeter;
+  /**
+   * The same voice figure in the unit it is stored and gated in.
+   *
+   * `voiceMinutes.used` rounds up, so 89 stored seconds reads as 2, which is
+   * why the billing page and the admin endpoint looked like two different
+   * numbers for one tenant (finding F7). Both come from the one computation in
+   * `services/usage.py`; this is the precise one.
+   */
+  voiceSeconds: UsageMeter;
   seats: UsageMeter;
   knowledgeSources: UsageMeter;
   knowledgeChars: UsageMeter;
@@ -922,6 +1078,7 @@ interface TenantUsageDto {
   period_end: string;
   messages: UsageMeter;
   voice_minutes: UsageMeter;
+  voice_seconds: UsageMeter;
   seats: UsageMeter;
   knowledge_sources: UsageMeter;
   knowledge_chars: UsageMeter;
@@ -940,6 +1097,7 @@ function mapUsage(dto: TenantUsageDto): TenantUsage {
     periodEnd: dto.period_end,
     messages: dto.messages,
     voiceMinutes: dto.voice_minutes,
+    voiceSeconds: dto.voice_seconds,
     seats: dto.seats,
     knowledgeSources: dto.knowledge_sources,
     knowledgeChars: dto.knowledge_chars,
@@ -1461,16 +1619,38 @@ export type TenantStatus = "onboarding" | "active" | "suspended";
 
 export type TenantPlan = "trial" | "paid";
 
+interface AdminSubscriptionDto {
+  plan_key: string;
+  plan_name: string;
+  status: string;
+  provider: string;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+}
+
+/** What a tenant is actually on, as opposed to the coarse paid/trial label. */
+export interface AdminSubscription {
+  planKey: string;
+  planName: string;
+  status: string;
+  provider: string;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+}
+
 interface AdminTenantDto {
   id: string;
   name: string;
   slug: string;
   status: TenantStatus;
   plan: TenantPlan;
+  plan_key?: string | null;
   trial_ends_at: string | null;
   owner_email: string;
   owner_name: string;
   created_at: string;
+  subscription?: AdminSubscriptionDto | null;
+  entitlements?: Record<string, number> | null;
 }
 
 export interface AdminTenant {
@@ -1479,10 +1659,22 @@ export interface AdminTenant {
   slug: string;
   status: TenantStatus;
   plan: TenantPlan;
+  /**
+   * The catalogue key behind the label, when the tenant has a subscription.
+   *
+   * `plan` has two values and the catalogue has four, so the label cannot
+   * answer "who is on Growth". It is also the pair that went out of step in
+   * finding F3, where a paid label sat on trial entitlements.
+   */
+  planKey: string | null;
   trialEndsAt: string | null;
   ownerEmail: string;
   ownerName: string;
   createdAt: string;
+  /** Detail view only. */
+  subscription: AdminSubscription | null;
+  /** Detail view only: the quotas actually in force for this tenant. */
+  entitlements: Record<string, number> | null;
 }
 
 function mapAdminTenant(dto: AdminTenantDto): AdminTenant {
@@ -1492,10 +1684,22 @@ function mapAdminTenant(dto: AdminTenantDto): AdminTenant {
     slug: dto.slug,
     status: dto.status,
     plan: dto.plan,
+    planKey: dto.plan_key ?? dto.subscription?.plan_key ?? null,
     trialEndsAt: dto.trial_ends_at,
     ownerEmail: dto.owner_email,
     ownerName: dto.owner_name,
     createdAt: dto.created_at,
+    subscription: dto.subscription
+      ? {
+          planKey: dto.subscription.plan_key,
+          planName: dto.subscription.plan_name,
+          status: dto.subscription.status,
+          provider: dto.subscription.provider,
+          currentPeriodEnd: dto.subscription.current_period_end,
+          cancelAtPeriodEnd: dto.subscription.cancel_at_period_end,
+        }
+      : null,
+    entitlements: dto.entitlements ?? null,
   };
 }
 
@@ -1547,9 +1751,19 @@ export const adminTenants = {
       ...opts,
     }).then(mapTenantConfig),
 
+  /**
+   * Lifecycle only: name, status, trial end.
+   *
+   * `plan` is deliberately not here. It used to be, and writing it set a plan
+   * *label* while `tenant_config.entitlements` kept the previous plan's quotas
+   * (finding F3) - mark a customer paid, and they hit a wall at the trial's 300
+   * messages while the console reported a paid plan. The backend now refuses
+   * the field. Plan changes go through `adminSubscription.set`, which routes
+   * through `apply_plan` and rewrites entitlements from the catalogue.
+   */
   update: (
     id: string,
-    payload: { name?: string; status?: TenantStatus; plan?: TenantPlan; trialEndsAt?: string | null },
+    payload: { name?: string; status?: TenantStatus; trialEndsAt?: string | null },
     opts: CallOpts = {},
   ) =>
     apiFetch<AdminTenantDto>(`/api/admin/tenants/${id}`, {
@@ -1557,7 +1771,6 @@ export const adminTenants = {
       body: {
         ...(payload.name !== undefined ? { name: payload.name } : {}),
         ...(payload.status !== undefined ? { status: payload.status } : {}),
-        ...(payload.plan !== undefined ? { plan: payload.plan } : {}),
         ...(payload.trialEndsAt !== undefined ? { trial_ends_at: payload.trialEndsAt } : {}),
       },
       ...opts,

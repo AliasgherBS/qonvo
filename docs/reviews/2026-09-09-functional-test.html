@@ -1,0 +1,822 @@
+<title>Qonvo Functional Test Round</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #F3EFE6;
+    --bg-raised: #FBF9F4;
+    --bg-sunk: #EAE5D9;
+    --fg: #08130E;
+    --fg-muted: #5B6B63;
+    --fg-faint: #8A968F;
+    --rule: #D9D3C5;
+    --rule-strong: #C2BBAA;
+    --accent: #00915A;
+
+    --pass: #00915A;      --pass-bg: #DCF3E7;
+    --fail: #C0392F;      --fail-bg: #F7E3E0;
+    --partial: #A96A0A;   --partial-bg: #F7EBD8;
+    --blocked: #4C6D80;   --blocked-bg: #E2ECF1;
+    --none: #6E7A72;      --none-bg: #E7E7E1;
+
+    --measure: 68ch;
+    --display: "Bricolage Grotesque", "Trebuchet MS", system-ui, sans-serif;
+    --body: "Manrope", -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #08130E; --bg-raised: #0E1F18; --bg-sunk: #060F0B;
+      --fg: #EFEDE5; --fg-muted: #9DAEA5; --fg-faint: #6C7D75;
+      --rule: #1D3229; --rule-strong: #2C463A; --accent: #00C776;
+      --pass: #4BE0A0;    --pass-bg: #0F2E22;
+      --fail: #FF7A6E;    --fail-bg: #3A1B18;
+      --partial: #F0B45C; --partial-bg: #33270F;
+      --blocked: #8FC3DD; --blocked-bg: #14262E;
+      --none: #9AA79F;    --none-bg: #1B221E;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #08130E; --bg-raised: #0E1F18; --bg-sunk: #060F0B;
+    --fg: #EFEDE5; --fg-muted: #9DAEA5; --fg-faint: #6C7D75;
+    --rule: #1D3229; --rule-strong: #2C463A; --accent: #00C776;
+    --pass: #4BE0A0;    --pass-bg: #0F2E22;
+    --fail: #FF7A6E;    --fail-bg: #3A1B18;
+    --partial: #F0B45C; --partial-bg: #33270F;
+    --blocked: #8FC3DD; --blocked-bg: #14262E;
+    --none: #9AA79F;    --none-bg: #1B221E;
+  }
+
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; line-height: 1.62; -webkit-font-smoothing: antialiased; }
+  .shell { max-width: 1080px; margin: 0 auto; padding: 0 24px 120px; }
+
+  .masthead { padding: 56px 0 36px; border-bottom: 2px solid var(--fg); }
+  .kicker { font-family: var(--mono); font-size: 12px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-faint); margin: 0 0 18px; }
+  h1 { font-family: var(--display); font-weight: 800; font-size: clamp(2.4rem, 6.4vw, 4rem); line-height: 1; letter-spacing: -0.035em; margin: 0 0 18px; text-wrap: balance; }
+  h1 .em { color: var(--accent); }
+  .standfirst { font-size: clamp(1.02rem, 2.1vw, 1.2rem); line-height: 1.55; color: var(--fg-muted); max-width: 58ch; margin: 0 0 28px; }
+
+  .scoreboard { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 1px; background: var(--rule-strong); border: 1px solid var(--rule-strong); margin: 0; }
+  .scoreboard div { background: var(--bg); padding: 14px 16px; }
+  .scoreboard b { display: block; font-family: var(--display); font-weight: 800; font-size: 1.9rem; line-height: 1.05; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+  .scoreboard span { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-faint); }
+  .scoreboard .s-pass b { color: var(--pass); }
+  .scoreboard .s-fail b { color: var(--fail); }
+  .scoreboard .s-partial b { color: var(--partial); }
+  .scoreboard .s-blocked b { color: var(--blocked); }
+
+  section { padding-top: 62px; }
+  .sec-head { display: flex; align-items: baseline; gap: 16px; margin-bottom: 8px; border-bottom: 1px solid var(--rule-strong); padding-bottom: 10px; }
+  .sec-num { font-family: var(--mono); font-size: 12px; color: var(--accent); letter-spacing: 0.1em; flex: none; padding-top: 6px; }
+  h2 { font-family: var(--display); font-weight: 700; font-size: clamp(1.55rem, 3.3vw, 2.05rem); letter-spacing: -0.025em; line-height: 1.1; margin: 0; }
+  h3 { font-family: var(--display); font-weight: 700; font-size: 1.2rem; letter-spacing: -0.015em; margin: 40px 0 6px; }
+  h4 { font-family: var(--body); font-weight: 700; font-size: 0.8rem; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-faint); margin: 32px 0 10px; }
+  p { max-width: var(--measure); margin: 0 0 15px; }
+  .lede { color: var(--fg-muted); max-width: var(--measure); margin: 14px 0 8px; }
+  ul, ol { max-width: var(--measure); padding-left: 1.15em; margin: 0 0 15px; }
+  li { margin-bottom: 7px; }
+  a { color: var(--accent); text-underline-offset: 2px; }
+  code { font-family: var(--mono); font-size: 0.85em; background: var(--bg-sunk); border: 1px solid var(--rule); border-radius: 4px; padding: 0.08em 0.34em; }
+
+  pre { font-family: var(--mono); font-size: 12.5px; line-height: 1.55; background: var(--bg-sunk); border: 1px solid var(--rule); border-left: 3px solid var(--rule-strong); padding: 14px 16px; overflow-x: auto; margin: 16px 0; }
+  pre.evidence { border-left-color: var(--fail); }
+  pre.prompt { border-left-color: var(--accent); font-size: 12px; }
+  pre b { color: var(--accent); font-weight: 500; }
+
+  .tablewrap { overflow-x: auto; margin: 18px 0 8px; }
+  table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 14.5px; }
+  th { text-align: left; font-family: var(--body); font-weight: 700; font-size: 11.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-faint); border-bottom: 1px solid var(--rule-strong); padding: 0 14px 8px 0; }
+  td { padding: 10px 14px 10px 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+  td:first-child { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; color: var(--fg-faint); }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num { font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+
+  .tag { display: inline-block; font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 6px; border-radius: 3px; white-space: nowrap; }
+  .tag.pass { color: var(--pass); background: var(--pass-bg); }
+  .tag.fail { color: var(--fail); background: var(--fail-bg); }
+  .tag.partial { color: var(--partial); background: var(--partial-bg); }
+  .tag.blocked { color: var(--blocked); background: var(--blocked-bg); }
+  .tag.none { color: var(--none); background: var(--none-bg); }
+
+  .finding { display: grid; grid-template-columns: 92px 1fr; gap: 0 20px; padding: 18px 0 18px 16px; border-left: 3px solid var(--rule-strong); margin: 20px 0; }
+  .finding.fail { border-left-color: var(--fail); }
+  .finding.partial { border-left-color: var(--partial); }
+  .finding.pass { border-left-color: var(--pass); }
+  .f-id { font-family: var(--mono); font-size: 12px; color: var(--fg-faint); padding-top: 3px; }
+  .f-claim { font-family: var(--display); font-weight: 700; font-size: 1.05rem; letter-spacing: -0.012em; line-height: 1.3; margin: 0 0 8px; max-width: 60ch; }
+  .f-body p { font-size: 15px; margin-bottom: 10px; }
+  .f-body > *:last-child { margin-bottom: 0; }
+  .fix { font-size: 14.5px; color: var(--fg-muted); border-top: 1px dashed var(--rule-strong); padding-top: 9px; margin-top: 12px; max-width: 62ch; }
+  .fix b { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--accent); display: block; margin-bottom: 3px; }
+  @media (max-width: 620px) { .finding { grid-template-columns: 1fr; gap: 6px; } .f-id { padding-top: 0; } }
+
+  .callout { background: var(--bg-raised); border: 1px solid var(--rule); border-left: 3px solid var(--accent); padding: 18px 20px; margin: 24px 0; max-width: var(--measure); font-size: 15px; }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .t { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.11em; text-transform: uppercase; color: var(--accent); display: block; margin-bottom: 6px; }
+
+  .prio { list-style: none; padding: 0; margin: 20px 0; max-width: none; counter-reset: p; }
+  .prio li { display: grid; grid-template-columns: 40px 1fr; gap: 18px; padding: 15px 0; border-bottom: 1px solid var(--rule); margin: 0; }
+  .prio li::before { counter-increment: p; content: counter(p, decimal-leading-zero); font-family: var(--mono); font-size: 13px; color: var(--fg-faint); padding-top: 2px; }
+  .prio h5 { font-family: var(--display); font-weight: 700; font-size: 1rem; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .prio p { font-size: 14.5px; color: var(--fg-muted); margin: 0; }
+  .prio .refs { font-family: var(--mono); font-size: 11.5px; color: var(--fg-faint); margin-top: 5px; }
+
+  footer { margin-top: 76px; padding-top: 22px; border-top: 2px solid var(--fg); font-size: 13.5px; color: var(--fg-faint); }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="shell">
+
+<header class="masthead">
+  <p class="kicker">Functional test round / 9 September 2026 / qonvo.org production</p>
+  <h1>Ninety-five checks, <span class="em">one live number.</span></h1>
+  <p class="standfirst">A hands-on pass over the running product as owner and as admin: every page driven, every
+  reversible write actually written, real files ingested, a throwaway tenant created and destroyed, and five real
+  WhatsApp messages traced from the customer's thumb to the reply.</p>
+
+  <div class="scoreboard">
+    <div><b>95</b><span>Planned</span></div>
+    <div class="s-pass"><b>52</b><span>Passed</span></div>
+    <div class="s-fail"><b>9</b><span>Failed</span></div>
+    <div class="s-partial"><b>7</b><span>Partial</span></div>
+    <div class="s-blocked"><b>27</b><span>Not run</span></div>
+  </div>
+</header>
+
+<section id="method">
+  <div class="sec-head"><span class="sec-num">01</span><h2>How deep this went</h2></div>
+
+  <p class="lede">This was not a click-through. The rule was: if a check can be made true or false by doing the thing,
+  do the thing. Everything below was performed against the live tenant <code>test01</code> on a paid Starter plan,
+  signed in as the owner, and separately against the admin console as <code>admin@qonvo.dev</code>.</p>
+
+  <h4>What was actually done, not just looked at</h4>
+  <ul>
+    <li><strong>Files really ingested.</strong> A CSV, a DOCX, a hand-built minimal PDF and a genuine 391 KB PDF were
+    uploaded and polled to completion. Two of the four failed, in two different ways.</li>
+    <li><strong>Writes really written.</strong> A knowledge gap was answered through the UI and became a live source. A
+    teammate was invited, the seat cap was hit, the invitation was revoked. Config was pushed past its character cap and
+    the rejection was verified against the stored value.</li>
+    <li><strong>A tenant was created and destroyed.</strong> "QA Throwaway Salon" was created from the admin console,
+    suspended, reactivated, marked paid, given a trial end, had its owner password reset, was impersonated, and was then
+    deleted through the typed-name confirmation.</li>
+    <li><strong>Real customer messages.</strong> Five WhatsApp messages sent from a real phone to the live number,
+    including a voice note and a three-message burst, then traced through the inbox, the transcript, the skill counters,
+    the gaps log and the analytics.</li>
+    <li><strong>Measured, not eyeballed.</strong> Element positions read from the rendered document, plan entitlements
+    read back from the API rather than from the screen, worker stack traces read from container logs, and JWT claims
+    base64-decoded and inspected.</li>
+  </ul>
+
+  <h4>Deliberately not done</h4>
+  <ul>
+    <li><strong>Nothing outbound to a stranger.</strong> No manual reply was sent from the inbox, because it would leave
+    the system as a real WhatsApp message. Awaiting a yes.</li>
+    <li><strong>The live session was not touched.</strong> Fleet's Stop and Logout would disconnect a working number and
+    force a QR rescan. Read only.</li>
+    <li><strong>No checkout was completed.</strong> Upgrading would take a real payment.</li>
+    <li><strong>The two real customer tenants were not touched.</strong> All lifecycle work went through the
+    throwaway.</li>
+  </ul>
+
+  <h4>Coverage by area</h4>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Area</th><th>Planned</th><th>Run</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td>A · Auth &amp; account</td><td class="num">13</td><td class="num">4</td><td>Login and the API surface pass. 2FA enrolment, SSO, reset, export <span class="tag none">not run</span></td></tr>
+      <tr><td>B · Authorization</td><td class="num">5</td><td class="num">1</td><td>Token claims verified. Staff-role checks need a staff login <span class="tag blocked">blocked</span></td></tr>
+      <tr><td>C · Onboarding</td><td class="num">3</td><td class="num">2</td><td>Tour runs, skips, replays <span class="tag pass">pass</span></td></tr>
+      <tr><td>D · WhatsApp session</td><td class="num">4</td><td class="num">1</td><td>Status page correct. Controls not exercised on a live number</td></tr>
+      <tr><td>E · Knowledge</td><td class="num">10</td><td class="num">8</td><td>Two ingestion failures <span class="tag fail">2 fail</span></td></tr>
+      <tr><td>F · Behavior &amp; config</td><td class="num">5</td><td class="num">5</td><td>Caps and timezone correct <span class="tag pass">pass</span></td></tr>
+      <tr><td>G · Skills</td><td class="num">4</td><td class="num">2</td><td>Page correct; no skill has ever fired <span class="tag fail">see §4</span></td></tr>
+      <tr><td>H · Integrations</td><td class="num">4</td><td class="num">2</td><td>Connected and tested. Disconnect not exercised</td></tr>
+      <tr><td>I · Inbox</td><td class="num">6</td><td class="num">5</td><td>All fixes verified <span class="tag pass">pass</span></td></tr>
+      <tr><td>J · Bot pipeline</td><td class="num">11</td><td class="num">7</td><td>Language wrong on every turn <span class="tag fail">2 fail</span></td></tr>
+      <tr><td>K · Analytics</td><td class="num">3</td><td class="num">3</td><td><span class="tag pass">pass</span></td></tr>
+      <tr><td>L · Billing</td><td class="num">7</td><td class="num">5</td><td>Checkout and cancel not exercised</td></tr>
+      <tr><td>M · Team</td><td class="num">4</td><td class="num">3</td><td>Invite, cap, revoke all correct <span class="tag pass">pass</span></td></tr>
+      <tr><td>N · Notifications</td><td class="num">3</td><td class="num">3</td><td>Badge never clears <span class="tag fail">1 fail</span></td></tr>
+      <tr><td>O · Admin console</td><td class="num">8</td><td class="num">8</td><td>Entitlements not applied on plan change <span class="tag fail">1 fail</span></td></tr>
+      <tr><td>P · Cross-cutting</td><td class="num">5</td><td class="num">4</td><td>Dark mode, mobile, console all clean <span class="tag pass">pass</span></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="works">
+  <div class="sec-head"><span class="sec-num">02</span><h2>What works</h2></div>
+
+  <p class="lede">Most of it, and much of it is new since last week. Fourteen of the teardown findings were verified
+  fixed from the outside rather than taken on trust.</p>
+
+  <h4>Verified fixed since the teardown</h4>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Was</th><th>Now</th></tr></thead>
+    <tbody>
+      <tr><td>I1</td><td>Customers show as <em>Idrees Salem</em> and <em>+92 300 999 8877</em>, with avatars and a search field</td></tr>
+      <tr><td>I2</td><td>Reply box measured at y=611 in a 700px window, page no longer scrolls</td></tr>
+      <tr><td>I3</td><td>Mobile taps navigate to a detail view with a back arrow and a URL of its own</td></tr>
+      <tr><td>S1 · S2</td><td>Bottom nav is <code>position: fixed</code>; a More sheet carries Billing, WhatsApp, Apps, Skills, Business, Team</td></tr>
+      <tr><td>S3</td><td>Rep switch moved into the top bar, out of every page's headline</td></tr>
+      <tr><td>W1 · W2</td><td>WhatsApp page shows number, linked date, last message, and Restart / Re-link / Link another</td></tr>
+      <tr><td>Y1</td><td>Analytics chart draws, with axis, legend, range selector and a previous-period comparison</td></tr>
+      <tr><td>B1 · N1 · V2</td><td>Timezone is a first-class control on Business, showing the live local time beside it</td></tr>
+      <tr><td>P1</td><td>Skills lists all eight skills, grouped into "Working now" and "Needs one thing from you"</td></tr>
+      <tr><td>P2 · V2</td><td>Business holds name, timezone, contact, opening hours with weekday presets, payment details</td></tr>
+      <tr><td>K1</td><td>Gaps close the loop: Answer this → a live knowledge entry → the gap disappears</td></tr>
+      <tr><td>K2 · K3</td><td>Sources show size and passage count; plan allowances sit on the knowledge page itself</td></tr>
+      <tr><td>L3 · Z3 · Z4</td><td>Billing is four zones with the card on file, its expiry, and a warning before it lapses</td></tr>
+      <tr><td>X4 · X7</td><td>Access tokens carry <code>typ</code>, <code>jti</code>, <code>aud</code>, <code>iss</code>; impersonation carries <code>act</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>Confirmed by doing, this round</h4>
+  <ul>
+    <li><strong>Prompt caps enforce exactly as specified.</strong> A 2,500-character instruction returned
+    <code>422</code> with <em>"Custom instructions is limited to 2,000 characters. This is 2,500."</em> and the stored
+    value was unchanged at 1,821.</li>
+    <li><strong>Seat entitlement holds.</strong> Invite returned <code>201</code>; the second invite returned
+    <code>402</code> with <em>"No seats left on your plan. Upgrade to invite more teammates."</em>; revoke returned
+    <code>204</code> and the count went back to zero.</li>
+    <li><strong>Debounce works.</strong> Three messages sent in one burst arrived as three inbound rows with an
+    identical timestamp and produced exactly one reply, which referenced both of them.</li>
+    <li><strong>Speech-to-text is excellent.</strong> A spoken English voice note transcribed to <em>"Hi, hope you're
+    doing well. I just wanted to know that what kind of services you guys offer and what are the range of the prices
+    that you guys cost?"</em> — clean, unedited.</li>
+    <li><strong>Handoff fires and is visible.</strong> The unanswerable question escalated, set the conversation to
+    <em>needs human</em>, raised a notification naming the customer with an Open chat link, and logged a knowledge
+    gap.</li>
+    <li><strong>Impersonation is properly bounded.</strong> The minted token carries
+    <code>act: {sub: "admin@qonvo.dev"}</code> and <code>qonvo_admin: false</code>, reads its own tenant, and answers
+    <code>403</code> on admin routes.</li>
+    <li><strong>Tenant delete is careful.</strong> It requires the business name typed exactly, then purges and
+    redirects.</li>
+    <li><strong>Nothing in the console.</strong> Zero JavaScript errors and zero failed requests across every page, at
+    four widths, in both themes.</li>
+  </ul>
+</section>
+
+<section id="broken">
+  <div class="sec-head"><span class="sec-num">03</span><h2>What is broken</h2></div>
+
+  <div class="finding fail">
+    <div class="f-id">F1<br><span class="tag fail">Critical</span></div>
+    <div class="f-body">
+      <p class="f-claim">A real PDF is stuck on "Processing" forever, and the worker dies silently.</p>
+      <p>A genuine 391 KB PDF was uploaded. It never left <code>pending_ingest</code>. The worker log says why:</p>
+      <pre class="evidence">sqlalchemy.exc.DBAPIError: (asyncpg.exceptions.CharacterNotInRepertoireError)
+invalid byte sequence for encoding "UTF8": 0x00
+  ... sqlalchemy/orm/persistence.py, in _emit_insert_statements
+  ... engine/base.py, in _exec_insertmany_context</pre>
+      <p>Text extracted from the PDF contains NUL bytes, which a Postgres text column cannot hold. The bulk insert of
+      knowledge chunks dies, the job dies with it, and nothing marks the source failed. The owner sees "Processing"
+      indefinitely, with no error, no retry and no timeout. This will hit any layout-heavy PDF, which is most price
+      lists, menus and service directories.</p>
+      <p class="fix"><b>Fix</b>Strip <code>\x00</code> from extracted text before storage, and give the ingest job a
+      failure path that writes <code>error</code> plus a reason. A job that can crash must not be able to leave a row
+      claiming to be in progress.</p>
+    </div>
+  </div>
+
+  <div class="finding fail">
+    <div class="f-id">F2<br><span class="tag fail">Critical</span></div>
+    <div class="f-body">
+      <p class="f-claim">Two customer messages were processed and never answered.</p>
+      <pre class="evidence">qonvo_messages_processed_total{direction="inbound"} = 39
+qonvo_replies_sent_total                            = 34
+qonvo_pipeline_gate_total{gate="paused"}            =  3
+qonvo_job_failures_total{function="process_conversation"} = 2
+qonvo_provider_errors_total{kind="llm"}             =  6</pre>
+      <p>Thirty-nine in, thirty-four out. Three were correctly withheld by the paused gate. The other two crashed the
+      pipeline. One of them is identifiable in the transcript: a voice note of 5 September at 23:07:59, transcribed
+      correctly to <em>"Please let me know that what services do you have from L?"</em>, with no outbound message after
+      it, ever. Six LLM provider errors sit behind the same counter.</p>
+      <p>A customer message that disappears is the worst failure this product has, because nobody learns about it. The
+      owner sees a chat with no reply and assumes the customer went quiet.</p>
+      <p class="fix"><b>Fix</b>A crashed turn must retry, and after the last retry must leave something behind: a
+      notification, a flag on the conversation, or a fallback reply. Silence is not an acceptable terminal state.</p>
+    </div>
+  </div>
+
+  <div class="finding fail">
+    <div class="f-id">F3<br><span class="tag fail">High</span></div>
+    <div class="f-body">
+      <p class="f-claim">Marking a tenant paid in the admin console leaves them on trial limits.</p>
+      <p>The throwaway tenant was set to <code>plan: paid</code>. Reading entitlements back:</p>
+      <pre class="evidence">test01             | plan: paid | messages allowed: 1000
+QA Throwaway Salon | plan: paid | messages allowed:  300   ← trial quota</pre>
+      <p>The cause is visible in the control itself: the button is a binary toggle, <em>Mark as paid</em> against
+      <em>Start 14-day trial</em>. It sets a plan <em>label</em>, not a plan <em>key</em>, so <code>apply_plan</code>
+      never runs and no entitlements are derived from the catalogue. The billing design's stated invariant is that
+      "a plan change can never leave a stale quota"; the manual path, which exists precisely for taking payment outside
+      a gateway, breaks it.</p>
+      <p>Consequence: take a bank transfer, mark the customer paid, and they hit a wall at 300 messages while the
+      console says they are on a paid plan.</p>
+      <p class="fix"><b>Fix</b>Make the control a plan picker over the real catalogue keys and route it through
+      <code>apply_plan</code>. The <code>PUT /api/admin/tenants/{id}/subscription</code> endpoint that does this
+      correctly already exists and has no interface.</p>
+    </div>
+  </div>
+
+  <div class="finding fail">
+    <div class="f-id">F4<br><span class="tag fail">High</span></div>
+    <div class="f-body">
+      <p class="f-claim">A customer's WhatsApp session has been dead and nobody was told.</p>
+      <p>Fleet Health shows <code>Husain bh Ezzy</code> at <code>FAILED</code>. The page reports it accurately. Nothing
+      else does: no notification to that owner, no email, no alert to you, and no badge anywhere in their own dashboard.
+      Their rep has simply stopped answering, and the only way to know is for somebody to open the admin console and
+      look.</p>
+      <p class="fix"><b>Fix</b>The scheduler already scans the fleet. A session that leaves <code>WORKING</code> should
+      raise an owner notification and an email within minutes, and show a banner in that tenant's dashboard.</p>
+    </div>
+  </div>
+
+  <div class="finding fail">
+    <div class="f-id">F5<br><span class="tag fail">Medium</span></div>
+    <div class="f-body">
+      <p class="f-claim">An ingestion failure shows no reason and offers no retry.</p>
+      <p>The second PDF failed cleanly and the table reads <em>"Nothing indexed · Error"</em>. The API carries no error
+      field at all. The owner cannot tell whether the file was corrupt, too large, an unsupported variant, or whether
+      the system had a bad minute. There is no way to try again short of deleting and re-uploading.</p>
+      <p class="fix"><b>Fix</b>Persist the failure reason, show it in the row, and put a Retry next to it.</p>
+    </div>
+  </div>
+
+  <div class="finding fail">
+    <div class="f-id">F6<br><span class="tag fail">Medium</span></div>
+    <div class="f-body">
+      <p class="f-claim">The notification badge never clears, and the voice notice is both wrong and duplicated.</p>
+      <p>Opening the panel marks nothing read. There is no per-item control. <code>POST
+      /api/notifications/{id}/read</code> exists and is never called, so the badge can only ever count up.</p>
+      <p>Two of the three notifications say <em>"Your rep has used its 5 voice minutes for this month"</em>, one at six
+      hours ago and one at seven. The spec requires that notice once per period. Meanwhile the meter reads <strong>2 min
+      of 5</strong>, so voice was never exhausted at all, and voice replies have kept working. The notice survived the
+      metering correction with nothing to reconcile it.</p>
+      <p class="fix"><b>Fix</b>Mark read on open. Dedupe the notice on the period, not the day. And when a meter is
+      corrected downward, retract or supersede any notice it invalidated.</p>
+    </div>
+  </div>
+
+  <div class="finding fail">
+    <div class="f-id">F7<br><span class="tag fail">Medium</span></div>
+    <div class="f-body">
+      <p class="f-claim">Three different voice numbers in three places.</p>
+      <pre class="evidence">Owner billing page   :   2 min of 5     (120 s)
+Admin usage endpoint :  89 voice_seconds
+System health        : 1069 voice_seconds (platform)</pre>
+      <p>The middle two should agree for a single-voice-user platform and do not. The limits spec asked for one shared
+      computation for exactly this reason. Whatever else is true, an owner and an operator looking at the same tenant
+      should not read different numbers.</p>
+      <p class="fix"><b>Fix</b>One function, called from all three surfaces, with the platform counter clearly labelled
+      as a different scope.</p>
+    </div>
+  </div>
+
+  <div class="finding partial">
+    <div class="f-id">F8<br><span class="tag partial">Low</span></div>
+    <div class="f-body">
+      <p class="f-claim">"Last indexed: Never" on sources that are indexed.</p>
+      <p>Both live sources are <code>Ready</code> with real passage counts and both show <em>Never</em>. The
+      <code>last_ingested</code> field is null in the API too, so it is not written on a successful ingest.</p>
+    </div>
+  </div>
+
+  <div class="finding partial">
+    <div class="f-id">F9<br><span class="tag partial">Low</span></div>
+    <div class="f-body">
+      <p class="f-claim">"Hi" is the top knowledge gap, and the analytics tile now advertises it.</p>
+      <p>The gap detector counts greetings as retrieval misses. <em>Hi ×2</em> currently leads the list, above the
+      refund complaint. It also leads the "Top questions the bot couldn't answer" tile, which now carries an
+      <em>Answer these in Knowledge</em> call to action pointing at it. The most valuable feedback loop in the product
+      is being polluted by hello.</p>
+      <p class="fix"><b>Fix</b>Do not log a gap for a turn with no informational intent. A short greeting, a thanks or a
+      goodbye is not a question the knowledge failed to answer.</p>
+    </div>
+  </div>
+
+  <div class="finding partial">
+    <div class="f-id">F10<br><span class="tag partial">Low</span></div>
+    <div class="f-body">
+      <p class="f-claim">Smaller things worth a line each.</p>
+      <p><strong>Analytics skips empty days.</strong> The axis reads Sep 5, Sep 6, Sep 8 as three evenly spaced bars, so
+      a gap looks like continuity.</p>
+      <p><strong>Uploads are one file at a time</strong>, and the picker accepts only <code>.pdf .docx .csv</code>
+      although plain text and markdown are supported by the parser.</p>
+      <p><strong>Validation errors echo the whole rejected input back.</strong> A 2,500-character rejection returns all
+      2,500 characters in the response body. For <code>payment_details</code> that means account numbers in error
+      surfaces and logs.</p>
+      <p><strong>Login had no maintenance state.</strong> During a redeploy the dashboard threw
+      <code>CredentialsSignin</code> while the API answered <code>200</code> for the same credentials, and the form told
+      the user to check their password. A build and its API should not be able to disagree silently.</p>
+    </div>
+  </div>
+</section>
+
+<section id="engine">
+  <div class="sec-head"><span class="sec-num">04</span><h2>The conversation engine</h2></div>
+
+  <p class="lede">This is the part that matters most, because it is the product. Three separate problems are tangled
+  together here, and only one of them is a bug.</p>
+
+  <h3>The prompt, as actually assembled</h3>
+
+  <pre class="prompt">┌─ SYSTEM  (position 0, byte-stable, prompt-cached) ──────────────┐
+│ You are the AI customer representative for test01.              │  <b>① business_name</b>
+│                                                                 │  <b>② persona — EMPTY here</b>
+│ Tone: Warm, Concise, Direct.                                    │  <b>③ tone</b>
+│ &lt;your 1,821-character custom_instructions&gt;                      │  <b>④ the bulk of the prompt</b>
+│                                                                 │
+│ Answer ONLY using the business knowledge provided below. If     │  <b>⑤ GROUNDING_INSTRUCTION</b>
+│ the answer is not covered, say you'll connect them with the        (hardcoded, pipeline.py:71)
+│ team and call the human_handoff tool — never invent facts,
+│ prices, policies, or availability.
+│ Reply in the same language AND the same script the customer     │  <b>⑥ language rule</b>
+│ used. If they write Urdu in Roman letters, reply in Roman…         (from reply_language setting)
+│ If the customer's language is genuinely unclear, use en.        │  <b>⑦ primary_language</b>
+│ Keep replies concise and conversational, WhatsApp style…        │  <b>⑧ format</b>
+└─────────────────────────────────────────────────────────────────┘
+┌─ HISTORY  (append-only window, last N turns) ───────────────────┐
+│ ~40 prior turns. In this conversation roughly 70% are Urdu      │  <b>⑨ the problem</b>
+│ or Roman Urdu.                                                  │
+└─────────────────────────────────────────────────────────────────┘
+┌─ FINAL USER TURN  (build_turn_prompt) ──────────────────────────┐
+│ Business knowledge:                                             │  <b>⑩ RAG, capped ~2k tokens</b>
+│   &lt;retrieved chunks&gt;                                            │
+│ Summary of the conversation so far:                             │  <b>⑪ rolling summary</b>
+│   &lt;compressed older turns&gt;                                      │     also Urdu-flavoured
+│ [This issue has already been passed to the team…]               │  <b>⑫ only when needs_human</b>
+│ Customer message:                                               │  <b>⑬ the actual words, LAST</b>
+│   &lt;text, or the STT transcript for a voice note&gt;                │
+└─────────────────────────────────────────────────────────────────┘</pre>
+
+  <p>Two structural facts follow from that diagram. The language rule at ⑥ is separated from the message it governs at
+  ⑬ by the entire history and the entire summary. And ④, your own instructions, is by volume the largest single input to
+  every reply — larger than the grounding rule, the language rule and the format rule combined.</p>
+
+  <div class="finding fail">
+    <div class="f-id">E1<br><span class="tag fail">Critical</span></div>
+    <div class="f-body">
+      <p class="f-claim">English in, Roman Urdu out — and nothing in the system detects the language of the message it
+      is answering.</p>
+      <p>The evidence is unambiguous in the transcript:</p>
+      <pre class="evidence">06:13:37  IN   "Hello / What services do you offer?"        EN
+06:13:38  OUT  "Hello! We offer a range of salon and…"      EN   ✓
+06:13:57  IN   "Do you provide laser tattoo removal?"       EN
+06:13:57  OUT  "Assalamualaikum! Laser tattoo removal ka…"  UR   ✗
+06:14:29  IN   "Book me a facial tomorrow"                  EN
+06:14:29  OUT  "Ji bilkul. Facial tomorrow ke liye…"        UR   ✗
+06:15:42  IN   [voice note, STT: clean English]             EN
+06:15:42  OUT  "Assalamualaikum! Jee bilkul—Depilex mein…"  UR   ✗</pre>
+      <p>It held for exactly one turn, then the history reasserted itself. The voice case rules out the audio path: the
+      transcript was flawless English and the reply was Roman Urdu, so this is not detection failing on speech, it is
+      the same prompt behaving the same way.</p>
+      <p>Three causes, compounding:</p>
+      <ul>
+        <li><strong>No per-turn signal exists.</strong> <code>app/agent/language.py</code> formats a <em>setting</em>
+        into a sentence. Nothing anywhere computes the language of the current inbound message. "The language the
+        customer used" is genuinely ambiguous when the model can see forty turns of them.</li>
+        <li><strong>The rule is at position 0.</strong> It is the furthest possible point in the request from the
+        message it governs, with an Urdu-heavy history and an Urdu-flavoured summary in between.</li>
+        <li><strong>Your own instructions carry a standing prior.</strong> ④ contains <em>"Many write Roman Urdu; reply
+        in Roman Urdu when they do"</em>, which is present on every turn regardless of what this customer wrote.</li>
+      </ul>
+      <p>One more detail worth knowing: <code>reply_language</code> is <code>NULL</code> in the database. The Behavior
+      page shows "Match the customer" selected, but nothing was ever saved; the code falls back to match. The earlier
+      fix moved language from prose into a setting, which changed <em>where the sentence comes from</em> — not whether
+      the sentence wins.</p>
+      <p class="fix"><b>Fix</b>Detect the script and language of the current message, cheaply and deterministically —
+      Arabic block versus Latin, plus a Roman-Urdu heuristic — and inject it into <code>build_turn_prompt</code>
+      immediately above <code>Customer message:</code> as a <strong>fact, not a rule</strong>: <em>"The customer's
+      current message is in English (Latin script). Reply in that language and that script."</em> A stated fact about
+      this message cannot be out-voted by history. Do the same on the voice leg, from the transcript, before TTS. And
+      pin the rolling summary to one language so it stops voting.</p>
+    </div>
+  </div>
+
+  <div class="finding partial">
+    <div class="f-id">E2<br><span class="tag partial">Correction</span></div>
+    <div class="f-body">
+      <p class="f-claim">The callback promise is not invented. You instructed it, word for word.</p>
+      <p>Your <code>custom_instructions</code> contain:</p>
+      <pre class="prompt">"A booking on WhatsApp is a request: take the city, the tier, the branch,
+the service, the preferred date and time, the name and the phone number,
+<b>then tell the customer a representative will call within a few hours to
+confirm, and that a confirmation comes on WhatsApp afterwards.</b>"</pre>
+      <p>Every "a rep will call you in a few hours" in the transcript is that sentence being obeyed. The model did what
+      it was told.</p>
+      <p>That said, the guard rail around it is genuinely too narrow.
+      <code>GROUNDING_INSTRUCTION</code> forbids inventing <em>"facts, prices, policies, or availability"</em> — four
+      nouns. A promise about the future is none of them, so nothing stops the model extending an instructed commitment
+      into new ones. And the same sentence instructs it to <em>"say you'll connect them with the team"</em>, which is
+      itself a first-person agentic claim that it then elaborates.</p>
+      <p class="fix"><b>Fix</b>Decide which you want, then make the two agree. If a callback is real, keep the line. If
+      it is not, delete it from ④ and replace ⑤'s noun list with a positive rule: <em>"Never commit to anything on the
+      business's behalf. No timelines, no callbacks, no confirmations, no promises about what any person will do. If an
+      action is needed, say the team has been notified, and say nothing about when."</em></p>
+    </div>
+  </div>
+
+  <div class="finding fail">
+    <div class="f-id">E3<br><span class="tag fail">High</span></div>
+    <div class="f-body">
+      <p class="f-claim">Line one of every prompt tells the model it is an AI.</p>
+      <p>You want customers to experience the business answering, not a bot. The first sentence of ① is
+      <code>You are the AI customer representative for {business}.</code> That is the single most influential line in
+      the request and it says the opposite of the goal.</p>
+      <p>Related and visible in the transcript: the persona <strong>changes gender mid-conversation</strong> —
+      <em>kar sakti hun</em> (female) in one reply, <em>kar sakta hun</em> and <em>kar deta hun</em> (male) in others.
+      In Urdu that is not subtle. Field ② <code>persona</code> is empty, so nothing pins it.</p>
+      <p class="fix"><b>Fix</b>Rewrite ① as <em>"You are the customer service team for {business}. You speak as the
+      business, using 'we'. You never describe yourself as an AI, a bot, an assistant or a representative, and you never
+      discuss how you work."</em> Then put a fixed voice and gender in ②, which is currently doing nothing.</p>
+    </div>
+  </div>
+
+  <div class="finding fail">
+    <div class="f-id">E4<br><span class="tag fail">High</span></div>
+    <div class="f-body">
+      <p class="f-claim">Seven of the eight skills have never been invoked, and one page says otherwise.</p>
+      <pre class="evidence">qonvo_skill_invocations_total{skill="human_handoff", outcome="escalated"}         = 2
+qonvo_skill_invocations_total{skill="human_handoff", outcome="already_escalated"} = 1
+                                                          (nothing else, ever)</pre>
+      <p><code>book_appointment</code>, <code>check_availability</code>, <code>capture_lead</code>,
+      <code>append_to_sheet</code>, <code>lookup_sheet</code>, <code>take_order</code> and
+      <code>share_payment_details</code> have zero invocations since the counters began.</p>
+      <p>For booking, the cause is again ④. Your instructions say <em>"Never say a time slot is free or booked. You
+      cannot see any diary."</em> Meanwhile the Skills page states <em>"Check availability — reads your calendar before
+      offering a time, so it never offers a slot you are already busy in"</em> and <em>"Book an appointment —
+      Available"</em>, and Google Calendar is connected and passing its test. Two surfaces of the same product
+      contradict each other and nothing reconciles them.</p>
+      <p><code>capture_lead</code> is a separate matter. The booking exchange collected a name, a phone number, a city
+      and a service, and captured nothing. That lead exists only inside a chat transcript.</p>
+      <p class="fix"><b>Fix</b>Surface the conflict in the product: if instructions contradict a connected integration,
+      say so on the Skills page rather than letting the owner discover it in a transcript. And make
+      <code>capture_lead</code> fire on a completed intake regardless, because a name and a number are worth keeping
+      whatever else the flow does.</p>
+    </div>
+  </div>
+
+  <div class="callout">
+    <span class="t">The pattern behind all four</span>
+    <p>Every one of these comes from the same place: <strong>the tenant's free-text instructions are the most powerful
+    input in the system, and nothing bounds, checks or reconciles them.</strong> They are 1,821 characters against a
+    handful of hardcoded sentences, they sit in the same undifferentiated block, and they can silently disable a paid
+    integration, override the language setting, and commit the business to a callback. That is a product design
+    question, not a prompt-wording one: which rules are the owner's to set, and which are yours to enforce underneath
+    them.</p>
+  </div>
+</section>
+
+<section id="admin">
+  <div class="sec-head"><span class="sec-num">05</span><h2>The admin console</h2></div>
+
+  <p class="lede">Four pages: Tenants, Fleet Health, System Health, Usage. Everything it claims to do, it does — every
+  lifecycle endpoint returned correctly and the tenant detail page is genuinely thorough. What it lacks is the
+  operational furniture that turns a working console into one you can run a business from, and one control is dangerous
+  as drawn.</p>
+
+  <h3>Findings</h3>
+
+  <div class="finding fail">
+    <div class="f-id">A1<br><span class="tag fail">High</span></div>
+    <div class="f-body">
+      <p class="f-claim">Logout sits beside Restart at identical weight, one click from unlinking a customer's number.</p>
+      <p>Every Fleet row renders four buttons in a line: Restart, Start, Stop, Logout. Same size, same styling, no
+      grouping, no confirmation observed. Logout ends the WhatsApp pairing and requires the customer to scan a QR code
+      again — an outage you cannot fix from your side. Compare with tenant deletion, which correctly demands the
+      business name typed in full.</p>
+      <p class="fix"><b>Fix</b>Separate the destructive pair behind a menu, require confirmation naming the tenant, and
+      make Restart the only prominent control. Then only offer the actions that make sense for the current state — Start
+      on a stopped session is meaningful, on a working one it is noise.</p>
+    </div>
+  </div>
+
+  <div class="finding fail">
+    <div class="f-id">A2<br><span class="tag fail">High</span></div>
+    <div class="f-body">
+      <p class="f-claim">The audit log is write-only. There is no way to read it.</p>
+      <p>Admin actions and activation changes write <code>audit_log</code> rows. Every plausible endpoint —
+      <code>/api/admin/audit</code>, <code>/audit-log</code>, <code>/logs</code>, <code>/events</code> — returns
+      <code>404</code>, and there is no page. The record exists and cannot be consulted without opening psql.</p>
+      <p>That matters more than it sounds. "Who suspended this tenant", "who reset that password", "when was this rep
+      switched off" are the first three questions of any support conversation, and impersonation is audited precisely so
+      that somebody can review it later.</p>
+      <p class="fix"><b>Fix</b>An endpoint and a page. Filterable by tenant and by actor, newest first. It is a table
+      you already populate.</p>
+    </div>
+  </div>
+
+  <div class="finding fail">
+    <div class="f-id">A3<br><span class="tag fail">Medium</span></div>
+    <div class="f-body">
+      <p class="f-claim">Overview tiles go stale the moment you create a tenant.</p>
+      <p>After creating the throwaway, the table listed four tenants while the tile above it still read
+      <strong>BUSINESSES 3</strong>. The row arrived, the counters did not, because they come from a separate fetch that
+      the mutation does not invalidate. An operator who trusts the tile clicks Create again and makes a duplicate.</p>
+      <p class="fix"><b>Fix</b>Invalidate the overview query on any tenant mutation.</p>
+    </div>
+  </div>
+
+  <div class="finding fail">
+    <div class="f-id">A4<br><span class="tag fail">Medium</span></div>
+    <div class="f-body">
+      <p class="f-claim">Two working endpoints have no interface, and the plan control is a two-state toggle.</p>
+      <p><code>PATCH …/tenants/{id}</code> accepts <code>trial_ends_at</code> and it works; nothing on the page sets it.
+      <code>POST …/impersonate</code> works and is properly scoped; there is no button. <code>PUT
+      …/subscription</code>, the manual billing adapter, exists and has no interface, which is why the plan control is
+      the binary toggle behind <strong>F3</strong>.</p>
+      <p class="fix"><b>Fix</b>A date field for trial end. A "Sign in as this owner" button, prominent about what it is.
+      And a plan picker over the catalogue, replacing the toggle.</p>
+    </div>
+  </div>
+
+  <div class="finding fail">
+    <div class="f-id">A5<br><span class="tag fail">Medium</span></div>
+    <div class="f-body">
+      <p class="f-claim">No search, no filter, no sort, no pagination anywhere in the console.</p>
+      <p>The tenants list has no input field of any kind. It renders every tenant in creation order. That is fine at
+      three and unusable at two hundred, and two hundred is the point at which you most need it. Fleet Health has the
+      same shape.</p>
+      <p class="fix"><b>Fix</b>Search by business name and owner email, a status filter, sortable columns and paging.
+      Fleet should default to sorting failed sessions first.</p>
+    </div>
+  </div>
+
+  <div class="finding partial">
+    <div class="f-id">A6<br><span class="tag partial">Low</span></div>
+    <div class="f-body">
+      <p class="f-claim">Every admin page load makes a request that is guaranteed to fail.</p>
+      <p><code>GET /api/onboarding</code> is called on admin pages and returns <code>403</code> every time, because an
+      admin has no tenant. Harmless in itself, and it trains you to ignore 403s in the network tab.</p>
+    </div>
+  </div>
+
+  <div class="finding partial">
+    <div class="f-id">A7<br><span class="tag partial">Low</span></div>
+    <div class="f-body">
+      <p class="f-claim">Dates are American here and human everywhere else.</p>
+      <p>The tenants table reads <code>9/8/2026</code>. The owner-facing product reads <code>5 Sept 2026</code>. The
+      admin console did not get the formatter.</p>
+    </div>
+  </div>
+
+  <div class="finding partial">
+    <div class="f-id">A8<br><span class="tag partial">Low</span></div>
+    <div class="f-body">
+      <p class="f-claim">The timezone hint on a tenant's page describes your device, not theirs.</p>
+      <p>Editing a tenant's configuration shows <em>"This device is in Asia/Karachi. Use that instead."</em> On the
+      owner's own Business page that is a genuinely good touch. On an operator's screen, configuring somebody else's
+      business, it is advice to apply your own timezone to their salon.</p>
+      <p class="fix"><b>Fix</b>Suppress it in the admin context, or replace it with the tenant's WhatsApp country
+      code.</p>
+    </div>
+  </div>
+
+  <h3>What the console is missing entirely</h3>
+  <ul>
+    <li><strong>Alerting.</strong> Fleet Health knew a customer's session was dead. Nothing told anyone. A console you
+    have to remember to open is a dashboard, not an operations tool.</li>
+    <li><strong>Per-tenant conversation access.</strong> Support is going to be asked "what did the bot say to my
+    customer", and the only route is impersonation, which has no button.</li>
+    <li><strong>Per-tenant billing.</strong> Subscription state, invoices and payment failures are invisible from the
+    admin side; the tenant detail page covers lifecycle and configuration but not money.</li>
+    <li><strong>Error and job visibility.</strong> System Health shows six provider errors and two job failures as
+    numbers. There is no way to see which tenant, which conversation, or what the error was — the information exists
+    only in container logs.</li>
+    <li><strong>Signup and activation funnel.</strong> Three of four tenants have never connected a number. Nothing
+    reports that, and it is the single most useful number you could have this month.</li>
+    <li><strong>Anything for the owner in trouble.</strong> Resending a verification or invitation email, or clearing a
+    stuck ingestion, all require a database.</li>
+  </ul>
+
+  <h3>Interface suggestions</h3>
+  <ul>
+    <li><strong>Lead with what is wrong.</strong> The console opens on six equal counters. It should open on exceptions:
+    sessions not working, tenants over a limit, failed payments, jobs that died. Everything healthy can be one line.</li>
+    <li><strong>Give the tenant detail page a spine.</strong> It is currently lifecycle, then support, then the entire
+    owner configuration form inline — a very long scroll where a 400-entry timezone select sits between "Delete tenant"
+    and the persona picker. Tabs, or at minimum collapse the configuration behind a disclosure.</li>
+    <li><strong>Colour by state.</strong> <code>FAILED</code> renders in the same type as <code>WORKING</code>. Fleet is
+    the one screen where a colour is worth more than a word.</li>
+    <li><strong>Say which environment this is.</strong> Production and staging admin consoles are identical, and the
+    actions here are irreversible.</li>
+    <li><strong>Separate reading from doing.</strong> Suspend, delete and reset password sit in the same visual register
+    as a name field. Danger zone is right for delete; suspend and password reset deserve the same treatment.</li>
+  </ul>
+</section>
+
+<section id="next">
+  <div class="sec-head"><span class="sec-num">06</span><h2>Fix order</h2></div>
+
+  <ol class="prio">
+    <li><div>
+      <h5>Stop losing customer messages</h5>
+      <p>Two turns crashed and vanished. Retry, then leave a trace when retries are exhausted. Nothing else on this list
+      matters if a message can silently disappear.</p>
+      <p class="refs">F2</p>
+    </div></li>
+    <li><div>
+      <h5>Strip NUL bytes, and make a dead job mark its row failed</h5>
+      <p>One line for the first half. The second half is the general fix: no job may leave a row claiming to be in
+      progress after it has died.</p>
+      <p class="refs">F1 · F5</p>
+    </div></li>
+    <li><div>
+      <h5>Inject the detected language as a fact, next to the message</h5>
+      <p>Detect script and language per turn, place it immediately above <code>Customer message:</code>, apply it to the
+      voice leg too. This is the fix that ends the problem rather than arguing with it.</p>
+      <p class="refs">E1</p>
+    </div></li>
+    <li><div>
+      <h5>Rewrite the two hardcoded sentences</h5>
+      <p>Line one stops saying "AI". The grounding rule stops listing four nouns and starts forbidding commitments.
+      Then reconcile your own instructions with both.</p>
+      <p class="refs">E2 · E3</p>
+    </div></li>
+    <li><div>
+      <h5>Alert on a failed session</h5>
+      <p>A customer is down right now and found out by not receiving replies. The scheduler already scans; it just has
+      to tell somebody.</p>
+      <p class="refs">F4</p>
+    </div></li>
+    <li><div>
+      <h5>Make the admin plan control apply entitlements</h5>
+      <p>A plan picker over the catalogue, through <code>apply_plan</code>. Until then, every manually paid customer is
+      capped at 300 messages.</p>
+      <p class="refs">F3 · A4</p>
+    </div></li>
+    <li><div>
+      <h5>Fix the notification badge and the voice notice</h5>
+      <p>Mark read on open, dedupe per period, and retract a notice whose meter was corrected.</p>
+      <p class="refs">F6 · F7</p>
+    </div></li>
+    <li><div>
+      <h5>Make Fleet safe and the audit log readable</h5>
+      <p>Logout behind a confirmation, and a page for the rows you are already writing.</p>
+      <p class="refs">A1 · A2</p>
+    </div></li>
+    <li><div>
+      <h5>Reconcile instructions against integrations</h5>
+      <p>If the instructions say there is no diary while Calendar is connected and Check availability says otherwise,
+      the Skills page should say which one wins.</p>
+      <p class="refs">E4</p>
+    </div></li>
+    <li><div>
+      <h5>Then the console furniture</h5>
+      <p>Search, filters, an exceptions-first overview, per-tenant billing and conversation access, and the two missing
+      buttons.</p>
+      <p class="refs">A3 · A5 · A6 · A7 · A8</p>
+    </div></li>
+  </ol>
+</section>
+
+<section id="untested">
+  <div class="sec-head"><span class="sec-num">07</span><h2>What is still untested, and why</h2></div>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Area</th><th>What it needs</th></tr></thead>
+    <tbody>
+      <tr><td>Manual reply</td><td>Permission to send one outbound WhatsApp message. It would land on your own number</td></tr>
+      <tr><td>Staff permissions</td><td>A staff-role login, to check the authorization fixes from outside the code</td></tr>
+      <tr><td>2FA enrolment</td><td>A throwaway account to enrol against, so a real one cannot be locked out</td></tr>
+      <tr><td>Signup and verification</td><td>Best run on staging, since it creates and then abandons a tenant</td></tr>
+      <tr><td>Password reset</td><td>A mailbox to receive the link, or the staging stack with the log email provider</td></tr>
+      <tr><td>Checkout, upgrade, cancel</td><td>A real payment, or the Polar sandbox</td></tr>
+      <tr><td>Session recovery</td><td>Stopping and re-linking a WhatsApp session. Only safe on a number you are willing to rescan</td></tr>
+      <tr><td>Business hours gate</td><td>Hours switched on, then a message outside them</td></tr>
+      <tr><td>Rep paused</td><td>The switch off, then a message, to confirm it arrives and no reply is sent</td></tr>
+      <tr><td>Rate limiting</td><td>More than 20 messages in a minute from one chat, which is worth doing on staging</td></tr>
+      <tr><td>Load and concurrency</td><td>Never run. Nothing here says anything about behaviour under load</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout">
+    <span class="t">One thing worth saying plainly</span>
+    <p>Of the twenty-odd defects in the previous teardown, most are genuinely gone, and I verified them by using the
+    product rather than by reading the diff. What this round found instead is a different and more interesting class of
+    problem: not missing features, but <strong>things that fail without telling anyone</strong>. A stuck upload, a
+    crashed turn, a dead session, a stale quota notice, a customer's whole rep sitting on trial limits after they paid.
+    Every one of them is invisible until somebody goes looking. That is the theme worth carrying into the next
+    cycle.</p>
+  </div>
+</section>
+
+<footer>
+  <p>Run on 9 September 2026 against qonvo.org and api.qonvo.org, signed in as the owner of tenant
+  <code>test01</code> (paid Starter) and as <code>admin@qonvo.dev</code>. Evidence is quoted from the live API, the
+  worker container logs and the Prometheus counters. Every write made during testing was reverted: four knowledge
+  sources deleted, one gap answer removed, one team invitation revoked, one throwaway tenant purged. No outbound
+  WhatsApp message was sent, and neither customer tenant was modified.</p>
+</footer>
+
+</div>

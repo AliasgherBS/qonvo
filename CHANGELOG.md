@@ -9,6 +9,143 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-09
+
+### Added
+
+- **A readable audit log in the ops console.** Every state-changing admin action was
+  recorded and none of it could be read without psql. There is now a reader with
+  tenant, actor and action filters, paged on the server and ordered with `id` as a
+  tiebreak so paging cannot repeat or skip a row. The three actor shapes that had
+  accumulated are reconciled, and an impersonated action shows who was really behind
+  it rather than reading as the customer's own.
+
+- **A second factor on the `qonvo_admin` account**, enrolled by scanning a QR rather
+  than typing a secret. The encoder is checked by a gate that rasterises the QR and
+  decodes it with a different library, because a QR that renders is not a QR that
+  scans, and a wrong one fails at the moment somebody is locked out.
+
+- **"Improve with AI" on custom instructions.** Rewrites what an owner wrote into
+  something the prompt builder can honour, and says what it changed.
+
+- **Email verification at signup**, and an owner can see and revoke their own
+  sessions.
+
+- **Plan, trial and impersonation controls in the console**, so support does not need
+  psql for the three things it needed it for most.
+
+### Changed
+
+- **The rep no longer promises what the business never offered.** The system prompt
+  instructed the model to reassure and offer a callback, so it was manufacturing
+  commitments the owner had never made — a customer was told "our team will call you
+  back within the hour" when nobody was going to call. The prompt guard-rails; the
+  call to action belongs to the owner. Verified live: asked for a branch that does not
+  exist and a callback, the rep now says it does not have that detail rather than
+  inventing either.
+
+- **An owner's instructions can no longer contradict the tools the rep has.** A
+  connected integration wins over prose that argues with it, and an instruction that
+  contradicts a live capability is surfaced to the owner instead of being silently
+  obeyed or silently dropped.
+
+- **Skills are described in the prompt, not only offered as tools.** Six were offered
+  on every turn and chosen on none. The one the model did use, `human_handoff`, was
+  the only one named in the prompt text.
+
+- **One date format across the product** (`4 Sept 2026`), one timezone per tenant, and
+  the inbox names the customer.
+
+### Fixed
+
+- **Marking a customer paid now grants what they paid for.** The console wrote
+  `tenants.plan` while entitlements kept whatever the previous plan allowed, so an
+  operator who took a bank transfer left the customer capped at the trial's 300
+  messages while the console reported a paid plan. Plan changes go through
+  `apply_plan`, which derives entitlements from the catalogue, and the old field is
+  kept only so it can be refused with an explanation.
+
+- **A refreshed knowledge source stops billing for text it no longer holds.**
+  Re-ingesting tombstoned the previous chunks instead of deleting them. Every reader
+  filtered those out except the character quota, which counted them all — so
+  refreshing a page charged the business again, permanently, and the owner's own page
+  and the quota disagreed by exactly the overcharge. Nothing purged them either.
+
+- **A dead ingestion job can no longer look alive.** A failure at COMMIT happens as
+  the transaction context exits, after any handler inside it, so a source could log
+  "ingested" and then fail with nothing marked. The failure is now caught outside the
+  session, recorded on a fresh connection, and shown to the owner with a readable
+  reason instead of a bare "error".
+
+- **A number that stops answering tells its owner.** One sat at FAILED for about
+  twenty hours, reported accurately on Fleet Health and nowhere else: the only alert
+  hung off the recovery budget, and that session had no credentials to restart into,
+  so nothing retried, nothing exhausted, and nobody was told. Owners are now alerted
+  three minutes into an outage, once per episode, and the give-up notice half an hour
+  later says what changed rather than repeating the first.
+
+- **Voice is metered from what the provider reports**, not from the size of the file.
+  A byte-rate assumption of 2,000 B/s applied to a 48,000 B/s WAV over-reported a
+  ten-second note by twenty-four times.
+
+- **Prompt-cache hit rate on every message.** The tool array was built from a `set`,
+  so several thousand bytes at the front of every request reshuffled between calls
+  and the cached prefix never matched.
+
+- **One usage number, one meaning.** The same 89 stored seconds read as "2 min of 5"
+  on the owner's page and as 89 on the admin endpoint, and neither said which unit or
+  whose usage it was.
+
+- **Fleet Logout no longer sits next to Restart as an equal.** It destroys the
+  WhatsApp pairing and needs a physical phone to undo, so it now asks for the business
+  name in full and points at Restart as the thing you probably meant.
+
+### Security
+
+- **A 422 no longer hands back what it rejected.** pydantic sets `input` to the whole
+  submitted body for a `missing` error, so any route with a required field returned
+  every other field: `POST /api/auth/signup` came back with a new customer's plaintext
+  password, `reset-password` with the reset token, the admin config route with a
+  tenant's bank details, and the inbox reply route with the message a business was
+  sending a customer. Fixed app-wide rather than per router, because a curated list of
+  "endpoints that carry secrets" missed four and then a fifth.
+
+- **Staff seats could cancel the subscription, change the plan, turn the rep off and
+  rewrite the payment details** the rep reads out to customers. `require_owner`
+  existed and was used in two modules out of twenty-one. Asserted now as a property of
+  the route table rather than per endpoint, so a new route is owner-only until it is
+  deliberately listed.
+
+- **Ten ordinary logins no longer lock out an office.** The per-address counter
+  counted successes and was never cleared, so ten correct logins from one connection
+  refused the eleventh for fifteen minutes — which in this market means a shared
+  office line, or a stranger behind the same CGNAT address.
+
+- **Every per-address rate limit was bypassable with one header, on production.**
+  `X-Forwarded-For` is caller-supplied and Cloudflare only adds to it, so rotating it
+  meant no counter ever filled. That covered the five-signups-per-hour cap, which is
+  the only thing between a script and unlimited tenant rows. Now keyed on
+  `CF-Connecting-IP`, confirmed against production rather than assumed.
+
+- **A stranger can no longer lock you out of your own business.** Eleven deliberate
+  failures on a known address refused the owner's correct password for fifteen
+  minutes, from anywhere, repeatably. Failures are now counted per (account, address)
+  with a much larger backstop for the distributed case.
+
+- **Tokens can be revoked, so signing out signs you out.** A session had no `jti`, so
+  logging out cleared the browser's copy and left the credential valid for the rest of
+  its 24 hours.
+
+- **A real password policy**, screened against known breaches, with the work factor
+  pinned so it cannot silently weaken.
+
+- **The server refuses to fetch a URL that points inside our own network**, on every
+  resolved address and again on each redirect hop.
+
+- **Google Sheets picking works**, and a blocked frame now fails with a sentence
+  naming the origin instead of hanging: `docs.google.com` was never in `frame-src`.
+
+
 ## [0.10.2] - 2026-09-08
 
 ### Security
@@ -237,3 +374,4 @@ could be sold.
 [0.10.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.0
 [0.10.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.1
 [0.10.2]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.2
+[0.11.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.0

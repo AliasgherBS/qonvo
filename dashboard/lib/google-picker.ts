@@ -115,7 +115,35 @@ export async function openSheetPicker(config: PickerConfigInput): Promise<string
   await loadGapiScript();
   const picker = await loadPickerModule();
 
-  return new Promise<string | null>((resolve) => {
+  return new Promise<string | null>((resolve, reject) => {
+    // A blocked frame is the one failure this promise cannot see.
+    //
+    // The Picker's dialog is an iframe on docs.google.com. When the CSP does
+    // not allow that origin the browser renders an empty box, fires no network
+    // error and throws nothing, and the Picker's callback never runs, so this
+    // promise never settles: the owner gets a dead dialog and every log stays
+    // clean. That is exactly what happened, and it cost a day to find.
+    //
+    // `securitypolicyviolation` is the only event a blocked frame does fire.
+    // Listening for it turns a silent hang into a sentence naming the origin
+    // that has to be allowed.
+    const onViolation = (event: SecurityPolicyViolationEvent) => {
+      if (event.effectiveDirective !== "frame-src") return;
+      document.removeEventListener("securitypolicyviolation", onViolation);
+      reject(
+        new Error(
+          `The file chooser was blocked by this page's security policy ` +
+            `(${event.blockedURI} is not allowed to be framed). This is a ` +
+            `configuration problem on our side, not something you can fix.`,
+        ),
+      );
+    };
+    document.addEventListener("securitypolicyviolation", onViolation);
+    const settle = (value: string | null) => {
+      document.removeEventListener("securitypolicyviolation", onViolation);
+      resolve(value);
+    };
+
     const view = new picker.DocsView(picker.ViewId.SPREADSHEETS)
       .setIncludeFolders(true)
       .setSelectFolderEnabled(false);
@@ -129,9 +157,9 @@ export async function openSheetPicker(config: PickerConfigInput): Promise<string
       .setTitle("Choose a spreadsheet for Qonvo")
       .setCallback((data) => {
         if (data.action === picker.Action.PICKED) {
-          resolve(data.docs?.[0]?.id ?? null);
+          settle(data.docs?.[0]?.id ?? null);
         } else if (data.action === picker.Action.CANCEL) {
-          resolve(null);
+          settle(null);
         }
       })
       .build()

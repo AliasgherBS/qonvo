@@ -6,6 +6,25 @@ import { buttonClasses } from "@/components/ui/button";
 import { LEGAL } from "@/lib/legal";
 
 /**
+ * The header's section anchors (teardown L3).
+ *
+ * Three and no more. The landing page is 7,600px tall, pricing sits 5,100px
+ * down it and the FAQ 6,000px, and the header held nothing but the logo and
+ * two account actions: a visitor who arrived wanting a price had no route to
+ * one except the scroll wheel.
+ *
+ * The hrefs are root-relative rather than bare fragments because this header is
+ * also the header of /terms and /privacy, where `#pricing` would scroll to
+ * nothing. `/#pricing` navigates home first and then scrolls, from anywhere.
+ * The ids themselves live on the sections in components/marketing/.
+ */
+const SECTIONS = [
+  { href: "/#how-it-works", label: "How it works" },
+  { href: "/#pricing", label: "Pricing" },
+  { href: "/#faq", label: "FAQ" },
+];
+
+/**
  * Header + footer for the public pages (home, terms, privacy).
  *
  * The footer links Terms and Privacy from every public page on purpose: Google's
@@ -24,6 +43,20 @@ export async function MarketingShell({ children }: { children: React.ReactNode }
             <Logo />
           </Link>
           <nav className="flex items-center gap-2">
+            {/* Hidden below `sm`: at 375px the logo, three anchors and two
+                buttons do not fit on one row, and a page this short on
+                navigation has not earned a hamburger menu. */}
+            <div className="mr-2 hidden items-center gap-1 sm:flex">
+              {SECTIONS.map(({ href, label }) => (
+                <Link
+                  key={href}
+                  href={href}
+                  className="rounded-full px-3 py-2 text-sm font-semibold text-muted-foreground transition-colors hover:text-foreground"
+                >
+                  {label}
+                </Link>
+              ))}
+            </div>
             {signedIn ? (
               <Link href="/inbox" className={buttonClasses({ size: "sm" })}>
                 Go to dashboard

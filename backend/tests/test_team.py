@@ -119,6 +119,13 @@ async def _seed_tenant(tenant_id: uuid.UUID) -> None:
         db.add(TenantConfig(tenant_id=tenant_id))
 
 
+#: Long enough for the policy and absent from HIBP, checked rather than assumed.
+#: The previous literal, "hunter2hunter2", is in the breach corpus, so every
+#: accept in this file 400'd once the policy shipped -- and only the postgres
+#: suite noticed, because the unit tests never reach the route.
+_TEST_PASSPHRASE = "qonvo-team-test-passphrase"
+
+
 async def test_invite_then_accept_creates_member(client, tenant_cleanup):
     ids, emails = tenant_cleanup
     tenant_id = uuid.uuid4()
@@ -150,7 +157,7 @@ async def test_invite_then_accept_creates_member(client, tenant_cleanup):
     # Accept with a password → new user + membership + login token.
     accept = await client.post(
         "/api/team/invitations/accept",
-        json={"token": token, "password": "hunter2hunter2", "full_name": "Sam Staff"},
+        json={"token": token, "password": _TEST_PASSPHRASE, "full_name": "Sam Staff"},
     )
     assert accept.status_code == 200
     assert accept.json()["role"] == "staff"
@@ -164,7 +171,7 @@ async def test_invite_then_accept_creates_member(client, tenant_cleanup):
 
     # Token is single-use: a second accept fails.
     again = await client.post(
-        "/api/team/invitations/accept", json={"token": token, "password": "hunter2hunter2"}
+        "/api/team/invitations/accept", json={"token": token, "password": _TEST_PASSPHRASE}
     )
     assert again.status_code == 400
 
@@ -183,7 +190,15 @@ async def test_staff_cannot_invite(client, tenant_cleanup):
 
 
 async def test_accept_invalid_token_400(client):
+    """The token is the thing under test, so the password has to be a good one.
+
+    With "whatever12" this asserted 400 and got it -- for being ten characters
+    and breached, not for the token being wrong. A test that passes for the
+    wrong reason stops being a test of anything.
+    """
     resp = await client.post(
-        "/api/team/invitations/accept", json={"token": "nope", "password": "whatever12"}
+        "/api/team/invitations/accept",
+        json={"token": "nope", "password": _TEST_PASSPHRASE},
     )
     assert resp.status_code == 400
+    assert "invit" in resp.json()["detail"].lower(), resp.text

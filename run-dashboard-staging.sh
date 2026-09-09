@@ -39,7 +39,14 @@ if [[ ! -f .next-staging/standalone/server.js ]]; then
   exit 1
 fi
 
+# NEXT_DIST_DIR is needed at *serve* time as well as at build time. next.config.ts
+# reads it to set distDir, and the standalone server resolves /_next/static
+# against that -- so without it the server looks in .next/static, finds nothing,
+# and answers 400 to every chunk. The page renders its HTML and then loads no
+# JavaScript at all, which looks like a broken build rather than a missing
+# variable. Found by pointing a browser at it.
 # shellcheck disable=SC2046
 exec env $(grep -v '^#' "$ENV_FILE" | xargs) \
+  NEXT_DIST_DIR=.next-staging \
   PORT=3012 HOSTNAME=127.0.0.1 \
   node .next-staging/standalone/server.js

@@ -1,7 +1,8 @@
 """arq scheduler (cron jobs) — Phase 0 (DESIGN.md §12.1).
 
-Currently runs the session-health poll every 60s. Reminder dispatch (§5.7) and
-knowledge re-crawl (§6) plug in here in later phases.
+Currently runs the session-health poll every 60s, which now also tells the
+owner when their number stops replying. Knowledge re-crawl (§6) plugs in here
+in a later phase.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from arq.connections import RedisSettings
 from app.core.config import settings
 from app.core.logging import configure_logging, logger
 from app.core.redis import get_redis
+from app.services.notifications import sweep_session_alerts
 from app.waha.client import WahaClient
 from app.waha.send_gateway import SendGateway
 from app.waha.session_health import poll_session_health
@@ -23,6 +25,23 @@ async def session_health_job(ctx: dict[str, Any]) -> None:
     waha: WahaClient = ctx["waha"]
     failed = await poll_session_health(waha)
     logger.bind(gave_up=failed).info("session-health poll complete")
+
+    # Detecting an outage and telling nobody about it is what F4 was: a real
+    # tenant's number sat at FAILED for days, reported accurately on Fleet
+    # Health and nowhere else. The poll writes the status; this turns a status
+    # into an owner who knows. Separate from the poll on purpose, so a WAHA
+    # error that aborts the poll cannot also silence the alerting, and so the
+    # alert covers the states auto-recovery deliberately never touches
+    # (SCAN_QR_CODE, STOPPED, and FAILED with no credentials to restart into).
+    try:
+        alerts = await sweep_session_alerts(
+            ctx["redis"], send_gateway=ctx["send_gateway"]
+        )
+    except Exception as exc:  # noqa: BLE001 — the cron must survive to run again
+        logger.warning(f"session-alert sweep failed: {exc}")
+    else:
+        if any(alerts.values()):
+            logger.bind(**alerts).info("session-alert sweep complete")
 
 
 async def booking_reminders_job(ctx: dict[str, Any]) -> None:
@@ -50,7 +69,9 @@ async def on_startup(ctx: dict[str, Any]) -> None:
     configure_logging()
     waha = WahaClient()
     ctx["waha"] = waha
-    ctx["send_gateway"] = SendGateway(waha, get_redis())
+    redis = get_redis()
+    ctx["redis"] = redis
+    ctx["send_gateway"] = SendGateway(waha, redis)
     logger.info("scheduler started")
 
 

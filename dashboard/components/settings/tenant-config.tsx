@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,6 +21,7 @@ import {
   OTHER_REPLY_LANGUAGE,
   REPLY_LANGUAGE_PRESETS,
 } from "@/lib/api";
+import { browserTimezone, offsetOf, timeIn, timezoneOptions } from "@/lib/timezones";
 import { useApi, useAuthToken } from "@/lib/use-api";
 import { cn } from "@/lib/utils";
 
@@ -109,6 +110,19 @@ const SELECT_CLASSES =
 export type SectionProps = {
   form: TenantConfig;
   setForm: (next: TenantConfig) => void;
+  /**
+   * Whether hints that describe *the viewer's device* are shown.
+   *
+   * They are a genuinely good touch on the owner's own Business page: "this
+   * device is in Asia/Karachi, use that instead" is almost always right, for
+   * the person whose device it is.
+   *
+   * On an operator's screen in the ops console, configuring somebody else's
+   * salon, the same sentence is advice to apply the wrong timezone to a
+   * business on the other side of the country (finding A8). So the admin
+   * console passes `false`, and every owner-facing caller leaves it alone.
+   */
+  deviceHints?: boolean;
 };
 
 /**
@@ -154,17 +168,36 @@ export function TenantConfigPage({
   const { data, loading, error, refetch } = useApi(() => config.get({ token }), [token]);
   const { toast } = useToast();
   const [form, setForm] = useState<TenantConfig | null>(null);
+  /**
+   * What was loaded, or last saved. The only way to answer "is anything
+   * unsaved" honestly (teardown B3): one Save button at the bottom of a 1,900
+   * pixel page, with nothing on screen saying the form had been touched, is a
+   * page you leave believing you saved.
+   */
+  const [baseline, setBaseline] = useState<TenantConfig | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (data) setForm(data);
+    if (data) {
+      setForm(data);
+      setBaseline(data);
+    }
   }, [data]);
+
+  // Structural compare rather than field-by-field, because the sections own
+  // which fields exist and a hand-written list would go stale silently. Key
+  // order is stable: both objects come from the same mapper.
+  const dirty = !!form && !!baseline && JSON.stringify(form) !== JSON.stringify(baseline);
 
   async function handleSave() {
     if (!form) return;
+    // Snapshotted before the await. Using the response as the new baseline
+    // would clobber anything typed while the request was in flight.
+    const snapshot = form;
     setSaving(true);
     try {
-      await config.update(form, { token }, fields);
+      await config.update(snapshot, { token }, fields);
+      setBaseline(snapshot);
       toast({ title: "Saved", variant: "success" });
     } catch (err) {
       toast({
@@ -178,7 +211,10 @@ export function TenantConfigPage({
   }
 
   return (
-    <div className="max-w-3xl space-y-6">
+    // Wider than the 745px this used to be inside a 1,150px content area
+    // (teardown B4), which left roughly a third of the screen permanently
+    // empty on every settings page.
+    <div className="max-w-4xl space-y-6">
       <div>
         <h1 className="text-2xl font-extrabold tracking-tight">{title}</h1>
         <p className="text-sm text-muted-foreground">{description}</p>
@@ -198,11 +234,27 @@ export function TenantConfigPage({
       ) : form ? (
         <>
           {children({ form, setForm })}
-          <div className="flex items-center gap-3">
-            <Button onClick={handleSave} disabled={saving}>
-              {saving ? "Saving" : "Save changes"}
-            </Button>
-          </div>
+          {dirty ? (
+            // Sticky, and only while there is something to save. `bottom-24` on
+            // small screens: the mobile bar is fixed and sticky offsets are
+            // measured from the scroll container's edge, not from the padding,
+            // so a bar at bottom-4 would sit underneath it.
+            <div className="sticky bottom-24 z-30 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary/40 bg-surface/95 px-4 py-3 shadow-lg backdrop-blur lg:bottom-6">
+              <p className="text-sm font-bold">You have unsaved changes</p>
+              <div className="flex items-center gap-2">
+                <Button variant="outline" onClick={() => setForm(baseline)} disabled={saving}>
+                  Discard
+                </Button>
+                <Button onClick={handleSave} disabled={saving}>
+                  {saving ? "Saving" : "Save changes"}
+                </Button>
+              </div>
+            </div>
+          ) : (
+            // Feedback either way. A disabled Save says "nothing to do" less
+            // clearly than a sentence does.
+            <p className="text-sm text-muted-foreground">Everything on this page is saved.</p>
+          )}
         </>
       ) : null}
     </div>
@@ -220,9 +272,12 @@ export function TenantConfigPage({
 export function AllConfigSections({
   config: initial,
   onSave,
+  deviceHints = true,
 }: {
   config: TenantConfig;
   onSave: (next: TenantConfig) => Promise<void>;
+  /** See `SectionProps.deviceHints`. The ops console passes `false`. */
+  deviceHints?: boolean;
 }) {
   const { toast } = useToast();
   const [form, setForm] = useState<TenantConfig>(initial);
@@ -248,16 +303,17 @@ export function AllConfigSections({
     }
   }
 
-  const props = { form, setForm };
+  const props = { form, setForm, deviceHints };
 
   return (
     <div className="space-y-6">
       <BusinessNameSection {...props} />
-      <PersonaSection {...props} />
+      <TimezoneSection {...props} />
+      <ContactSection {...props} />
       <HoursSection {...props} />
-      <VoiceSection {...props} />
-      <EscalationSection {...props} />
       <PaymentsSection {...props} />
+      <PersonaSection {...props} />
+      <VoiceSection {...props} />
       <ModelSection {...props} />
       <div className="flex items-center gap-3">
         <Button onClick={handleSave} disabled={saving}>
@@ -396,9 +452,14 @@ export function PersonaSection({ form, setForm }: SectionProps) {
 
         <div className="space-y-1.5">
           <Label htmlFor="custom-instructions">Custom instructions</Label>
+          {/* Twelve lines, and resizable (teardown B3). This is the most
+              important text in the tenant's configuration and it was edited
+              through a five-line window showing about a fifth of what the
+              field accepts. */}
           <Textarea
             id="custom-instructions"
-            rows={7}
+            rows={12}
+            className="resize-y"
             value={form.customInstructions}
             onChange={(e) => setForm({ ...form, customInstructions: e.target.value })}
             placeholder={CUSTOM_INSTRUCTIONS_PLACEHOLDER}
@@ -417,6 +478,7 @@ export function PersonaSection({ form, setForm }: SectionProps) {
 
 export function HoursSection({ form, setForm }: SectionProps) {
   const businessHours = form.businessHours.length ? form.businessHours : DEFAULT_BUSINESS_HOURS;
+  const enabled = form.businessHoursEnabled;
 
   function updateDay(day: number, patch: Partial<TenantConfig["businessHours"][number]>) {
     setForm({
@@ -425,65 +487,131 @@ export function HoursSection({ form, setForm }: SectionProps) {
     });
   }
 
+  /**
+   * Copy Monday onto the named days (teardown B4).
+   *
+   * Seven identical rows with no way to set them together meant seven
+   * repetitions of the same two fields for the commonest opening pattern
+   * there is. Monday is the template because it is the first row, so what is
+   * being copied is the thing directly above the buttons.
+   */
+  function copyMonday(days: number[]) {
+    const monday = businessHours.find((row) => row.day === 0);
+    if (!monday) return;
+    setForm({
+      ...form,
+      businessHours: businessHours.map((row) =>
+        days.includes(row.day)
+          ? { ...row, open: monday.open, close: monday.close, closed: monday.closed }
+          : row,
+      ),
+    });
+  }
+
   return (
     <Card>
       <CardHeader>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <CardTitle>Business hours</CardTitle>
-            <CardDescription>Outside open hours, customers get your auto-reply.</CardDescription>
+            <CardTitle>Opening hours</CardTitle>
+            <CardDescription>
+              Outside open hours, customers get your auto-reply.
+              {/* Naming the clock here is what makes the hours legible. These
+                  times used to be evaluated in UTC with no way to change it,
+                  so a 9-to-5 in Karachi silently meant 2 PM to 10 PM and the
+                  rep turned customers away in the middle of the working day
+                  (teardown B1). No link any more: the time zone card is on
+                  this same page now, directly above (teardown V2). */}
+              {form.timezone ? (
+                <>
+                  {" "}
+                  Times are in{" "}
+                  <strong className="font-bold text-foreground">
+                    {form.timezone.replace(/_/g, " ")}
+                  </strong>
+                  {timeIn(form.timezone) ? `, where it is ${timeIn(form.timezone)}` : null}.
+                </>
+              ) : null}
+            </CardDescription>
           </div>
           <label className="flex items-center gap-2 text-sm">
             <Switch
-              checked={form.businessHoursEnabled}
+              checked={enabled}
               onCheckedChange={(on) => setForm({ ...form, businessHoursEnabled: on })}
-              label="Enforce business hours"
+              label="Enforce opening hours"
             />
-            <span className="text-muted-foreground">
-              {form.businessHoursEnabled ? "On" : "Off"}
-            </span>
+            <span className="text-muted-foreground">{enabled ? "On" : "Off"}</span>
           </label>
         </div>
       </CardHeader>
       <CardContent className="space-y-2">
-        {!form.businessHoursEnabled ? (
+        {!enabled ? (
           <p className="rounded-xl bg-surface-muted px-3 py-2 text-xs text-muted-foreground">
-            Off. Your AI rep replies around the clock. Turn on to set open hours below.
+            Off. Your AI rep replies around the clock. Turn this on to set the hours below.
           </p>
         ) : null}
-        {businessHours.map((row) => (
-          <div
-            key={row.day}
-            className="flex flex-wrap items-center gap-3 rounded-xl border border-border px-3 py-2"
-          >
-            <span className="w-12 text-sm font-semibold">{DAY_LABELS[row.day]}</span>
-            <Switch
-              checked={!row.closed}
-              onCheckedChange={(open) => updateDay(row.day, { closed: !open })}
-              label={`${DAY_LABELS[row.day]} open`}
-            />
-            <span className="text-xs text-muted-foreground">
-              {row.closed ? "Closed" : "Open"}
-            </span>
-            <div className="ml-auto flex items-center gap-2">
-              <Input
-                type="time"
-                value={row.open}
-                disabled={row.closed}
-                onChange={(e) => updateDay(row.day, { open: e.target.value })}
-                className="w-32"
+        {/* A real fieldset, not a class (teardown B2). The master switch said
+            Off while seven rows of green toggles and editable times sat below
+            it at full contrast, so an owner could carefully set Sunday closed,
+            save, and have changed nothing. `disabled` on a fieldset disables
+            every control inside it, including the Switch, which is a button --
+            so nothing here can be touched while the rows do not apply, and no
+            control has to remember to opt in. */}
+        <fieldset disabled={!enabled} className="space-y-2 disabled:opacity-50">
+          {businessHours.map((row) => (
+            <div
+              key={row.day}
+              className="flex flex-wrap items-center gap-3 rounded-xl border border-border px-3 py-2"
+            >
+              <span className="w-12 text-sm font-semibold">{DAY_LABELS[row.day]}</span>
+              <Switch
+                checked={!row.closed}
+                disabled={!enabled}
+                onCheckedChange={(open) => updateDay(row.day, { closed: !open })}
+                label={`${DAY_LABELS[row.day]} open`}
               />
-              <span className="text-sm text-muted-foreground">to</span>
-              <Input
-                type="time"
-                value={row.close}
-                disabled={row.closed}
-                onChange={(e) => updateDay(row.day, { close: e.target.value })}
-                className="w-32"
-              />
+              <span className="text-xs text-muted-foreground">
+                {row.closed ? "Closed" : "Open"}
+              </span>
+              <div className="ml-auto flex items-center gap-2">
+                <Input
+                  type="time"
+                  value={row.open}
+                  disabled={row.closed}
+                  onChange={(e) => updateDay(row.day, { open: e.target.value })}
+                  className="w-32"
+                />
+                <span className="text-sm text-muted-foreground">to</span>
+                <Input
+                  type="time"
+                  value={row.close}
+                  disabled={row.closed}
+                  onChange={(e) => updateDay(row.day, { close: e.target.value })}
+                  className="w-32"
+                />
+              </div>
             </div>
+          ))}
+
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => copyMonday([1, 2, 3, 4])}
+            >
+              Apply Monday to weekdays
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => copyMonday([1, 2, 3, 4, 5, 6])}
+            >
+              Copy Monday to all days
+            </Button>
           </div>
-        ))}
+        </fieldset>
       </CardContent>
     </Card>
   );
@@ -584,26 +712,46 @@ export function VoiceSection({ form, setForm }: SectionProps) {
   );
 }
 
-/* ------------------------------------------------------------------ Skills */
+/* --------------------------------------------------------------- Business */
 
-export function EscalationSection({ form, setForm }: SectionProps) {
+/**
+ * Who to reach, and whether to (teardown V2, V4).
+ *
+ * This was on Skills, titled "Handover", which put a phone number and a
+ * notification preference on a page named after the eight things the rep can
+ * do and containing none of them. The number is a fact about the business --
+ * the same number a customer would be passed to -- so it belongs with the
+ * other business facts.
+ *
+ * The alert toggle travels with it rather than moving to Account, which is
+ * where the teardown suggested it. Account is per-person and reachable by a
+ * staff seat; this is one per-workspace setting written through
+ * `PUT /api/config`, which is owner-only. Putting it on Account would have
+ * shown a receptionist a switch that answers 403.
+ */
+export function ContactSection({ form, setForm }: SectionProps) {
   return (
     <Card>
       <CardHeader>
         <div>
-          <CardTitle>Handover</CardTitle>
-          <CardDescription>Where we reach you when a customer needs a person.</CardDescription>
+          <CardTitle>Contact number</CardTitle>
+          <CardDescription>
+            Where we reach you when a customer needs a person.
+          </CardDescription>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="space-y-1.5">
-          <Label htmlFor="owner-alert-number">Your WhatsApp number for alerts</Label>
+          <Label htmlFor="owner-alert-number">Your WhatsApp number</Label>
           <Input
             id="owner-alert-number"
             value={form.ownerAlertNumber}
             onChange={(e) => setForm({ ...form, ownerAlertNumber: e.target.value })}
             placeholder="+92 3XX XXXXXXX"
           />
+          <p className="text-xs text-muted-foreground">
+            Your own number, not the one your rep answers on.
+          </p>
         </div>
         <label className="flex items-center justify-between gap-3 rounded-xl border border-border px-3 py-2.5">
           <span className="text-sm">
@@ -658,15 +806,108 @@ export function PaymentsSection({ form, setForm }: SectionProps) {
   );
 }
 
-/* --------------------------------------------------------------- Workspace */
+/* ----------------------------------------------- Business, continued */
+
+/**
+ * The tenant's clock (teardown B1, N1, V2).
+ *
+ * This control did not exist. The timezone lived in two places, both of which
+ * silently meant UTC: inside the `business_hours` JSON, where the client sent
+ * the literal string "UTC" and nothing was bound to it, and inside the Google
+ * Calendar card on Integrations, where a tenant with no Google account could
+ * not reach it at all.
+ *
+ * Both failures were invisible. Opening hours evaluated in UTC make the rep
+ * refuse to talk to customers standing in the shop, and only once an owner
+ * turns hours on. A booking at "3 PM" lands at 8 PM Karachi time on the
+ * owner's real calendar, with a confirmation message saying three o'clock.
+ *
+ * The live time is shown beside the select on purpose: a timezone name is not
+ * something most people can check, and "Tue 14:32" is. It makes the setting
+ * confirm itself, which is the only defence against the next silent version of
+ * this bug.
+ *
+ * It belongs on Business rather than beside the opening hours, because the same
+ * value governs bookings, and putting it next to only one of its two consumers
+ * is how it ended up inside an optional integration in the first place.
+ */
+export function TimezoneSection({ form, setForm, deviceHints = true }: SectionProps) {
+  const options = useMemo(() => timezoneOptions(form.timezone), [form.timezone]);
+  const detected = browserTimezone();
+
+  // Re-rendered each minute so the confirmation stays true. A clock that is
+  // wrong by the time somebody reads it confirms nothing.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => tick((n) => n + 1), 30_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const now = timeIn(form.timezone);
+  const offset = offsetOf(form.timezone);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div>
+          <CardTitle>Time zone</CardTitle>
+          <CardDescription>
+            Used for your opening hours and for every appointment your rep books.
+          </CardDescription>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="timezone">Time zone</Label>
+          <select
+            id="timezone"
+            className={SELECT_CLASSES}
+            value={form.timezone}
+            onChange={(e) => setForm({ ...form, timezone: e.target.value })}
+          >
+            {options.map((zone) => (
+              <option key={zone} value={zone}>
+                {zone.replace(/_/g, " ")}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        {now ? (
+          <p className="text-sm text-muted-foreground">
+            It is{" "}
+            <strong className="font-bold text-foreground">{now}</strong>
+            {offset ? ` (UTC${offset})` : null} in this time zone.
+          </p>
+        ) : null}
+
+        {deviceHints && detected && detected !== form.timezone ? (
+          <p className="text-xs text-muted-foreground">
+            This device is in <strong className="text-foreground">{detected.replace(/_/g, " ")}</strong>.{" "}
+            <button
+              type="button"
+              className="font-semibold text-primary-strong underline-offset-2 hover:underline"
+              onClick={() => setForm({ ...form, timezone: detected })}
+            >
+              Use that instead
+            </button>
+          </p>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 
 export function BusinessNameSection({ form, setForm }: SectionProps) {
   return (
     <Card>
       <CardHeader>
         <div>
-          <CardTitle>Business</CardTitle>
-          <CardDescription>What your business is called.</CardDescription>
+          <CardTitle>Name</CardTitle>
+          <CardDescription>
+            What your business is called. Your rep introduces itself with this.
+          </CardDescription>
         </div>
       </CardHeader>
       <CardContent>

@@ -53,6 +53,27 @@ class User(Base, UUIDPrimaryKeyMixin, TimestampMixin):
     full_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_qonvo_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    #: Whether this address has been proven to belong to whoever holds the
+    #: account. Load-bearing rather than informational: the Google sign-in path
+    #: resolves accounts by email, so without this a stranger can pre-register
+    #: somebody else's address and inherit their workspace (teardown X2).
+    #:
+    #: ``default=False`` is a real default here, unlike ``warmup_stage`` -- the
+    #: two callers that create users (provision_tenant and accept_invitation)
+    #: both set it explicitly, and both are tested for it.
+    email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    #: Fernet-encrypted TOTP secret, and whether it is in force (teardown X4).
+    #:
+    #: Encrypted because it is a credential: whoever holds it can generate
+    #: valid codes forever. Stored on ``users`` rather than somewhere
+    #: admin-specific because the mechanism is not admin-specific -- the login
+    #: path requires a code from anybody who has enrolled.
+    #:
+    #: Two columns rather than one nullable secret, so a half-finished
+    #: enrolment (secret issued, first code never confirmed) cannot lock
+    #: somebody out of their own account.
+    totp_secret: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    totp_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
 
 class TenantUser(Base, TenantScopedMixin):
@@ -114,6 +135,14 @@ class TenantConfig(Base, TenantScopedMixin):
     # ``providers`` remains the internal per-capability provider map (§4).
     llm_provider: Mapped[str | None] = mapped_column(String(64), nullable=True)
     llm_model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    #: The tenant's own clock, and the only one (teardown B1/N1/V2).
+    #:
+    #: Opening hours used to carry their own timezone inside the
+    #: ``business_hours`` JSON, and bookings used a third value on the Google
+    #: Calendar integration. Both silently meant UTC, and the calendar one was
+    #: unreachable for a tenant with no Google account. One field, read by the
+    #: business-hours gate, the booking skills and the calendar client.
+    timezone: Mapped[str] = mapped_column(String(64), nullable=False, default="UTC")
     business_hours: Mapped[dict] = mapped_column(JSONBType, nullable=False, default=dict)
     escalation_rules: Mapped[dict] = mapped_column(JSONBType, nullable=False, default=dict)
     owner_alert_number: Mapped[str | None] = mapped_column(String(32), nullable=True)
@@ -123,6 +152,19 @@ class TenantConfig(Base, TenantScopedMixin):
     # ``share_payment_details`` skill when a customer wants to pay (§7). Free text
     # (bank name/title/number/IBAN, JazzCash/Easypaisa, etc.) — never card data.
     payment_details: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Where this business wants its billing notices sent (teardown Z7).
+    #:
+    #: A business's accounts department is usually not the person who signed
+    #: up, and until now every billing email went to whoever created the
+    #: account. NULL/empty means "use the owner's login address", which is the
+    #: old behaviour and the right default: a tenant that never fills this in
+    #: must keep receiving its invoices.
+    #:
+    #: Deliberately not accompanied by a tax id or a company address. Which of
+    #: those apply depends on the jurisdiction and on the merchant of record
+    #: that issues the invoice, and a field we collect but never print on
+    #: anything is worse than no field.
+    billing_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
 
 
 class AuditLog(Base, TenantScopedMixin):

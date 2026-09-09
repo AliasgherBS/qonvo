@@ -42,6 +42,7 @@ _HAIRLINE = "#E7E1D4"  # Paper-dim, already a token in globals.css
 _FONT = "-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif"
 
 __all__ = [
+    "verify_email",
     "DEEP_FOREST",
     "INK",
     "PAPER",
@@ -336,6 +337,65 @@ def password_reset(name: str | None, reset_url: str) -> tuple[str, str, str]:
         cta_label="Choose a new password",
         cta_url=reset_url,
         footer_note="Did not request this? Ignore this email and your password will not change.",
+    )
+    return subject, text, html
+
+
+def verify_email(name: str | None, verify_url: str) -> tuple[str, str, str]:
+    """Confirm the address at signup (teardown X2).
+
+    The "was this you?" line is not boilerplate here, it is the point. Without
+    verification a stranger could register somebody else's address and inherit
+    their workspace the day the real owner signed in with Google. This mail is
+    what makes that visible: it arrives at the real address the moment the
+    account is created, so a registration nobody asked for cannot happen
+    quietly.
+
+    It also says what is held back until the address is confirmed, because a
+    "verify your email" mail with no stated consequence is the kind people leave
+    unread and then wonder why the number will not link.
+    """
+    hello = f"Hi {name}," if name else "Hi there,"
+    subject = "Confirm your email address"
+    text = (
+        f"{hello}\n\n"
+        "Welcome to Qonvo. Confirm this is your email address by opening the "
+        "link below. It expires in 24 hours:\n\n"
+        f"{verify_url}\n\n"
+        "You can look around in the meantime. Confirming is what lets you "
+        "connect your WhatsApp number, so your rep cannot start answering "
+        "customers until it is done.\n\n"
+        "If you did not sign up for Qonvo, somebody used your address by "
+        "mistake or on purpose. Ignore this email and nothing further will "
+        "happen: an unconfirmed account cannot connect a WhatsApp number or "
+        "send a single message. If you would like it removed, reply to this "
+        "email and we will delete it.\n\n"
+        "The Qonvo team"
+    )
+    body = (
+        _p(hello)
+        + _p(
+            "Welcome to Qonvo. Confirm this is your address with the button below "
+            "and you are done. The link expires in 24 hours."
+        )
+        + _p(
+            "You can look around in the meantime. Confirming is what lets you connect "
+            "your WhatsApp number, so your rep cannot start answering customers "
+            "until it is done.",
+            color=_MUTED,
+        )
+    )
+    html = shell(
+        preheader="Confirm your address to finish setting up Qonvo. The link expires in 24 hours.",
+        eyebrow="Account security",
+        heading="Confirm your email address",
+        body_html=body,
+        cta_label="Confirm my address",
+        cta_url=verify_url,
+        footer_note=(
+            "Did not sign up? Ignore this email. An unconfirmed account cannot connect "
+            "a WhatsApp number or send any messages. Reply here and we will delete it."
+        ),
     )
     return subject, text, html
 

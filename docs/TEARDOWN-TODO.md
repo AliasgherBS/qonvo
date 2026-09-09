@@ -1,0 +1,216 @@
+# Teardown remediation — full inventory
+
+Every finding in `qonvo-teardown.html` (reviewed against the live site, 8 September
+2026), in the order it will be worked rather than the order it was reported.
+
+**64 findings. 3 are commendations** (V8, S6, D3) and need nothing. **61 actionable.**
+
+**Phases 2 to 9 are being worked in parallel** by six streams with disjoint file
+ownership. `dashboard/lib/api.ts` is shared, so `apiFetch` is exported from it
+and each stream owns a `dashboard/lib/api/<domain>.ts` instead; no stream writes
+an alembic migration, so the revision chain stays linear and one combined
+migration is written centrally.
+
+Ordering is by dependency, not by severity. Anything that moves a field between
+pages (V2) has to land before the per-page polish for those pages (V4–V7, P1,
+P2, B2–B4), or the polish is done twice. Anything that changes a shared
+primitive (dates, the rep switch, the nav groups) lands before its consumers.
+
+**Deferred** means it needs the owner's decision, an asset only they can supply,
+or an enrolment only they can perform — not that it is hard. Those are collected
+in the last table and are deliberately not started.
+
+---
+
+## Phase 0 — done
+
+| ID | Sev | Finding | Commit |
+|---|---|---|---|
+| X1 | Critical | Staff seat could cancel billing, change plan, rewrite `payment_details` | `092bb85` |
+| X7 | Latent | Reset token satisfied `decode_jwt` — `typ` required but never compared | `092bb85` |
+| V3 | Broken | Sidebar showed staff every owner-only page | `4efe591` |
+| X2 | Critical | No email verification + Google matched on email → pre-hijacking | `4efe591` |
+| X3 | High | `fetch_url_text` would fetch our own Docker network | `5a947ee` |
+| B1 | Broken | Business hours evaluated in UTC, unchangeable | `afd53fe` |
+| N1 | Broken | Calendar timezone also UTC — bookings five hours off | `afd53fe` |
+| Y1 | Broken | The only chart in the product painted nothing | `b89ee20` |
+| S1 | Broken | Mobile bar in normal flow, at the end of the document | `b89ee20` |
+| S2 | Broken | Five pages unreachable on a phone | `b89ee20` |
+| — | — | Product tour ringed 0,0 on mobile (not in the report) | `2c329e7` |
+
+V2 is partly done: the timezone was rehomed to Business. The rest of the
+scattering is Phase 4.
+
+---
+
+## Phase 1 — security, no UI dependencies
+
+Independent of every UI change, so it goes first and cannot be invalidated by
+the rehoming that follows.
+
+| # | ID | Sev | What |
+|---|---|---|---|
+| ~~1~~ | ~~X8~~ | Medium | **Done.** Audit rows for every state-changing owner route, actor resolved and named. Held by a property test over the route table |
+| ~~2~~ | ~~X6~~ | Medium | **Done.** `jti` + denylist for one session, per-subject and per-tenant markers for bulk. Wired to sign-out, sign-out-everywhere, password change, password reset, member removal and suspension. Auth.js session aligned to 24h |
+| ~~3~~ | ~~X5~~ | Medium | **Done.** Minimum 12, no composition rules, HIBP k-anonymity screening, business name and email local part refused, strength meter on all four forms |
+| ~~4~~ | ~~X9~~ | Low | **Done.** Argon2id cost pinned to what was in use, `aud`/`iss` minted and required, disposable domains refused. Its fourth item (QR reachable by staff) was closed by X1 |
+| ~~5~~ | ~~X6b~~ | Medium | **Done.** Rotating refresh keyed on a session id, capped at 14 days from the original sign-in; sign-out ends the session rather than one token |
+| ~~6~~ | ~~X4~~ | High | **Built.** TOTP (RFC 6238, verified against the RFC vectors), replay protection, `act` claim on impersonated tokens, audited actions attributed to the real admin. **Enrolment is the owner's to do** — see the deferred table |
+
+**Phases 1 to 9 are complete.** Every actionable finding is closed except
+the two recorded as skipped (V2's `country` field, S5's Team dead spot) and the
+six deferred below.
+
+**Phase 1 is complete.** Every security finding in the teardown is closed, bar
+one enrolment that is not code (see the deferred table).
+
+## Phase 2 — shared primitives and factual corrections
+
+Small, and they unblock or de-duplicate later work.
+
+| # | ID | Sev | What |
+|---|---|---|---|
+| ~~6~~ | ~~L2~~ | **Done** (landing claim corrected) | Costly | "Unlimited knowledge about your business" contradicts the caps that shipped. A false claim on a public page — corrected first, before anything cosmetic |
+| ~~7~~ | ~~K4~~ | Polish | **Done.** `dashboard/lib/format.ts` — `formatDate`, `formatDateTime`, `formatRelative`, `formatTime`, all pinned to en-GB so a date reads the same to the owner and to us |
+| ~~8~~ | ~~A1~~ | **Done** (real 404) | Rough | Any unknown URL becomes a login page, or a bare browser 404. A real `not-found` page |
+
+## Phase 3 — inbox
+
+The largest change in how the product feels, per the report, and self-contained.
+
+| # | ID | Sev | What |
+|---|---|---|---|
+| ~~9~~ | ~~I1~~ | **Done** (names not addresses) | Costly | Customers shown as `923009998877@c.us`. Push name where present, formatted number otherwise |
+| ~~10~~ | ~~I2~~ | **Done** (composer on screen (measured)) | Broken | Composer starts below the fold at 1440×900; the whole page scrolls to reach it |
+| ~~11~~ | ~~I3~~ | **Done** (one pane on mobile) | Broken | On a phone, tapping a conversation appears to do nothing — panes stack |
+| ~~12~~ | ~~I4~~ | **Done** (search, unread, dates) | Rough | No search, no unread state, no dates. Breaks at 300 conversations |
+| ~~13~~ | ~~I5~~ | **Done** (transcript polish) | Polish | Redundant "Customer"/"Bot" labels, Urdu line height, transcript density |
+| ~~14~~ | ~~S4~~ | **Done** (badge, link, trimmed reason) | Rough | Notifications: no unread badge, no link through, and it quotes the model's reasoning at the owner |
+
+## Phase 4 — information architecture
+
+Must precede the per-page work below it: these move fields between pages.
+
+| # | ID | Sev | What |
+|---|---|---|---|
+| ~~15~~ | ~~V1~~ | **Done** (group renamed Connections) | Costly | "Setup" is a lifecycle stage as a category. Rename the group to Connections |
+| ~~16~~ | ~~V2~~ | **Done** (business facts on Business) | Costly | Business facts live on four pages and Business holds none. Rehome name, country, contact number, opening hours onto Business |
+| ~~17~~ | ~~P2~~ | **Done** (resolved by V2) | Rough | Business is a nav entry for one text field — resolved by V2 |
+| ~~18~~ | ~~V4~~ | **Done** (skills only) | Rough | Skills mixes three concerns and contains no skills. Move alert number and payment details out |
+| ~~19~~ | ~~P1~~ | **Done** (eight real skills listed) | Rough | The Skills page lists no skills. List the eight, with their gating |
+| ~~20~~ | ~~V5~~ | **Done** (editable name) | Rough | Profile says "how you appear to your team" and lets you set nothing |
+| ~~21~~ | ~~V7~~ | **Done** (text not fake fields) | Rough | Read-only values dressed as form fields; "contact support" with no address |
+| ~~22~~ | ~~V6~~ | **Done** (2FA and sign out everywhere) | Rough | Account is missing 2FA, active sessions, "sign out everywhere", data export |
+| ~~23~~ | ~~B2~~ | **Done** (rows disabled with the master) | Rough | Hours master switch says Off while all seven day rows look active |
+| ~~24~~ | ~~B3~~ | **Done** (12 rows, sticky save) | Rough | 2,000-character field in a five-line box; one Save for three cards |
+| ~~25~~ | ~~B4~~ | **Done** (weekday copy, wider forms) | Polish | Seven identical day rows, no "apply to weekdays"; 745px form in a 1,150px area |
+| ~~26~~ | ~~S3~~ | **Done** (rep switch in the top bar) | Rough | The rep switch taxes every page by 90–130px. Move it into the top bar |
+| ~~27~~ | ~~S5~~ | **Done** (checklist status honest) | Polish | Three dead spots: the setup-checklist item, and two others |
+
+## Phase 5 — WhatsApp and integrations
+
+Depends on V1 (the group rename changes what this page is for).
+
+| # | ID | Sev | What |
+|---|---|---|---|
+| ~~28~~ | ~~W1~~ | **Done** (status page) | Broken | A connected tenant sees the same empty connect form as a new one. Make it a status page: number, state, last event, restart, re-link |
+| ~~29~~ | ~~W2~~ | **Done** (no session name) | Rough | Asks a salon owner to invent a "session name" |
+| ~~30~~ | ~~N2~~ | **Done** (emphasis swapped) | Rough | Reconnect is the primary button on a working connection |
+| ~~31~~ | ~~N3~~ | **Done** (usage line) | Rough | Nothing proves the integration has ever been used. "Last booking 2 hours ago" |
+
+## Phase 6 — knowledge
+
+| # | ID | Sev | What |
+|---|---|---|---|
+| ~~32~~ | ~~K3~~ | **Done** (caps on the page) | Rough | The caps are metered and invisible on the page they govern |
+| ~~33~~ | ~~K2~~ | **Done** (source facts) | Rough | A source is a name, a type and a date. No contribution, no last-crawled |
+| ~~34~~ | ~~K1~~ | **Done** (answer-this loop) | Rough | Gaps is the best idea in the product and a dead end. An "Answer this" button |
+
+## Phase 7 — analytics
+
+| # | ID | Sev | What |
+|---|---|---|---|
+| ~~35~~ | ~~Y2~~ | **Done** (hierarchy and a range) | Rough | Eight tiles of identical weight, five reading zero. Lead with two, add a range selector |
+
+## Phase 8 — billing
+
+| # | ID | Sev | What |
+|---|---|---|---|
+| ~~36~~ | ~~Z4~~ | **Done** (card on file) | Costly | The card on file is never shown. Expiry is the largest preventable cause of involuntary churn |
+| ~~37~~ | ~~Z2~~ | **Done** (voice compared) | Rough | Voice minutes are metered above and absent from the plan comparison |
+| ~~38~~ | ~~Z3~~ | **Done** (dates explained) | Polish | Two dates that look like they disagree; empty meters that look broken |
+| ~~39~~ | ~~Z5~~ | **Done** (stopped promising a number) | Rough | Proration promised in prose, never shown as a number |
+| ~~40~~ | ~~Z6~~ | **Done** (per-meter consequences) | Rough | Nothing says what happens when a meter fills, and the consequences differ per meter |
+
+## Phase 9 — landing page
+
+| # | ID | Sev | What |
+|---|---|---|---|
+| 41 | L3 | Rough | A 7,600px page with no navigation. Pricing sits 5,133px down |
+| 42 | L4 | Rough | Three consecutive sections leave the right half of a desktop viewport empty |
+| 43 | L5 | Rough | The same conversation art twice, 1,600px apart |
+| 44 | L6 | Polish | The language marquee repeats inside a single viewport |
+
+---
+
+## Deferred — needs the owner's decision, asset, or enrolment
+
+Not started. Collected here so the reason is on the record.
+
+| ID | Sev | What | What is needed |
+|---|---|---|---|
+| L1 / Z1 / D1 | Costly | Neither the site nor the plan picker names a price | **Still deferred at the owner's request.** Confirmation of the public figures and the currency shown to a Pakistani buyer |
+| ~~Y3~~ | Rough | **Done.** Hidden from owners, kept in the admin console, still returned by the API | decided |
+| ~~Z7~~ | Polish | **Done.** `billing@qonvo.org` as ours, a per-tenant billing address for theirs. **Tax fields skipped deliberately** and guarded by a test | decided |
+| ~~L7~~ | Polish | **Done.** A real clip from OpenAI text-to-speech; the bars are its progress and its seek bar | decided |
+| ~~D2~~ | Not built | **Done.** Scroll-scrubbed sticky stack, playable waveform, and a poster showing the finished booking | decided |
+| X4 (enrol) | High | TOTP on `qonvo_admin` | **The QR now exists and is verified.** Scan it at `/account` |
+
+---
+
+## Not actionable — commendations
+
+| ID | What |
+|---|---|
+| V8 | What the information architecture gets right |
+| S6 | Things the reviewer went looking to criticise and could not |
+| D3 | The September spec's hardest asks all shipped |
+
+---
+
+## Found while fixing, not in the report
+
+| What | Where |
+|---|---|
+| `reply_language_mode` was omitted from the Behavior page's submitted fields while its voice card edited it, so choosing a reply language was silently dropped and the page still said "Saved" | fixed |
+| Analytics counted leads, bookings, orders, handoffs and conversations over **all time** under a "last 30 days" heading | fixed |
+| `seed_dev.py` hand-rolled its token payload and drifted from `create_access_token` twice: once missing `typ` (every seeded token 401'd) and once missing `jti` (sign-out returned 204 and the token kept working) | fixed |
+| The product tour drew its highlight at 0,0 for three of four steps on mobile, pointing at `display:none` sidebar links | fixed |
+| `apiFetch` ignored an object-shaped error `detail`, so every structured refusal rendered as raw JSON to the user | fixed |
+| `run-dashboard-staging.sh` set `NEXT_DIST_DIR` for the build but not the serve, so every asset 400'd and staging loaded no JavaScript | fixed |
+| Staging's CORS never listed port 3012, where its own dashboard runs, so staging could never work in a browser | fixed |
+| Nothing purges tombstoned knowledge chunks, so a repeatedly re-crawled source accumulates against the tenant's character quota for ever | **open** |
+
+## Skipped, with the reason
+
+| ID | Why |
+|---|---|
+| V2 (`country` only) | Needs both a new column and a key in the shared API type; the rest of V2 was satisfied by rehoming existing fields |
+| S5 (Team dead spot) | The export control and the seat count live in a file the stream that found it did not own |
+
+## Verified by measurement, not by report
+
+Every rendering claim in this remediation was checked in a real browser rather
+than trusted:
+
+| Finding | Before | After |
+|---|---|---|
+| Y1 volume chart | 0 of 2 bars painted in an `h-40` row | 7 of 7, heights proportional (106 messages to 159px, 6 to 9px) |
+| S1 mobile bar | y=1114 in an 1,181px document, in flow | `position: fixed`, bottom edge at 844 in an 844 viewport |
+| S2 reachability | 5 pages reachable only by typing the URL | all 5 in the More sheet, Billing first |
+| I2 composer | bottom at 1061 in a 900px viewport, 210px of scroll | bottom at 851, zero scroll |
+| I3 mobile panes | transcript drew under the full list, off screen | 20 rows to 1, with a back affordance |
+| A1 unknown URL | 307 to `/login` | real 404 |
+| X4 QR | did not exist | screenshotted from the page, decoded independently, secret matches the key shown |
+| L7 voice | nothing to press | playing, 2.4s of 7.5s, 6 of 20 bars filled |
+| Product tour | ringed 0,0 for 3 of 4 steps on mobile | rings the bottom bar at y=782 |

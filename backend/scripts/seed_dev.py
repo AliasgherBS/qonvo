@@ -15,16 +15,14 @@ console. Dev-only — the real flow is admin-provisioned tenants (§9).
 from __future__ import annotations
 
 import asyncio
-import datetime as dt
 import sys
 from uuid import uuid4
 
-import jwt
-from app.core.config import settings
-from app.core.security import hash_password
+from app.core.security import decode_jwt
 from app.db.session import system_session_factory
 from app.models.enums import UserRole
 from app.models.tenant import Tenant, TenantConfig, TenantUser, User
+from app.services.auth import create_access_token, hash_password
 from sqlalchemy import select
 
 SLUG = sys.argv[1] if len(sys.argv) > 1 else "dev"
@@ -78,18 +76,23 @@ async def main() -> None:
                 )
             )
 
-    now = dt.datetime.now(dt.UTC)
-    token = jwt.encode(
-        {
-            "sub": DEV_OWNER_EMAIL,
-            "tenant_id": str(tenant_id),
-            "role": "owner",
-            "iat": now,
-            "exp": now + dt.timedelta(days=7),
-        },
-        settings.jwt_secret,
-        algorithm=settings.jwt_algorithm,
+    # Minted through create_access_token, not beside it. Two hand-rolled
+    # copies of that payload have drifted from it already: this script missed
+    # `typ` when it became required and 401'd every seeded token, and it missed
+    # `jti` so the token could not be revoked -- logout returned 204 and the
+    # token kept working. A week's TTL so a dev token survives a session.
+    token = create_access_token(
+        subject=DEV_OWNER_EMAIL,
+        tenant_id=tenant_id,
+        role="owner",
+        is_qonvo_admin=False,
+        expires_in_hours=24 * 7,
     )
+    # Prove it before printing it. A seed script that prints an unusable token
+    # wastes somebody's afternoon before they think to doubt the token.
+    claims = decode_jwt(token)
+    assert claims.jti, "a seeded token must be revocable"
+
     print(f"TENANT_ID={tenant_id}")
     print(f"OWNER_EMAIL={DEV_OWNER_EMAIL}")
     print(f"OWNER_PASSWORD={DEV_OWNER_PASSWORD}")

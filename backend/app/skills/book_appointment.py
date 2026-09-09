@@ -13,6 +13,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.core.config import settings
+from app.core.tenant_time import tenant_timezone
 from app.integrations import GOOGLE_CALENDAR
 from app.integrations.resolver import resolve_integration_client
 from app.models.business import Booking
@@ -80,7 +81,12 @@ async def handle(ctx: SkillContext, args: dict[str, Any]) -> dict[str, Any]:
     if not start_raw:
         return {"status": "error", "message": "A start time is required to book."}
 
-    tz_name = (args.get("timezone") or "").strip() or settings.google_default_timezone
+    # The tenant's own clock, not `settings.google_default_timezone`. That
+    # setting is a system-wide "UTC", so this skill ignored the timezone an
+    # owner had set on the Google Calendar card entirely: a customer booking
+    # "3 PM tomorrow" got an event at 8 PM Karachi time on the owner's real
+    # calendar, with a confirmation message saying three o'clock (teardown N1).
+    tz_name = (args.get("timezone") or "").strip() or tenant_timezone(ctx.tenant_config)
     try:
         start = _parse_iso(start_raw, tz_name)
     except ValueError:

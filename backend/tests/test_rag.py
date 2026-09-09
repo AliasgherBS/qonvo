@@ -193,7 +193,7 @@ def test_build_context_block_respects_token_budget():
 
 
 # --- ingestion orchestration (mocked db) --------------------------------------- #
-async def test_ingest_source_tombstones_then_inserts():
+async def test_ingest_source_deletes_the_previous_crawl_then_inserts():
     tenant_id = uuid.uuid4()
     source = KnowledgeSource(
         id=uuid.uuid4(),
@@ -209,11 +209,19 @@ async def test_ingest_source_tombstones_then_inserts():
         db, source, text="Some short knowledge text.", embedder=_FakeEmbedder([0.1, 0.2])
     )
 
-    # First call is the tombstone UPDATE.
-    tombstone_stmt = db.execute.await_args_list[0].args[0]
-    compiled = str(tombstone_stmt.compile(compile_kwargs={"literal_binds": True}))
-    assert "UPDATE" in compiled.upper()
-    assert "tombstoned" in compiled
+    # First call removes what is being replaced. A DELETE, not the tombstone
+    # UPDATE this used to assert: nothing ever read a tombstoned chunk, and the
+    # one query that counted them was the quota -- so a re-crawled page charged
+    # a business for text it no longer held, for ever, and nothing purged it.
+    first = db.execute.await_args_list[0].args[0]
+    compiled = str(first.compile(compile_kwargs={"literal_binds": True}))
+    assert "DELETE" in compiled.upper(), compiled
+    assert "UPDATE" not in compiled.upper(), compiled
+    # Scoped to this source and this tenant, or a re-crawl of one page wipes
+    # the whole knowledge base.
+    # .hex, not str(): SQLAlchemy renders a UUID literal without hyphens.
+    assert source.id.hex in compiled, compiled
+    assert tenant_id.hex in compiled, compiled
 
     assert len(chunks) == 1
     assert added == chunks

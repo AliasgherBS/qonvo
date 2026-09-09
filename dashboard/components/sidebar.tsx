@@ -10,6 +10,7 @@ import {
   Inbox,
   Plug,
   Radio,
+  ScrollText,
   Smartphone,
   Sparkles,
   SlidersHorizontal,
@@ -20,6 +21,7 @@ import { usePathname } from "next/navigation";
 
 import { Logo } from "@/components/logo";
 import type { Role } from "@/lib/api";
+import { canReach } from "@/lib/nav-access";
 import { cn } from "@/lib/utils";
 import { HelpMenu } from "@/components/help-menu";
 
@@ -47,7 +49,13 @@ const NAV_GROUPS: { label?: string; items: { href: string; label: string; icon: 
       ],
     },
     {
-      label: "Setup",
+      // Not "Setup" (teardown V1). WhatsApp and Integrations are not things
+      // you do once: the questions an owner brings to them -- is my number
+      // still linked, did the calendar write anything today -- are
+      // operational. Calling the group Setup told whoever built the WhatsApp
+      // page that its job was first-run, which is exactly what it does, so the
+      // label change is also the instruction for what gets built next.
+      label: "Connections",
       items: [
         { href: "/onboarding/connect", label: "WhatsApp", icon: Smartphone },
         { href: "/integrations", label: "Integrations", icon: Plug },
@@ -68,6 +76,9 @@ const ADMIN_NAV_ITEMS = [
   { href: "/admin/fleet", label: "Fleet Health", icon: Radio },
   { href: "/admin/health", label: "System Health", icon: Activity },
   { href: "/admin/usage", label: "Usage", icon: Gauge },
+  // The read side of audit_log. Populated by the console, by activation and by
+  // every owner-side action, and until now reachable only through psql.
+  { href: "/admin/audit", label: "Audit Log", icon: ScrollText },
 ];
 
 export function Sidebar({ role }: { role: Role }) {
@@ -89,18 +100,26 @@ export function Sidebar({ role }: { role: Role }) {
             ))}
           </div>
         ) : (
-          NAV_GROUPS.map((group, i) => (
-            <div key={group.label ?? i} className="flex flex-col gap-1">
-              {group.label ? (
-                <p className="px-3 pb-1 text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
-                  {group.label}
-                </p>
-              ) : null}
-              {group.items.map((item) => (
-                <NavLink key={item.href} {...item} active={pathname.startsWith(item.href)} />
-              ))}
-            </div>
-          ))
+          NAV_GROUPS.map((group, i) => {
+            // A staff seat gets the pages it can act on and no others. Showing
+            // a role a destination it cannot use is the cheapest kind of
+            // broken, and a group whose every item is filtered out would
+            // otherwise leave its heading behind with nothing under it.
+            const items = group.items.filter((item) => canReach(role, item.href));
+            if (items.length === 0) return null;
+            return (
+              <div key={group.label ?? i} className="flex flex-col gap-1">
+                {group.label ? (
+                  <p className="px-3 pb-1 text-[11px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                    {group.label}
+                  </p>
+                ) : null}
+                {items.map((item) => (
+                  <NavLink key={item.href} {...item} active={pathname.startsWith(item.href)} />
+                ))}
+              </div>
+            );
+          })
         )}
       </nav>
 

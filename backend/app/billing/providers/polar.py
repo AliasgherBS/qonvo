@@ -19,6 +19,15 @@ fires when a cancellation is *scheduled*, and the subscription keeps working
 until the period ends. ``subscription.revoked`` is when it actually stops.
 Treating the first as "off" would cut a paying customer off early, which is
 exactly the kind of billing bug that costs trust rather than money.
+
+**There is no proration preview.** Read from the published OpenAPI document
+(version 2026-04): ``SubscriptionChangePreview`` and ``SubscriptionChargePreview``
+exist as schemas and no route returns them, and ``PATCH /v1/subscriptions/{id}``
+takes no dry-run flag. So the amount a plan change costs today cannot be shown
+before the change is made — Polar computes it when the PATCH lands, under the
+organization's ``proration_behavior`` setting, and it surfaces on the invoice.
+The billing page says that in words rather than promising a figure it cannot
+produce.
 """
 
 from __future__ import annotations
@@ -37,6 +46,7 @@ import httpx
 from app.billing.plans import plan_for_price_id
 from app.billing.providers.base import (
     BillingEvent,
+    CardOnFile,
     Checkout,
     InvalidWebhookSignature,
     Payment,
@@ -233,6 +243,71 @@ class PolarProvider:
                 )
             )
         return out
+
+    def card_on_file(self, *, customer_id: str) -> CardOnFile | None:
+        """The default card, from ``GET /v1/customers/{id}/payment-methods``.
+
+        The endpoint is in Polar's published API (version 2026-04) and needs
+        the ``customers:read`` scope on the organization token. It reports
+        ``is_default`` per method plus ``method_metadata`` with brand, last4
+        and expiry, which is exactly the set a customer needs to recognise
+        their own card. It reports no token or number, and we would not carry
+        one if it did.
+
+        Everything unexpected returns None, including a 403 from a token
+        without the scope. Showing nothing is the honest failure: the customer
+        keeps a working "Update card" button, and nobody is shown a card that
+        might not be the one being charged.
+        """
+        if not settings.polar_access_token:
+            return None
+        try:
+            response = httpx.get(
+                f"{self._api}/customers/{customer_id}/payment-methods",
+                headers={"Authorization": f"Bearer {settings.polar_access_token}"},
+                # Polar caps this at 100. A customer usually has one, but a
+                # default sitting behind a page boundary would be reported as
+                # "no card", so ask for all of them in one go.
+                params={"limit": 100},
+                timeout=20,
+            )
+            response.raise_for_status()
+            items = response.json().get("items") or []
+        except Exception as exc:  # noqa: BLE001 - the page must still render
+            logger.warning(f"polar payment method lookup failed: {exc}")
+            return None
+
+        cards = [
+            item
+            for item in items
+            if isinstance(item, dict) and item.get("type") == "card"
+        ]
+        if not cards:
+            # A non-card method (Polar also has generic and Korean-card types)
+            # has no brand or expiry to show, and there is nothing useful to say
+            # about it that the provider's own portal does not say better.
+            return None
+
+        # is_default is the one that will actually be charged. Falling back to
+        # the first is for an older account whose methods predate the flag:
+        # wrong ordering is survivable, a card belonging to nobody is not.
+        chosen = next((card for card in cards if card.get("is_default")), cards[0])
+        meta = chosen.get("method_metadata") or {}
+        brand = _str_or_none(meta.get("brand"))
+        last4 = _str_or_none(meta.get("last4"))
+        exp_month = _int_or_none(meta.get("exp_month"))
+        exp_year = _int_or_none(meta.get("exp_year"))
+        if not (brand and last4 and exp_month and exp_year):
+            # Partial metadata cannot answer the question this exists to
+            # answer, which is "is my card about to expire".
+            return None
+        return CardOnFile(
+            brand=brand,
+            last4=last4,
+            exp_month=exp_month,
+            exp_year=exp_year,
+            wallet=_str_or_none(meta.get("wallet")),
+        )
 
     def set_cancellation(
         self,

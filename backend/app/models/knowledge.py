@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import Boolean, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -33,6 +34,14 @@ class KnowledgeSource(Base, TenantScopedMixin):
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending_ingest")
     auto_refresh: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     cron: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # When ingestion last *succeeded* (teardown K2). A website fetched six weeks
+    # ago looked identical in the table to one fetched this morning, so nothing
+    # on the page could tell an owner their published prices were stale.
+    # ``updated_at`` cannot answer this: it moves on a title edit and on every
+    # status write, including the write that records a failure.
+    last_ingested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     meta: Mapped[dict] = mapped_column(JSONBType, nullable=False, default=dict)
 
 
