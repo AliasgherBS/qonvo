@@ -146,7 +146,7 @@ STAFF_ALLOWED: set[tuple[str, str]] = {
     ("/api/integrations/google_sheets/picker-token", "GET"),
     ("/api/analytics/summary", "GET"),
     ("/api/team", "GET"),
-    ("/api/account", "GET"),
+    ("/api/account/profile", "GET"),
     # Your own display name, which is a property of the person and not of the
     # workspace (teardown V5). Owner-gating it would leave a staff seat with
     # exactly the finding this fixes, and the payload carries no user id, so it
@@ -255,3 +255,24 @@ def test_accepting_an_invitation_is_authenticated_by_its_own_token():
 
     accept = functions["accept_invitation"]
     assert "invite.status = 'accepted'" in accept, "accepting must consume the invite"
+
+
+def test_the_allowlist_has_no_entries_for_routes_that_do_not_exist():
+    """A stale entry is a pre-approval waiting for a route to arrive.
+
+    ``STAFF_ALLOWED`` is consulted only to skip a route, so an entry naming a
+    path the app does not serve is inert -- until somebody adds that path,
+    which then arrives already exempt from the property above with nobody
+    having decided that. Found live: the list carried ``GET /api/account``,
+    which has never existed (the routes are ``/api/account/profile`` and
+    ``/api/account/export``), so the read a staff seat actually makes was
+    never covered and a future ``/api/account`` would have been waved through.
+    """
+    table = _by_endpoint()
+    stale = sorted(
+        f"{method} {path}" for path, method in STAFF_ALLOWED if (path, method) not in table
+    )
+    assert not stale, (
+        "these are allowlisted and not served by the app. Remove them, or "
+        "correct the path: " + ", ".join(stale)
+    )

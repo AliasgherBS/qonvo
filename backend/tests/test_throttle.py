@@ -49,12 +49,17 @@ class FakeRedis:
 
 # --- the limit does what it says -------------------------------------------------- #
 async def test_an_ip_is_allowed_up_to_the_limit_then_refused():
+    """Asked of SIGNUP, because that is the shape where every attempt counts.
+
+    This used to be asked of LOGIN, and LOGIN is the one throttle where a
+    successful request must *not* count -- see the block below.
+    """
     redis = FakeRedis()
 
-    for _ in range(throttle.LOGIN.limit):
-        assert await throttle.check(redis, throttle.LOGIN, ip="1.2.3.4", account=None) is False
+    for _ in range(throttle.SIGNUP.limit):
+        assert await throttle.check(redis, throttle.SIGNUP, ip="1.2.3.4", account=None) is False
 
-    assert await throttle.check(redis, throttle.LOGIN, ip="1.2.3.4", account=None) is True
+    assert await throttle.check(redis, throttle.SIGNUP, ip="1.2.3.4", account=None) is True
 
 
 async def test_the_window_is_set_once_not_on_every_hit():
@@ -64,20 +69,95 @@ async def test_the_window_is_set_once_not_on_every_hit():
     redis = FakeRedis()
 
     for _ in range(5):
-        await throttle.check(redis, throttle.LOGIN, ip="1.2.3.4", account=None)
+        await throttle.check(redis, throttle.SIGNUP, ip="1.2.3.4", account=None)
 
     [ttl] = set(redis.expiries.values())
-    assert ttl == throttle.LOGIN.window_seconds
+    assert ttl == throttle.SIGNUP.window_seconds
     assert len(redis.expiries) == 1  # one key, one expiry call
 
 
 async def test_two_addresses_do_not_share_a_budget():
     redis = FakeRedis()
 
-    for _ in range(throttle.LOGIN.limit + 1):
-        await throttle.check(redis, throttle.LOGIN, ip="1.1.1.1", account=None)
+    for _ in range(throttle.SIGNUP.limit + 1):
+        await throttle.check(redis, throttle.SIGNUP, ip="1.1.1.1", account=None)
 
-    assert await throttle.check(redis, throttle.LOGIN, ip="2.2.2.2", account=None) is False
+    assert await throttle.check(redis, throttle.SIGNUP, ip="2.2.2.2", account=None) is False
+
+
+# --- an address is shared; an account is not -------------------------------------- #
+#
+# The gap these close is the one this file's own opening paragraph warns about,
+# and it shipped anyway: every test above passed `account=None`, so none of them
+# ever asked what a *successful* login does to the address counter. It consumed
+# it. Ten correct logins from one office connection locked out the eleventh for
+# fifteen minutes -- verified live against staging before the fix, twelve valid
+# logins reading 200 x10 then 429, 429.
+#
+# It matters more here than it would elsewhere. An owner and three staff share
+# one office address, and Pakistani mobile networks put whole subscriber
+# populations behind CGNAT, so "one address" can mean a business or a stranger.
+
+
+async def test_a_successful_login_does_not_consume_the_address_budget():
+    redis = FakeRedis()
+
+    for _ in range(throttle.LOGIN.effective_ip_limit + 5):
+        assert await throttle.check(redis, throttle.LOGIN, ip="1.2.3.4", account=None) is False
+
+    assert [k for k in redis.values if ":ip:" in k] == []
+
+
+async def test_failed_logins_do_consume_it():
+    """Not counting successes must not mean not counting at all -- that would
+    remove the address limit rather than fix it."""
+    redis = FakeRedis()
+
+    # limit + 1, matching how the account counter already reads: `check`
+    # compares the stored count with `> limit`, so the allowance is spent on
+    # the attempt *after* the limit rather than on it. Verified live at the
+    # account limit of ten -- the refusal lands on the eleventh.
+    for _ in range(throttle.LOGIN.effective_ip_limit + 1):
+        await throttle.record_failure(
+            redis, throttle.LOGIN, account="a@b.com", ip="1.2.3.4"
+        )
+
+    assert await throttle.check(redis, throttle.LOGIN, ip="1.2.3.4", account=None) is True
+
+
+async def test_the_address_is_not_refused_one_failure_early():
+    """The boundary in the other direction, so a fix to the comparison above
+    cannot quietly tighten the limit by one."""
+    redis = FakeRedis()
+
+    for _ in range(throttle.LOGIN.effective_ip_limit):
+        await throttle.record_failure(
+            redis, throttle.LOGIN, account="a@b.com", ip="1.2.3.4"
+        )
+
+    assert await throttle.check(redis, throttle.LOGIN, ip="1.2.3.4", account=None) is False
+
+
+async def test_the_address_allowance_is_larger_than_one_account_s():
+    """A shared address has to hold several people having a bad morning."""
+    assert throttle.LOGIN.effective_ip_limit > throttle.LOGIN.limit
+
+
+async def test_the_login_endpoint_passes_the_address_to_record_failure():
+    """The counter only exists if the caller bumps it, and the signature makes
+    ``ip`` optional -- so a call site that omits it gets an address with no
+    limit at all, silently."""
+    import inspect
+
+    from app.api import auth
+
+    source = inspect.getsource(auth.login)
+    failures = source.count("record_failure")
+    assert failures >= 2, "expected the wrong-password and wrong-code paths"
+    assert source.count("ip=caller_ip") >= failures, (
+        "every record_failure in login must pass the address, or the per-address "
+        "limit is not enforced on that path"
+    )
 
 
 # --- the ways it could hurt the wrong person -------------------------------------- #

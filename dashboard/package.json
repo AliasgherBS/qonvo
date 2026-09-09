@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint",
     "verify:brand": "node scripts/verify-brand.mjs",
-    "verify:qr": "node scripts/verify-qr.mjs"
+    "verify:qr": "node scripts/verify-qr.mjs",
+    "verify:nav": "node scripts/verify-nav-access.mjs"
   },
   "dependencies": {
     "lucide-react": "^1.23.0",

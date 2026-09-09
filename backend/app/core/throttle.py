@@ -39,12 +39,46 @@ class Throttle:
     name: str
     limit: int
     window_seconds: int
+    #: The per-IP allowance, when it should differ from the per-account one.
+    #: An address is shared and an account is not, so the two are not the same
+    #: question -- see ``ip_counts_successes``.
+    ip_limit: int | None = None
+    #: Whether a *successful* request counts against the address.
+    #:
+    #: True for anything whose cost is paid per attempt however it turns out:
+    #: a signup creates a tenant, a config row and a session slot; a reset
+    #: sends an email. Refusing those after N attempts is the entire
+    #: protection, so the counter has to see all of them.
+    #:
+    #: False for login, where a success is somebody doing the ordinary thing
+    #: and costs us nothing. Counting successes there was a real bug: ten
+    #: correct logins from one office address locked out the eleventh for
+    #: fifteen minutes. Verified before the fix -- twelve valid logins in a
+    #: row went 200 x10 then 429, 429, with no failure anywhere.
+    ip_counts_successes: bool = True
+
+    @property
+    def effective_ip_limit(self) -> int:
+        return self.limit if self.ip_limit is None else self.ip_limit
 
 
 #: Generous enough that a person fat-fingering their password never notices,
 #: tight enough that a dictionary attack is pointless. Ten failures in fifteen
 #: minutes is far past what a real login looks like.
-LOGIN = Throttle("login", limit=10, window_seconds=15 * 60)
+#:
+#: The address gets its own, much larger allowance, and only failures count
+#: against it. Both parts matter in this market: an owner and three staff on
+#: one office connection share an address, and Pakistani mobile networks put
+#: whole subscriber populations behind CGNAT -- so a per-attempt limit of ten
+#: per address is a limit on a business, or on a stranger, and not on an
+#: attacker.
+LOGIN = Throttle(
+    "login",
+    limit=10,
+    window_seconds=15 * 60,
+    ip_limit=50,
+    ip_counts_successes=False,
+)
 
 #: Signup is a write and creates a tenant, a config row and a WhatsApp session
 #: slot, so the cost of abuse is ours rather than a wasted guess.
@@ -81,10 +115,16 @@ async def check(client, throttle: Throttle, *, ip: str | None, account: str | No
     try:
         if ip:
             key = _key(throttle, "ip", ip)
-            count = await client.incr(key)
-            if count == 1:
-                await client.expire(key, throttle.window_seconds)
-            if count > throttle.limit:
+            if throttle.ip_counts_successes:
+                count = await client.incr(key)
+                if count == 1:
+                    await client.expire(key, throttle.window_seconds)
+            else:
+                # Read only. The bump lives in record_failure, so an ordinary
+                # working day never accumulates against a shared address.
+                raw = await client.get(key)
+                count = int(raw) if raw is not None else 0
+            if count > throttle.effective_ip_limit:
                 logger.warning(f"throttled {throttle.name} by ip")
                 return True
 
@@ -102,17 +142,29 @@ async def check(client, throttle: Throttle, *, ip: str | None, account: str | No
     return False
 
 
-async def record_failure(client, throttle: Throttle, *, account: str | None) -> None:
-    """Count one failed attempt against an account."""
-    if not account:
-        return
-    try:
-        key = _key(throttle, "acct", account)
-        count = await client.incr(key)
-        if count == 1:
-            await client.expire(key, throttle.window_seconds)
-    except Exception as exc:  # noqa: BLE001 - counting is best effort
-        logger.warning(f"could not record throttle failure: {exc}")
+async def record_failure(
+    client, throttle: Throttle, *, account: str | None, ip: str | None = None
+) -> None:
+    """Count one failed attempt, against the account and against the address.
+
+    ``ip`` is where the per-address counter is bumped for a throttle that does
+    not count successes. Passing it is what makes the address limit exist at
+    all for login, so it is not optional in practice -- the caller that forgets
+    it gets an unlimited address.
+    """
+    subjects = [("acct", account)]
+    if ip and not throttle.ip_counts_successes:
+        subjects.append(("ip", ip))
+    for kind, subject in subjects:
+        if not subject:
+            continue
+        try:
+            key = _key(throttle, kind, subject)
+            count = await client.incr(key)
+            if count == 1:
+                await client.expire(key, throttle.window_seconds)
+        except Exception as exc:  # noqa: BLE001 - counting is best effort
+            logger.warning(f"could not record throttle failure: {exc}")
 
 
 async def clear(client, throttle: Throttle, *, account: str | None) -> None:

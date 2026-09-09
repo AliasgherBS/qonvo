@@ -123,9 +123,8 @@ async def login(
     db: AsyncSession = Depends(get_system_db),
 ) -> LoginResponse:
     redis = get_redis()
-    if await throttle.check(
-        redis, throttle.LOGIN, ip=throttle.client_ip(request), account=body.email
-    ):
+    caller_ip = throttle.client_ip(request)
+    if await throttle.check(redis, throttle.LOGIN, ip=caller_ip, account=body.email):
         # 429 with a Retry-After rather than a 401. Telling an attacker they are
         # rate limited costs nothing they could not measure anyway, and telling
         # a real user "invalid password" when the password was right sends them
@@ -138,7 +137,9 @@ async def login(
 
     result = await authenticate(db, body.email, body.password)
     if result is None:
-        await throttle.record_failure(redis, throttle.LOGIN, account=body.email)
+        await throttle.record_failure(
+            redis, throttle.LOGIN, account=body.email, ip=caller_ip
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="invalid email or password",
@@ -153,7 +154,9 @@ async def login(
             # The failure counts against the account, like a wrong password:
             # otherwise a correct password plus unlimited code guesses is a
             # million tries at six digits.
-            await throttle.record_failure(redis, throttle.LOGIN, account=body.email)
+            await throttle.record_failure(
+                redis, throttle.LOGIN, account=body.email, ip=caller_ip
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={
