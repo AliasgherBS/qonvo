@@ -9,6 +9,8 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-09
+
 ### Added
 
 - **A readable audit log in the ops console.** Every state-changing admin action was
@@ -372,3 +374,4 @@ could be sold.
 [0.10.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.0
 [0.10.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.1
 [0.10.2]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.2
+[0.11.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.0
