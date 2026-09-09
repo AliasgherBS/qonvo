@@ -401,6 +401,12 @@ async def billing_usage(
     Reads ``services.usage.tenant_usage``, which is also what the admin console
     reads. That is the point of §4.3: one computation, so an owner and an
     operator looking at the same tenant cannot be shown different numbers.
+
+    The payload carries ``scope: "tenant"`` and, for voice, both the minutes an
+    owner is sold and the seconds the gate counts. One computation was never
+    enough on its own: the same 89 stored seconds read as "2 min of 5" here and
+    as 89 on the admin endpoint, and neither said which unit or whose usage it
+    was (F7).
     """
     from app.services.usage import tenant_usage
 

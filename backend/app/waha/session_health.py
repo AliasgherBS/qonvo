@@ -154,13 +154,26 @@ async def poll_session_health(waha: WahaClient) -> int:
                         Notification(
                             tenant_id=sess.tenant_id,
                             type=NotificationType.session_failed,
-                            title="WhatsApp session disconnected",
+                            title="WhatsApp number still down after 3 tries",
                             body=(
-                                f"Session '{sess.label or sess.session_name}' is "
-                                "down and could not be reconnected automatically. "
-                                "Reconnect it from the dashboard."
+                                f"We tried {MAX_RECOVERY_ATTEMPTS} times over "
+                                "half an hour to reconnect "
+                                f"'{sess.label or sess.session_name}' and could "
+                                "not. Automatic reconnection has stopped, so "
+                                "this one needs you: open Connect in your "
+                                "dashboard and link the number again."
                             ),
-                            meta={"session_name": sess.session_name},
+                            # The owner already heard about this outage three
+                            # minutes in, from sweep_session_alerts. This is
+                            # the second and last message about it, so it says
+                            # what changed -- we have given up -- rather than
+                            # repeating the first. Marked so the dashboard can
+                            # tell the two apart without parsing the copy.
+                            meta={
+                                "session_name": sess.session_name,
+                                "escalation": "recovery_exhausted",
+                                "attempts": MAX_RECOVERY_ATTEMPTS,
+                            },
                         )
                     )
                     sess.recovery_attempts += 1

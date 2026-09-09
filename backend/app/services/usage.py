@@ -8,6 +8,12 @@ least able to notice that their screen disagrees with the customer's.
 So every meter in the product comes from here, including the thresholds. "Amber
 at 80%" living in two CSS files is the same bug in a cheaper disguise.
 
+Two granularities of one number are published for voice, not two numbers:
+``voice_minutes`` is what the owner is sold and rounds up, ``voice_seconds`` is
+what is stored and gated on. 89 stored seconds is "2 min of 5" on the billing
+page and 89 on the admin one, which looked like two different figures for the
+same tenant until both came from here with the unit and the scope attached.
+
 What this module deliberately does not do is decide anything. It reports. The
 gates live where the consequence lives: ``is_hard_quota_exceeded`` in the
 pipeline stops replies, ``voice_allowance`` pauses voice, ``check_room_for``
@@ -98,6 +104,13 @@ class TenantUsage:
     period_end: dt.date
     messages: Meter
     voice_minutes: Meter
+    #: The same voice figure in the unit it is stored and metered in. Minutes
+    #: are the unit an owner is sold; seconds are the unit the gate counts, and
+    #: the two disagree by up to 59 seconds because ``used_minutes`` rounds up
+    #: (89s stored reads as "2 min of 5"). Publishing both is what stopped the
+    #: owner's page and the admin console looking like different numbers for
+    #: the same tenant (F7). Same computation, two granularities, one source.
+    voice_seconds: Meter
     seats: Meter
     knowledge_sources: Meter
     knowledge_chars: Meter
@@ -132,11 +145,16 @@ class TenantUsage:
     def as_dict(self) -> dict:
         return {
             "tenant_id": str(self.tenant_id),
+            # Every meter here is one tenant, this period. Said out loud because
+            # the platform-wide voice counter on System Health is a different
+            # scope and reads as a contradiction of this one otherwise (F7).
+            "scope": "tenant",
             "plan": self.plan,
             "period_start": self.period_start.isoformat(),
             "period_end": self.period_end.isoformat(),
             "messages": self.messages.as_dict(),
             "voice_minutes": self.voice_minutes.as_dict(),
+            "voice_seconds": self.voice_seconds.as_dict(),
             "seats": self.seats.as_dict(),
             "knowledge_sources": self.knowledge_sources.as_dict(),
             "knowledge_chars": self.knowledge_chars.as_dict(),
@@ -230,6 +248,9 @@ async def tenant_usage(
             used=voice.used_minutes,
             allowed=entitlement(entitlements, VOICE_MINUTES_KEY, 5),
         ),
+        # Straight off the same VoiceAllowance, so there is no second sum of
+        # usage_counters.voice_seconds anywhere in the product.
+        voice_seconds=Meter(used=voice.used_seconds, allowed=voice.allowed_seconds),
         seats=Meter(
             used=int(members or 0) + int(pending or 0),
             allowed=entitlement(entitlements, "seats", 2),

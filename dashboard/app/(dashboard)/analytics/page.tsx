@@ -181,8 +181,17 @@ function AnalyticsContent({ data }: { data: AnalyticsSummary }) {
  *
  * Stacked in and out rather than one total, since both numbers are already in
  * the response and "we answered" is the interesting half.
+ *
+ * Days with no traffic are filled in before anything is drawn (finding F10).
+ * The endpoint returns only days that have a usage row, so a gap arrived as
+ * three evenly spaced bars labelled 5 Sep, 6 Sep, 8 Sep: a quiet day rendered
+ * as continuity, and the axis lied about time. Zero-height columns are the
+ * honest shape, and they are also the interesting one, because a run of empty
+ * days next to a busy one is the thing an owner needs to see.
  */
-function VolumeChart({ daily }: { daily: AnalyticsSummary["daily"] }) {
+function VolumeChart({ daily: sparse }: { daily: AnalyticsSummary["daily"] }) {
+  const daily = withEmptyDays(sparse);
+
   if (daily.length === 0) {
     return (
       <div className="mt-3">
@@ -270,6 +279,42 @@ function VolumeChart({ daily }: { daily: AnalyticsSummary["daily"] }) {
       </div>
     </div>
   );
+}
+
+/**
+ * One entry per calendar day between the first and last day present.
+ *
+ * Bounded by the data rather than by the selected range on purpose: the
+ * response says how many days were asked for but not which day the window ends
+ * on, and inventing that boundary from the browser's clock would put a day that
+ * has not happened yet in UTC on the end of the axis. That is a different way
+ * to be wrong about time, and this fix is about not being wrong about time.
+ *
+ * Guarded on both ends: an unparseable day, or a span wider than any real
+ * range, returns the input untouched. A chart that paints something imperfect
+ * beats one that stops painting, which is the failure this chart already had
+ * once.
+ */
+const MAX_FILLED_DAYS = 400;
+
+function withEmptyDays(daily: AnalyticsSummary["daily"]): AnalyticsSummary["daily"] {
+  if (daily.length < 2) return daily;
+
+  const ordered = [...daily].sort((a, b) => a.day.localeCompare(b.day));
+  const first = Date.parse(`${ordered[0].day}T00:00:00Z`);
+  const last = Date.parse(`${ordered[ordered.length - 1].day}T00:00:00Z`);
+  if (Number.isNaN(first) || Number.isNaN(last)) return daily;
+
+  const span = Math.round((last - first) / 86_400_000) + 1;
+  if (span <= ordered.length || span > MAX_FILLED_DAYS) return ordered;
+
+  const known = new Map(ordered.map((d) => [d.day, d]));
+  const filled: AnalyticsSummary["daily"] = [];
+  for (let i = 0; i < span; i += 1) {
+    const day = new Date(first + i * 86_400_000).toISOString().slice(0, 10);
+    filled.push(known.get(day) ?? { day, messagesIn: 0, messagesOut: 0, cost: 0 });
+  }
+  return filled;
 }
 
 /** "2026-09-05" as "5 Sep". Falls back to the raw string if it will not parse. */

@@ -107,6 +107,8 @@ interface SkillInfoDto {
   requires_integration: string | null;
   requires_config_key: string | null;
   needs: string | null;
+  conflict: string | null;
+  conflict_quote: string | null;
 }
 
 export interface SkillInfo {
@@ -118,6 +120,14 @@ export interface SkillInfo {
   requiresConfigKey: string | null;
   /** Plain-language reason it is not available yet. Null when it is. */
   needs: string | null;
+  /**
+   * Set when the owner's own instructions look like they forbid something this
+   * working skill does. Says which one wins, and admits to being a keyword
+   * check rather than a reading of the instructions.
+   */
+  conflict: string | null;
+  /** The owner's own sentence that triggered it, so they can go and find it. */
+  conflictQuote: string | null;
 }
 
 export const skills = {
@@ -131,6 +141,8 @@ export const skills = {
         requiresIntegration: r.requires_integration,
         requiresConfigKey: r.requires_config_key,
         needs: r.needs,
+        conflict: r.conflict,
+        conflictQuote: r.conflict_quote,
       })),
     ),
 };

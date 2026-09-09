@@ -483,32 +483,81 @@ function AddUrlDialog({
   );
 }
 
+/**
+ * The upload picker (finding F10).
+ *
+ * Two things were wrong and both were one-line lies about what the product can
+ * do. It took a single file per visit, so a business with a menu, a price list
+ * and a policy sheet went round three times. And the picker accepted
+ * `.pdf .docx .csv` only, while `agent/ingestion.py` has always dispatched
+ * `text`/`markdown` through `parse_text` - so the two formats a small business
+ * is most likely to have lying around were the two it could not choose.
+ *
+ * `.doc` is deliberately still excluded: `extract_text` routes it to
+ * `parse_docx`, and `python-docx` cannot read the legacy binary format. It
+ * would be accepted here and fail in the worker, which is a worse experience
+ * than not being offered.
+ *
+ * Files are uploaded one request at a time rather than in parallel. Each one is
+ * a create-then-upload pair against per-tenant quota checks, and firing ten at
+ * once turns a quota refusal into an unpredictable subset of the batch landing.
+ * The count in the label is what makes serial uploading legible.
+ */
+const UPLOAD_ACCEPT = ".pdf,.docx,.csv,.txt,.md,.markdown,text/plain,text/markdown";
+
 function UploadDropzone({ onUploaded }: { onUploaded: () => void }) {
   const token = useAuthToken();
   const { toast } = useToast();
   const [isDragging, setIsDragging] = useState(false);
   const [status, setStatus] = useState<"idle" | "uploading" | "error">("idle");
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  async function upload(file: File) {
+  async function upload(files: File[]) {
+    if (files.length === 0) return;
     setStatus("uploading");
-    try {
-      const source = await knowledge.createFileSource(file.name, { token });
-      await knowledge.uploadFile(source.id, file, { token });
-      toast({ title: "File uploaded", description: file.name, variant: "success" });
-      onUploaded();
-      setStatus("idle");
-    } catch (err) {
-      setStatus("error");
-      toast({ title: "Upload failed", description: describeError(err), variant: "error" });
+    setProgress({ done: 0, total: files.length });
+    const failed: string[] = [];
+    let uploaded = 0;
+
+    for (const file of files) {
+      try {
+        const source = await knowledge.createFileSource(file.name, { token });
+        await knowledge.uploadFile(source.id, file, { token });
+        uploaded += 1;
+      } catch (err) {
+        failed.push(file.name);
+        // The first failure is the one worth reading: a quota refusal repeats
+        // identically for every file behind it.
+        if (failed.length === 1) {
+          toast({ title: "Upload failed", description: describeError(err), variant: "error" });
+        }
+      }
+      setProgress({ done: uploaded + failed.length, total: files.length });
     }
+
+    if (uploaded > 0) {
+      toast({
+        title: uploaded === 1 ? "File uploaded" : `${uploaded} files uploaded`,
+        description:
+          failed.length > 0
+            ? `${failed.length} could not be added: ${failed.join(", ")}`
+            : files
+                .filter((f) => !failed.includes(f.name))
+                .map((f) => f.name)
+                .join(", "),
+        variant: "success",
+      });
+      onUploaded();
+    }
+    setStatus(failed.length > 0 && uploaded === 0 ? "error" : "idle");
+    setProgress(null);
   }
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {
     event.preventDefault();
     setIsDragging(false);
-    const file = event.dataTransfer.files?.[0];
-    if (file) void upload(file);
+    void upload(Array.from(event.dataTransfer.files ?? []));
   }
 
   return (
@@ -528,18 +577,26 @@ function UploadDropzone({ onUploaded }: { onUploaded: () => void }) {
       <input
         ref={inputRef}
         type="file"
+        multiple
         className="hidden"
-        accept=".pdf,.docx,.csv"
+        accept={UPLOAD_ACCEPT}
         onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) void upload(file);
+          const files = Array.from(e.target.files ?? []);
+          // Cleared so picking the same file again still fires a change event,
+          // which is how a retry after a failed upload works at all.
+          e.target.value = "";
+          void upload(files);
         }}
       />
       <FileUp className="h-6 w-6 text-muted-foreground" />
       <p className="text-sm font-semibold">
-        {status === "uploading" ? "Uploading…" : "Drop a PDF, DOCX, or CSV here"}
+        {status === "uploading"
+          ? progress && progress.total > 1
+            ? `Uploading ${progress.done + 1} of ${progress.total}…`
+            : "Uploading…"
+          : "Drop PDF, Word, CSV, text or Markdown files here"}
       </p>
-      <p className="text-xs text-muted-foreground">or click to browse</p>
+      <p className="text-xs text-muted-foreground">or click to browse, one or several at a time</p>
       {status === "error" ? (
         <p className="text-xs text-danger">Upload failed. Please try again.</p>
       ) : null}

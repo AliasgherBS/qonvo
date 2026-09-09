@@ -13,6 +13,12 @@ import { formatDate } from "@/lib/format";
  * bind, with what happens when it does. Same numbers from the same endpoint,
  * two different questions.
  *
+ * Scope and unit are stated on the page rather than assumed. Both meters that
+ * appear elsewhere in the product (voice on the admin console, voice again as a
+ * platform total on System Health) come from the same computation, and the only
+ * thing that made them look like different numbers was nothing here saying
+ * whose usage this is or that the minutes round up (finding F7).
+ *
  * Every sentence below was read off the code that enforces the limit, not
  * guessed, because the value of saying anything here is that it is right:
  *
@@ -71,7 +77,12 @@ function rows(usage: TenantUsage): Row[] {
         "your rep keeps working and answers in writing instead. Customers can still send voice notes and it still understands them; it just stops replying in voice, and tells them so once.",
       nowFull:
         "Voice replies are paused. Your rep is still answering by text, and it still understands the voice notes customers send.",
-      note: "Counts voice in both directions.",
+      // The exact figure, spelled out (finding F7). The minutes round up, so 89
+      // metered seconds reads as "2 min of 5" here while an operator looking at
+      // the same tenant sees 89. Both are right and neither said so, which is
+      // how one number became three. The seconds come from the same
+      // computation, not a second sum.
+      note: `Counts voice in both directions, rounded up to the next minute: ${voicePrecision(usage)}.`,
     },
     {
       key: "seats",
@@ -118,6 +129,12 @@ const TONE: Record<string, { bar: string; text: string }> = {
   near: { bar: "bg-warning", text: "text-warning" },
   over: { bar: "bg-danger", text: "text-danger" },
 };
+
+/** The stored figure behind a rounded-up minute count, for this business. */
+function voicePrecision(usage: TenantUsage): string {
+  const { used, allowed } = usage.voiceSeconds;
+  return `${used.toLocaleString()} of ${allowed.toLocaleString()} seconds used by this business`;
+}
 
 function amount(n: number, unit?: string) {
   return unit ? `${n.toLocaleString()} ${unit}` : n.toLocaleString();
@@ -210,6 +227,11 @@ export function UsageZone({
           Messages and voice minutes reset on {formatDate(usage.periodEnd)}, and on the 1st of every
           month after that. Seats and knowledge are running totals, so they do not reset.
         </p>
+        {/* F7: the scope, said once and out loud. The same voice figure appears
+            on the admin console per tenant and again on System Health as a
+            platform-wide total, and an owner comparing notes with support had
+            nothing on the page telling them which of those they were reading. */}
+        <p>Every figure here is your business only, for the period named above.</p>
         {renewsOn ? (
           <p>
             Your plan renews separately, on {formatDate(renewsOn)}. That is the date your card is
