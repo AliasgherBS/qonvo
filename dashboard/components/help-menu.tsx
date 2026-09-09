@@ -1,6 +1,7 @@
 "use client";
 
 import { HelpCircle } from "lucide-react";
+import { useSession } from "next-auth/react";
 import { useState } from "react";
 
 import { restoreOnboardingChecklist } from "@/components/onboarding-checklist";
@@ -38,10 +39,19 @@ import { useApi, useAuthToken } from "@/lib/use-api";
 export function HelpMenu() {
   const token = useAuthToken();
   const [open, setOpen] = useState(false);
-  // A cross-tenant admin has no tenant, so this 403s for them and `data` stays
-  // null. Unknown is treated as "not complete", which leaves the item working
-  // rather than disabling it on a failed read.
-  const { data } = useApi(() => onboarding.get({ token }), [token]);
+  // A cross-tenant admin has no tenant, so this route 403s for them. It used to
+  // be called anyway, on every admin page load, which is finding A6: a request
+  // that can only fail, training whoever is reading the network tab to ignore
+  // 403s on a console whose whole job is authorization. Skipped rather than
+  // handled, because there is nothing to handle.
+  //
+  // For everybody else, unknown is still treated as "not complete", which
+  // leaves the menu item working rather than disabling it on a failed read.
+  const isAdmin = useSession().data?.user?.role === "qonvo_admin";
+  const { data } = useApi(
+    () => (isAdmin ? Promise.resolve(null) : onboarding.get({ token })),
+    [token, isAdmin],
+  );
   const setupComplete = data?.complete === true;
 
   /**

@@ -110,6 +110,19 @@ const SELECT_CLASSES =
 export type SectionProps = {
   form: TenantConfig;
   setForm: (next: TenantConfig) => void;
+  /**
+   * Whether hints that describe *the viewer's device* are shown.
+   *
+   * They are a genuinely good touch on the owner's own Business page: "this
+   * device is in Asia/Karachi, use that instead" is almost always right, for
+   * the person whose device it is.
+   *
+   * On an operator's screen in the ops console, configuring somebody else's
+   * salon, the same sentence is advice to apply the wrong timezone to a
+   * business on the other side of the country (finding A8). So the admin
+   * console passes `false`, and every owner-facing caller leaves it alone.
+   */
+  deviceHints?: boolean;
 };
 
 /**
@@ -259,9 +272,12 @@ export function TenantConfigPage({
 export function AllConfigSections({
   config: initial,
   onSave,
+  deviceHints = true,
 }: {
   config: TenantConfig;
   onSave: (next: TenantConfig) => Promise<void>;
+  /** See `SectionProps.deviceHints`. The ops console passes `false`. */
+  deviceHints?: boolean;
 }) {
   const { toast } = useToast();
   const [form, setForm] = useState<TenantConfig>(initial);
@@ -287,7 +303,7 @@ export function AllConfigSections({
     }
   }
 
-  const props = { form, setForm };
+  const props = { form, setForm, deviceHints };
 
   return (
     <div className="space-y-6">
@@ -815,7 +831,7 @@ export function PaymentsSection({ form, setForm }: SectionProps) {
  * value governs bookings, and putting it next to only one of its two consumers
  * is how it ended up inside an optional integration in the first place.
  */
-export function TimezoneSection({ form, setForm }: SectionProps) {
+export function TimezoneSection({ form, setForm, deviceHints = true }: SectionProps) {
   const options = useMemo(() => timezoneOptions(form.timezone), [form.timezone]);
   const detected = browserTimezone();
 
@@ -865,7 +881,7 @@ export function TimezoneSection({ form, setForm }: SectionProps) {
           </p>
         ) : null}
 
-        {detected && detected !== form.timezone ? (
+        {deviceHints && detected && detected !== form.timezone ? (
           <p className="text-xs text-muted-foreground">
             This device is in <strong className="text-foreground">{detected.replace(/_/g, " ")}</strong>.{" "}
             <button

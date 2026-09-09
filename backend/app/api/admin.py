@@ -22,17 +22,19 @@ from app.agent.storage import purge_tenant_files
 from app.api.config import (
     ConfigResponse,
     ConfigUpdateRequest,
+    QuietValidationRoute,
     _apply_config_update,
     _config_to_dict,
 )
 from app.api.deps import get_system_db, get_waha, require_admin
 from app.billing.plans import PLANS
-from app.billing.service import set_subscription
+from app.billing.service import get_subscription, set_subscription
 from app.core.logging import logger
 from app.core.redis import get_redis
 from app.core.revocation import revoke_all_for_tenant
 from app.core.security import TokenClaims, hash_password
 from app.models import TENANT_SCOPED_TABLES
+from app.models.billing import Subscription
 from app.models.enums import SessionStatus, UserRole
 from app.models.knowledge import KnowledgeSource
 from app.models.ops import UsageCounter
@@ -41,7 +43,15 @@ from app.models.whatsapp import WhatsAppSession
 from app.services.auth import create_access_token
 from app.waha.client import WahaClient, WahaError
 
-router = APIRouter(prefix="/api/admin", tags=["admin"])
+#: ``route_class`` matters here for one route: ``PUT
+#: /tenants/{id}/config`` takes the very same ``ConfigUpdateRequest`` the
+#: owner's own router takes, ``payment_details`` and all. That router was given
+#: a quiet 422 for exactly that reason (F10) and this one was not, so an
+#: over-length account number was still coming back in full through the admin
+#: door -- verified before the fix: 422, 1,261 bytes, the IBAN in the body.
+router = APIRouter(
+    prefix="/api/admin", tags=["admin"], route_class=QuietValidationRoute
+)
 
 
 class CreateTenantRequest(BaseModel):
@@ -96,13 +106,27 @@ async def _audit(
     target: str,
     meta: dict | None = None,
 ) -> None:
+    """Append one ops-console audit row.
+
+    ``actor_email``/``actor_role`` are written with the same names
+    ``app.services.audit`` uses for owner-side actions, because the reader
+    (:func:`audit_log`) is one list over both and a row whose actor lives under
+    a different key reads as anonymous. ``admin`` is kept alongside them: rows
+    written before this existed only carry that key, and dropping it would make
+    the console's own history unattributable.
+    """
     db.add(
         AuditLog(
             tenant_id=tenant_id,
             actor_user_id=None,
             action=action,
             target=target,
-            meta={"admin": claims.subject, **(meta or {})},
+            meta={
+                "admin": claims.subject,
+                "actor_email": claims.subject,
+                "actor_role": "qonvo_admin",
+                **(meta or {}),
+            },
         )
     )
 
@@ -256,13 +280,45 @@ async def list_tenants(
     claims: TokenClaims = Depends(require_admin),
     db: AsyncSession = Depends(get_system_db),
 ) -> list[dict]:
+    """Every tenant, newest first.
+
+    ``plan_key`` rides along with the coarse ``plan`` label because the label
+    has two values and the catalogue has four: an operator scanning this list
+    for "who is on Growth" cannot answer it from "paid". One extra select over
+    a table with one row per tenant, rather than a per-row lookup.
+    """
     rows = (await db.execute(select(Tenant).order_by(Tenant.created_at.desc()))).scalars().all()
     owners = await _owner_map(db, [t.id for t in rows])
+    subs = dict(
+        (await db.execute(select(Subscription.tenant_id, Subscription.plan_key))).all()
+    )
     result = []
     for t in rows:
         email, full_name = owners.get(t.id, (None, None))
-        result.append({**_tenant_to_dict(t), "owner_email": email, "owner_name": full_name})
+        result.append(
+            {
+                **_tenant_to_dict(t),
+                "plan_key": subs.get(t.id),
+                "owner_email": email,
+                "owner_name": full_name,
+            }
+        )
     return result
+
+
+@router.get("/plans")
+async def list_plans(claims: TokenClaims = Depends(require_admin)) -> list[dict]:
+    """The plan catalogue, so the console's plan picker offers the real keys.
+
+    The console used to offer a two-state paid/trial toggle, which is how F3
+    happened: a label with no catalogue entry behind it derives no entitlements.
+    Served from ``app.billing.plans`` rather than restated in TypeScript, so a
+    new tier appears in the picker by existing.
+    """
+    return [
+        {"key": plan.key, "name": plan.name, "entitlements": plan.entitlements}
+        for plan in PLANS.values()
+    ]
 
 
 @router.post("/tenants", response_model=CreateTenantResponse, status_code=status.HTTP_201_CREATED)
@@ -327,10 +383,17 @@ async def get_tenant(
         await db.execute(select(TenantConfig).where(TenantConfig.tenant_id == tenant_id))
     ).scalar_one_or_none()
     email, full_name = (await _owner_map(db, [tenant.id])).get(tenant.id, (None, None))
+    sub = await get_subscription(db, tenant_id)
     return {
         **_tenant_to_dict(tenant),
         "owner_email": email,
         "owner_name": full_name,
+        # The plan *key*, its status and the entitlements actually in force.
+        # All three, because F3 was precisely the case where the first two
+        # agreed and the third had not been rewritten — an operator needs to be
+        # able to see that from the tenant's own page.
+        "subscription": _subscription_to_dict(sub) if sub else None,
+        "entitlements": dict(config.entitlements or {}) if config else None,
         "config": _config_to_dict(config) if config else None,
     }
 
@@ -338,8 +401,17 @@ async def get_tenant(
 class UpdateTenantRequest(BaseModel):
     name: str | None = None
     status: str | None = None  # "active" | "suspended"
-    plan: str | None = None  # "trial" | "paid"
     trial_ends_at: datetime | None = None
+    # Accepted only so it can be *refused* with an explanation.
+    #
+    # This field used to write ``tenants.plan`` straight through, which is
+    # finding F3: it set a plan *label* while ``tenant_config.entitlements``
+    # kept whatever the previous plan granted. An operator who took a bank
+    # transfer and marked the customer paid left them capped at the trial's 300
+    # messages, with the console reporting a paid plan. Silently ignoring the
+    # field would reproduce the same outcome one layer quieter, so the route
+    # names the endpoint that does it properly instead.
+    plan: str | None = None
 
 
 @router.patch("/tenants/{tenant_id}")
@@ -358,8 +430,18 @@ async def update_tenant(
     fields = body.model_dump(exclude_unset=True)
     if fields.get("status") not in (None, "active", "suspended", "onboarding"):
         raise HTTPException(status_code=400, detail="status must be active or suspended")
-    if fields.get("plan") not in (None, "trial", "paid"):
-        raise HTTPException(status_code=400, detail="plan must be trial or paid")
+    if "plan" in fields:
+        # ``tenants.plan`` is derived by ``apply_plan``, never assigned. See the
+        # comment on the field.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "plan is derived from the subscription, not set directly. "
+                f"PUT /api/admin/tenants/{tenant_id}/subscription with a plan_key "
+                f"({', '.join(sorted(PLANS))}) so entitlements are rewritten from "
+                "the catalogue."
+            ),
+        )
     for key, value in fields.items():
         setattr(tenant, key, value)
 
@@ -380,6 +462,17 @@ async def update_tenant(
         await revoke_all_for_tenant(get_redis(), tenant_id)
     email, full_name = (await _owner_map(db, [tenant.id])).get(tenant.id, (None, None))
     return {**_tenant_to_dict(tenant), "owner_email": email, "owner_name": full_name}
+
+
+def _subscription_to_dict(sub: Subscription) -> dict:
+    return {
+        "plan_key": sub.plan_key,
+        "plan_name": PLANS[sub.plan_key].name if sub.plan_key in PLANS else sub.plan_key,
+        "status": sub.status,
+        "provider": sub.provider,
+        "current_period_end": sub.current_period_end,
+        "cancel_at_period_end": sub.cancel_at_period_end,
+    }
 
 
 class SetSubscriptionRequest(BaseModel):
@@ -430,13 +523,7 @@ async def set_tenant_subscription(
         meta={"plan_key": body.plan_key, "status": body.status},
     )
     await db.flush()
-    return {
-        "plan_key": sub.plan_key,
-        "status": sub.status,
-        "provider": sub.provider,
-        "current_period_end": sub.current_period_end,
-        "cancel_at_period_end": sub.cancel_at_period_end,
-    }
+    return _subscription_to_dict(sub)
 
 
 @router.delete("/tenants/{tenant_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -686,6 +773,120 @@ async def impersonate_tenant(
     )
     await db.flush()
     return ImpersonateResponse(access_token=token, tenant_id=tenant_id, owner_email=owner.email)
+
+
+#: Ceiling on one page of audit rows. High enough that "show me everything this
+#: tenant did" is one request, low enough that a console with a year of history
+#: cannot ask the API for all of it by accident.
+_AUDIT_PAGE_MAX = 200
+
+
+def _audit_actor(meta: dict) -> tuple[str | None, str | None, str | None]:
+    """(actor_email, actor_role, impersonated_by) out of a row's ``meta``.
+
+    Three writers put the actor in ``meta``: ``app.services.audit`` (owner-side)
+    uses ``actor_email``/``actor_role``, this module's ``_audit`` now writes the
+    same pair, and rows written before that carry only ``admin``. Reading all
+    three here means the console shows one list instead of one list per writer.
+    """
+    email = meta.get("actor_email") or meta.get("admin")
+    role = meta.get("actor_role") or ("qonvo_admin" if meta.get("admin") else None)
+    return email, role, meta.get("impersonated_by")
+
+
+@router.get("/audit")
+async def audit_log(
+    tenant_id: UUID | None = Query(default=None, description="Only this tenant's rows"),
+    actor: str | None = Query(default=None, description="Substring match on the actor's email"),
+    action: str | None = Query(default=None, description="Substring match on the action"),
+    limit: int = Query(default=50, ge=1, le=_AUDIT_PAGE_MAX),
+    offset: int = Query(default=0, ge=0),
+    claims: TokenClaims = Depends(require_admin),
+    db: AsyncSession = Depends(get_system_db),
+) -> dict:
+    """Read the audit trail (finding A2).
+
+    ``audit_log`` had been written by the admin console, by activation and by
+    every owner-side action since X8, and read by nothing: there was no route
+    and no page, so "who suspended this tenant" needed psql. This is the read
+    side of a table that was already being populated.
+
+    Newest first, because the question is almost always about something that
+    just happened. Filters are substring matches on the actor and the action
+    rather than exact ones: an operator knows "hass..." and "suspend", not
+    ``hassan@example.com`` and ``tenant.update``.
+    """
+    conditions = []
+    if tenant_id is not None:
+        conditions.append(AuditLog.tenant_id == tenant_id)
+    if action:
+        conditions.append(AuditLog.action.ilike(f"%{action}%"))
+    if actor:
+        needle = f"%{actor}%"
+        # The actor lives in three places, so the filter has to look in all
+        # three or it silently hides rows: ``meta`` for both admin writers, and
+        # the ``users`` row for owner-side actions where the id is the record.
+        conditions.append(
+            AuditLog.meta["actor_email"].astext.ilike(needle)
+            | AuditLog.meta["admin"].astext.ilike(needle)
+            | AuditLog.actor_user_id.in_(select(User.id).where(User.email.ilike(needle)))
+        )
+
+    total = int(
+        await db.scalar(select(func.count()).select_from(AuditLog).where(*conditions)) or 0
+    )
+    rows = (
+        (
+            await db.execute(
+                select(AuditLog)
+                .where(*conditions)
+                # id as the tiebreak: several rows of one request share a
+                # timestamp to the microsecond, and an unstable sort makes
+                # paging repeat and skip rows.
+                .order_by(AuditLog.created_at.desc(), AuditLog.id.desc())
+                .limit(limit)
+                .offset(offset)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    tenant_names = dict((await db.execute(select(Tenant.id, Tenant.name))).all())
+    # Owner-side rows name the actor by id. One lookup for the whole page.
+    actor_ids = [r.actor_user_id for r in rows if r.actor_user_id is not None]
+    actor_emails: dict[UUID, str] = {}
+    if actor_ids:
+        actor_emails = dict(
+            (await db.execute(select(User.id, User.email).where(User.id.in_(actor_ids)))).all()
+        )
+
+    items = []
+    for row in rows:
+        meta = dict(row.meta or {})
+        email, role, impersonated_by = _audit_actor(meta)
+        items.append(
+            {
+                "id": str(row.id),
+                "tenant_id": str(row.tenant_id),
+                "tenant_name": tenant_names.get(row.tenant_id),
+                "action": row.action,
+                "target": row.target,
+                "created_at": row.created_at,
+                "actor_email": email or actor_emails.get(row.actor_user_id),
+                "actor_role": role,
+                "impersonated_by": impersonated_by,
+                # Whatever the writer added beyond the actor: changed field
+                # names, a plan key, a readiness snapshot.
+                "meta": {
+                    k: v
+                    for k, v in meta.items()
+                    if k not in ("admin", "actor_email", "actor_role", "impersonated_by")
+                },
+            }
+        )
+
+    return {"items": items, "total": total, "limit": limit, "offset": offset}
 
 
 @router.get("/usage")

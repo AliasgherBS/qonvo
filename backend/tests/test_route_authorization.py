@@ -130,6 +130,10 @@ STAFF_ALLOWED: set[tuple[str, str]] = {
     ("/api/knowledge/gaps", "GET"),
     ("/api/notifications", "GET"),
     ("/api/notifications/{notification_id}/read", "POST"),
+    # The bulk form of the line above, allowed for the same reason: the log is
+    # workspace-wide, a staff seat already reads it and already marks single
+    # rows read, and "I have seen this" is not a change to the business.
+    ("/api/notifications/read-all", "POST"),
     ("/api/config", "GET"),
     ("/api/activation", "GET"),
     ("/api/billing", "GET"),

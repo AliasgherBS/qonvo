@@ -1051,6 +1051,15 @@ export interface TenantUsage {
   periodEnd: string;
   messages: UsageMeter;
   voiceMinutes: UsageMeter;
+  /**
+   * The same voice figure in the unit it is stored and gated in.
+   *
+   * `voiceMinutes.used` rounds up, so 89 stored seconds reads as 2, which is
+   * why the billing page and the admin endpoint looked like two different
+   * numbers for one tenant (finding F7). Both come from the one computation in
+   * `services/usage.py`; this is the precise one.
+   */
+  voiceSeconds: UsageMeter;
   seats: UsageMeter;
   knowledgeSources: UsageMeter;
   knowledgeChars: UsageMeter;
@@ -1069,6 +1078,7 @@ interface TenantUsageDto {
   period_end: string;
   messages: UsageMeter;
   voice_minutes: UsageMeter;
+  voice_seconds: UsageMeter;
   seats: UsageMeter;
   knowledge_sources: UsageMeter;
   knowledge_chars: UsageMeter;
@@ -1087,6 +1097,7 @@ function mapUsage(dto: TenantUsageDto): TenantUsage {
     periodEnd: dto.period_end,
     messages: dto.messages,
     voiceMinutes: dto.voice_minutes,
+    voiceSeconds: dto.voice_seconds,
     seats: dto.seats,
     knowledgeSources: dto.knowledge_sources,
     knowledgeChars: dto.knowledge_chars,
@@ -1608,16 +1619,38 @@ export type TenantStatus = "onboarding" | "active" | "suspended";
 
 export type TenantPlan = "trial" | "paid";
 
+interface AdminSubscriptionDto {
+  plan_key: string;
+  plan_name: string;
+  status: string;
+  provider: string;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+}
+
+/** What a tenant is actually on, as opposed to the coarse paid/trial label. */
+export interface AdminSubscription {
+  planKey: string;
+  planName: string;
+  status: string;
+  provider: string;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+}
+
 interface AdminTenantDto {
   id: string;
   name: string;
   slug: string;
   status: TenantStatus;
   plan: TenantPlan;
+  plan_key?: string | null;
   trial_ends_at: string | null;
   owner_email: string;
   owner_name: string;
   created_at: string;
+  subscription?: AdminSubscriptionDto | null;
+  entitlements?: Record<string, number> | null;
 }
 
 export interface AdminTenant {
@@ -1626,10 +1659,22 @@ export interface AdminTenant {
   slug: string;
   status: TenantStatus;
   plan: TenantPlan;
+  /**
+   * The catalogue key behind the label, when the tenant has a subscription.
+   *
+   * `plan` has two values and the catalogue has four, so the label cannot
+   * answer "who is on Growth". It is also the pair that went out of step in
+   * finding F3, where a paid label sat on trial entitlements.
+   */
+  planKey: string | null;
   trialEndsAt: string | null;
   ownerEmail: string;
   ownerName: string;
   createdAt: string;
+  /** Detail view only. */
+  subscription: AdminSubscription | null;
+  /** Detail view only: the quotas actually in force for this tenant. */
+  entitlements: Record<string, number> | null;
 }
 
 function mapAdminTenant(dto: AdminTenantDto): AdminTenant {
@@ -1639,10 +1684,22 @@ function mapAdminTenant(dto: AdminTenantDto): AdminTenant {
     slug: dto.slug,
     status: dto.status,
     plan: dto.plan,
+    planKey: dto.plan_key ?? dto.subscription?.plan_key ?? null,
     trialEndsAt: dto.trial_ends_at,
     ownerEmail: dto.owner_email,
     ownerName: dto.owner_name,
     createdAt: dto.created_at,
+    subscription: dto.subscription
+      ? {
+          planKey: dto.subscription.plan_key,
+          planName: dto.subscription.plan_name,
+          status: dto.subscription.status,
+          provider: dto.subscription.provider,
+          currentPeriodEnd: dto.subscription.current_period_end,
+          cancelAtPeriodEnd: dto.subscription.cancel_at_period_end,
+        }
+      : null,
+    entitlements: dto.entitlements ?? null,
   };
 }
 
@@ -1694,9 +1751,19 @@ export const adminTenants = {
       ...opts,
     }).then(mapTenantConfig),
 
+  /**
+   * Lifecycle only: name, status, trial end.
+   *
+   * `plan` is deliberately not here. It used to be, and writing it set a plan
+   * *label* while `tenant_config.entitlements` kept the previous plan's quotas
+   * (finding F3) - mark a customer paid, and they hit a wall at the trial's 300
+   * messages while the console reported a paid plan. The backend now refuses
+   * the field. Plan changes go through `adminSubscription.set`, which routes
+   * through `apply_plan` and rewrites entitlements from the catalogue.
+   */
   update: (
     id: string,
-    payload: { name?: string; status?: TenantStatus; plan?: TenantPlan; trialEndsAt?: string | null },
+    payload: { name?: string; status?: TenantStatus; trialEndsAt?: string | null },
     opts: CallOpts = {},
   ) =>
     apiFetch<AdminTenantDto>(`/api/admin/tenants/${id}`, {
@@ -1704,7 +1771,6 @@ export const adminTenants = {
       body: {
         ...(payload.name !== undefined ? { name: payload.name } : {}),
         ...(payload.status !== undefined ? { status: payload.status } : {}),
-        ...(payload.plan !== undefined ? { plan: payload.plan } : {}),
         ...(payload.trialEndsAt !== undefined ? { trial_ends_at: payload.trialEndsAt } : {}),
       },
       ...opts,

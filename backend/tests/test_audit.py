@@ -173,6 +173,11 @@ AUDIT_EXEMPT = {
     "session_qr",
     "payment_history",
     "invoice_link",
+    # Sends the owner's own instructions to the tenant's model and hands back a
+    # suggestion. It is a POST because it carries a body, and it writes
+    # nothing: accepting a suggestion is an ordinary PUT /api/config, and that
+    # one is audited.
+    "review_instructions",
     # Recorded by the ledger they write, which is a better record than a
     # duplicate audit row.
     "set_activation",  # writes its own AuditLog with the readiness snapshot

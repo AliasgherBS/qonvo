@@ -10,6 +10,7 @@ import {
   Inbox,
   Plug,
   Radio,
+  ScrollText,
   Smartphone,
   Sparkles,
   SlidersHorizontal,
@@ -75,6 +76,9 @@ const ADMIN_NAV_ITEMS = [
   { href: "/admin/fleet", label: "Fleet Health", icon: Radio },
   { href: "/admin/health", label: "System Health", icon: Activity },
   { href: "/admin/usage", label: "Usage", icon: Gauge },
+  // The read side of audit_log. Populated by the console, by activation and by
+  // every owner-side action, and until now reachable only through psql.
+  { href: "/admin/audit", label: "Audit Log", icon: ScrollText },
 ];
 
 export function Sidebar({ role }: { role: Role }) {
