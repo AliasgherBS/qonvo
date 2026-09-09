@@ -421,3 +421,55 @@ def test_the_period_boundary_is_the_same_day_in_both_shapes():
     assert period_start_dt(now) == dt.datetime(2026, 9, 1, tzinfo=dt.UTC)
     assert period_start_dt(now).date() == period_start(now)
     assert period_start_dt(now).tzinfo is dt.UTC  # naive would compare wrong
+
+
+# --- the provider's own figure wins, and its absence must not break a turn ------- #
+def test_the_providers_reported_duration_is_preferred_over_the_bytes():
+    """Whisper bills per second of audio it processed, silence included, and
+    reports that number. Billing the tenant against anything else guarantees
+    the two ledgers disagree. It is the same reason token counts come from an
+    LLM response's `usage` block rather than from a local estimate."""
+    from app.agent.audio_meter import audio_duration_seconds
+
+    # A file whose bytes say one thing and whose provider says another.
+    ten_seconds_of_wav = _wav(10)
+
+    assert audio_duration_seconds(ten_seconds_of_wav) == 10
+    assert audio_duration_seconds(ten_seconds_of_wav, reported_seconds=7.2) == 8
+
+
+def test_a_missing_reported_duration_falls_back_to_measuring():
+    from app.agent.audio_meter import audio_duration_seconds
+
+    assert audio_duration_seconds(_wav(10), reported_seconds=None) == 10
+
+
+async def test_a_result_without_the_field_still_transcribes_and_meters(monkeypatch):
+    """The failure this actually caused. The transcription block is wrapped in a
+    broad `except` that degrades the turn to text, so reading the field as an
+    attribute made an STT result that predated it lose the *transcript* and log
+    "transcription failed" for a transcription that had succeeded."""
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    from app.workers import pipeline
+    from app.workers.pipeline import InboundFragment
+
+    stt = AsyncMock()
+    # No duration_seconds, as an older provider or any stub would be.
+    stt.transcribe = AsyncMock(return_value=SimpleNamespace(text="hello", language="ur"))
+    # The pipeline builds its own provider from the registry, so the mock has
+    # to be injected there rather than passed in.
+    from app.providers import registry
+
+    monkeypatch.setattr(registry, "resolve_stt", lambda _tc: stt)
+    waha = AsyncMock()
+    waha.download_media = AsyncMock(return_value=_wav(6))
+    bound = SimpleNamespace(info=lambda *a, **k: None, warning=lambda *a, **k: None)
+
+    frags = [InboundFragment(message_id="1", type="ptt", media_url="http://waha/m")]
+    had_voice, seconds = await pipeline._transcribe_voice_fragments(frags, None, waha, bound)
+
+    assert had_voice is True
+    assert frags[0].body == "hello", "the transcript must survive a missing field"
+    assert seconds == 6, "and it must still meter, by measuring the container"

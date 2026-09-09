@@ -115,7 +115,20 @@ class OpenAICompatSTT(_AudioClientMixin, STTProvider):
             data["language"] = language_hint
         resp = await self._post("/audio/transcriptions", files=files, data=data)
         body = resp.json()
-        return TranscriptionResult(text=body.get("text") or "", language=body.get("language"))
+        # `verbose_json` was already being requested and its `duration` thrown
+        # away, while the meter guessed the length from the file size instead.
+        # The provider's own figure is what it charges against, so it is the
+        # one to bill the tenant against too.
+        raw_duration = body.get("duration")
+        try:
+            duration = float(raw_duration) if raw_duration is not None else None
+        except (TypeError, ValueError):
+            duration = None
+        return TranscriptionResult(
+            text=body.get("text") or "",
+            language=body.get("language"),
+            duration_seconds=duration if duration is not None and duration >= 0 else None,
+        )
 
 
 class OpenAICompatTTS(_AudioClientMixin, TTSProvider):

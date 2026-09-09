@@ -121,16 +121,38 @@ def measure_audio_duration(data: bytes) -> float | None:
     return None
 
 
-def audio_duration_seconds(data: bytes, *, bytes_per_second: int | None = None) -> int:
-    """Metered whole seconds for ``data``: measured if possible, else estimated.
+def audio_duration_seconds(
+    data: bytes,
+    *,
+    bytes_per_second: int | None = None,
+    reported_seconds: float | None = None,
+) -> int:
+    """Metered whole seconds for ``data``, from the best source available.
 
-    Rounded up, and never below 1 for non-empty audio. Rounding up because a
-    partial second of synthesis still costs a provider call, and rounding down
-    would let a run of one-word voice replies meter as nothing at all.
+    In order: what the provider said, what the container says, and only then an
+    estimate from the byte count.
+
+    ``reported_seconds`` wins because it is the figure the provider bills
+    *us* against, silence included, so billing the tenant against anything
+    else guarantees the two ledgers disagree. It is the same reason token
+    counts are read out of an LLM response's ``usage`` block rather than
+    estimated locally, which this codebase already does for text. Transcription
+    is the only leg that has one: synthesis is given text and returns audio, so
+    there is nothing for the provider to report and the container is the best
+    available truth.
+
+    Rounded up, and never below 1 for non-empty audio. Up, because a partial
+    second still costs a provider call, and rounding down would let a run of
+    one-word replies meter as nothing at all. Whisper is itself billed per
+    second with no minimum, so rounding up per message is marginally
+    conservative in the tenant's disfavour; over a month of whole voice notes
+    the difference is seconds, and the alternative rounds our own cost away.
     """
-    if not data:
+    if not data and reported_seconds is None:
         return 0
-    seconds = measure_audio_duration(data)
+    seconds = reported_seconds
+    if seconds is None:
+        seconds = measure_audio_duration(data)
     if seconds is None:
         rate = bytes_per_second or settings.voice_bytes_per_second
         seconds = len(data) / rate if rate > 0 else 0.0

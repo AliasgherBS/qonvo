@@ -55,6 +55,17 @@ class EmbeddingUsage:
 class TranscriptionResult:
     text: str
     language: str | None = None
+    #: Seconds of audio the provider says it processed, when it says.
+    #:
+    #: The authoritative number for metering, because it is the same figure the
+    #: provider bills us against, silence and all. Reading it is the audio
+    #: equivalent of taking token counts from an LLM response's ``usage`` block
+    #: rather than estimating them locally, which is the practice this codebase
+    #: already follows for text.
+    #:
+    #: ``None`` when the response omits it, which is why the caller keeps a
+    #: fallback rather than treating this as guaranteed.
+    duration_seconds: float | None = None
 
 
 class LLMProvider(ABC):

@@ -168,8 +168,24 @@ async def _transcribe_voice_fragments(
             result = await stt.transcribe(audio)
             fragment.body = result.text or ""
             fragment.type = "voice"
-            total_seconds += audio_duration_seconds(audio)
-            bound.info(f"transcribed voice fragment ({len(fragment.body)} chars)")
+            # Three sources, best first. The provider's own reported duration
+            # is what it bills us against, so it is what the tenant should be
+            # billed against; parsing the container ourselves is exact but
+            # measures the file rather than the charge; the byte estimate is
+            # the last resort and the thing that caused a 24x over-count.
+            # getattr, not attribute access: the whole block is wrapped in a
+            # broad `except` that degrades the turn to text, so an STT
+            # implementation without this field would not merely lose its
+            # metering, it would lose the transcript and log "transcription
+            # failed" for a transcription that succeeded. Caught by two tests
+            # whose stub result predates the field.
+            reported = getattr(result, "duration_seconds", None)
+            metered = audio_duration_seconds(audio, reported_seconds=reported)
+            total_seconds += metered
+            bound.info(
+                f"transcribed voice fragment ({len(fragment.body)} chars, {metered}s "
+                f"{'reported by provider' if reported is not None else 'measured locally'})"
+            )
         except Exception as exc:  # noqa: BLE001 — degrade to text-only, don't crash the turn
             bound.warning(f"voice transcription failed: {exc}")
             fragment.type = "voice"
