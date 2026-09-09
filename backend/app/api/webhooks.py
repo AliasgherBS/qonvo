@@ -50,6 +50,37 @@ def _extract(payload: dict) -> dict:
     return payload.get("payload", {}) if isinstance(payload.get("payload"), dict) else {}
 
 
+def extract_push_name(inner: dict) -> str | None:
+    """The customer's own WhatsApp display name, if the payload carries one.
+
+    This is the only place a human-readable name for a customer ever enters the
+    system, and without it the inbox can only show a WhatsApp internal address
+    (teardown I1). WAHA puts it in a different place per engine -- WEBJS nests
+    ``notifyName`` under ``_data``, NOWEB sends ``pushName`` at the top level --
+    so every known spelling is tried rather than betting on the current engine.
+
+    It is customer-controlled text, so it is whitespace-collapsed and clipped to
+    the ``conversations.customer_name`` column width. A name that is only digits
+    is discarded: it is the number again, and the number is already formatted
+    properly for display.
+    """
+    data = inner.get("_data") if isinstance(inner.get("_data"), dict) else {}
+    for candidate in (
+        inner.get("notifyName"),
+        inner.get("pushName"),
+        data.get("notifyName"),
+        data.get("pushName"),
+        data.get("verifiedBizName"),
+    ):
+        if not isinstance(candidate, str):
+            continue
+        name = " ".join(candidate.split())
+        if not name or name.isdigit():
+            continue
+        return name[:255]
+    return None
+
+
 async def _resolve_session(session_name: str) -> WhatsAppSession | None:
     async with system_session() as db:
         result = await db.execute(
@@ -177,6 +208,9 @@ async def waha_webhook(
         "body": inner.get("body", "") or "",
         "media_url": inner.get("mediaUrl") or (media.get("url") if media else None),
         "timestamp": inner.get("timestamp"),
+        # Travels with the fragment because the webhook holds no tenant
+        # connection: the pipeline is where the conversation row is written.
+        "push_name": extract_push_name(inner),
     }
     generation = await add_fragment(
         redis_client, session_name, chat_id, fragment, window_seconds=window

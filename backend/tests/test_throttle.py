@@ -49,12 +49,17 @@ class FakeRedis:
 
 # --- the limit does what it says -------------------------------------------------- #
 async def test_an_ip_is_allowed_up_to_the_limit_then_refused():
+    """Asked of SIGNUP, because that is the shape where every attempt counts.
+
+    This used to be asked of LOGIN, and LOGIN is the one throttle where a
+    successful request must *not* count -- see the block below.
+    """
     redis = FakeRedis()
 
-    for _ in range(throttle.LOGIN.limit):
-        assert await throttle.check(redis, throttle.LOGIN, ip="1.2.3.4", account=None) is False
+    for _ in range(throttle.SIGNUP.limit):
+        assert await throttle.check(redis, throttle.SIGNUP, ip="1.2.3.4", account=None) is False
 
-    assert await throttle.check(redis, throttle.LOGIN, ip="1.2.3.4", account=None) is True
+    assert await throttle.check(redis, throttle.SIGNUP, ip="1.2.3.4", account=None) is True
 
 
 async def test_the_window_is_set_once_not_on_every_hit():
@@ -64,20 +69,95 @@ async def test_the_window_is_set_once_not_on_every_hit():
     redis = FakeRedis()
 
     for _ in range(5):
-        await throttle.check(redis, throttle.LOGIN, ip="1.2.3.4", account=None)
+        await throttle.check(redis, throttle.SIGNUP, ip="1.2.3.4", account=None)
 
     [ttl] = set(redis.expiries.values())
-    assert ttl == throttle.LOGIN.window_seconds
+    assert ttl == throttle.SIGNUP.window_seconds
     assert len(redis.expiries) == 1  # one key, one expiry call
 
 
 async def test_two_addresses_do_not_share_a_budget():
     redis = FakeRedis()
 
-    for _ in range(throttle.LOGIN.limit + 1):
-        await throttle.check(redis, throttle.LOGIN, ip="1.1.1.1", account=None)
+    for _ in range(throttle.SIGNUP.limit + 1):
+        await throttle.check(redis, throttle.SIGNUP, ip="1.1.1.1", account=None)
 
-    assert await throttle.check(redis, throttle.LOGIN, ip="2.2.2.2", account=None) is False
+    assert await throttle.check(redis, throttle.SIGNUP, ip="2.2.2.2", account=None) is False
+
+
+# --- an address is shared; an account is not -------------------------------------- #
+#
+# The gap these close is the one this file's own opening paragraph warns about,
+# and it shipped anyway: every test above passed `account=None`, so none of them
+# ever asked what a *successful* login does to the address counter. It consumed
+# it. Ten correct logins from one office connection locked out the eleventh for
+# fifteen minutes -- verified live against staging before the fix, twelve valid
+# logins reading 200 x10 then 429, 429.
+#
+# It matters more here than it would elsewhere. An owner and three staff share
+# one office address, and Pakistani mobile networks put whole subscriber
+# populations behind CGNAT, so "one address" can mean a business or a stranger.
+
+
+async def test_a_successful_login_does_not_consume_the_address_budget():
+    redis = FakeRedis()
+
+    for _ in range(throttle.LOGIN.effective_ip_limit + 5):
+        assert await throttle.check(redis, throttle.LOGIN, ip="1.2.3.4", account=None) is False
+
+    assert [k for k in redis.values if ":ip:" in k] == []
+
+
+async def test_failed_logins_do_consume_it():
+    """Not counting successes must not mean not counting at all -- that would
+    remove the address limit rather than fix it."""
+    redis = FakeRedis()
+
+    # limit + 1, matching how the account counter already reads: `check`
+    # compares the stored count with `> limit`, so the allowance is spent on
+    # the attempt *after* the limit rather than on it. Verified live at the
+    # account limit of ten -- the refusal lands on the eleventh.
+    for _ in range(throttle.LOGIN.effective_ip_limit + 1):
+        await throttle.record_failure(
+            redis, throttle.LOGIN, account="a@b.com", ip="1.2.3.4"
+        )
+
+    assert await throttle.check(redis, throttle.LOGIN, ip="1.2.3.4", account=None) is True
+
+
+async def test_the_address_is_not_refused_one_failure_early():
+    """The boundary in the other direction, so a fix to the comparison above
+    cannot quietly tighten the limit by one."""
+    redis = FakeRedis()
+
+    for _ in range(throttle.LOGIN.effective_ip_limit):
+        await throttle.record_failure(
+            redis, throttle.LOGIN, account="a@b.com", ip="1.2.3.4"
+        )
+
+    assert await throttle.check(redis, throttle.LOGIN, ip="1.2.3.4", account=None) is False
+
+
+async def test_the_address_allowance_is_larger_than_one_account_s():
+    """A shared address has to hold several people having a bad morning."""
+    assert throttle.LOGIN.effective_ip_limit > throttle.LOGIN.limit
+
+
+async def test_the_login_endpoint_passes_the_address_to_record_failure():
+    """The counter only exists if the caller bumps it, and the signature makes
+    ``ip`` optional -- so a call site that omits it gets an address with no
+    limit at all, silently."""
+    import inspect
+
+    from app.api import auth
+
+    source = inspect.getsource(auth.login)
+    failures = source.count("record_failure")
+    assert failures >= 2, "expected the wrong-password and wrong-code paths"
+    assert source.count("ip=caller_ip") >= failures, (
+        "every record_failure in login must pass the address, or the per-address "
+        "limit is not enforced on that path"
+    )
 
 
 # --- the ways it could hurt the wrong person -------------------------------------- #
@@ -163,10 +243,63 @@ class FakeRequest:
         self.client = type("C", (), {"host": host})()
 
 
-def test_the_first_forwarded_address_is_the_client():
-    """A caller can append anything to X-Forwarded-For, so trusting the last
-    entry is trusting the attacker. The first is the real origin."""
+def test_the_edge_header_beats_a_caller_supplied_one():
+    """The finding, pinned.
+
+    ``X-Forwarded-For`` is caller-controlled. Cloudflare adds to it and leaves
+    what was already there, so a client that sends its own value gets that
+    value used as the throttle key -- verified against production, where a
+    request carrying ``X-Forwarded-For: 203.0.113.250`` created its own counter
+    and left the real client's at 1. Every per-address limit was therefore
+    optional, including the five-signups-per-hour cap.
+
+    ``CF-Connecting-IP`` is overwritten by Cloudflare on every proxied request,
+    so it is the one a caller cannot choose.
+    """
+    request = FakeRequest(
+        {
+            "x-forwarded-for": "203.0.113.250",  # what the attacker sent
+            "cf-connecting-ip": "198.51.100.23",  # what the edge observed
+        }
+    )
+
+    assert throttle.client_ip(request) == "198.51.100.23"
+
+
+def test_a_spoofed_header_cannot_reset_the_counter():
+    """The property that actually matters: two requests from one client are one
+    counter, however they decorate themselves."""
+    keys = set()
+    for spoof in ("203.0.113.1", "203.0.113.2", "203.0.113.3"):
+        request = FakeRequest(
+            {"x-forwarded-for": spoof, "cf-connecting-ip": "198.51.100.23"}
+        )
+        keys.add(throttle.client_ip(request))
+
+    assert keys == {"198.51.100.23"}
+
+
+def test_the_first_forwarded_address_is_the_client_when_there_is_no_edge_header():
+    """The fallback is deliberately unchanged.
+
+    Taking the *last* entry is the usual advice and would be wrong here: the
+    chain is client -> Cloudflare -> cloudflared -> uvicorn over loopback, so if
+    cloudflared appends, the last entry is 127.0.0.1 for everybody and one
+    shared counter throttles the whole product. Being wrong that way round is
+    much worse than the bug, so this path stays as it was until somebody has
+    looked at a real header.
+    """
     request = FakeRequest({"x-forwarded-for": "203.0.113.9, 10.0.0.1, 172.16.0.1"})
+
+    assert throttle.client_ip(request) == "203.0.113.9"
+
+
+def test_a_blank_edge_header_falls_through_rather_than_keying_everyone_together():
+    """An empty string would key every caller to one bucket, which is the
+    global-throttle failure the note above is about."""
+    request = FakeRequest(
+        {"cf-connecting-ip": "   ", "x-forwarded-for": "203.0.113.9"}
+    )
 
     assert throttle.client_ip(request) == "203.0.113.9"
 
@@ -211,3 +344,111 @@ def test_forgot_password_still_answers_202_when_throttled():
 
     assert 'return {"status": "ok"}' in following
     assert "429" not in following
+
+
+# --- a stranger cannot lock you out of your own business -------------------------- #
+#
+# The account counter is failure-only, which stops a *correct* password from
+# counting -- but not somebody else's wrong ones. Eleven deliberate failures on
+# a known address and the owner's real password answered 429 for fifteen
+# minutes, from any address, repeatable indefinitely. Verified live before the
+# fix, and the module's own docstring claimed it could not happen.
+#
+# `limit` is now per (account, address) pair, so an attacker spends their own
+# allowance. `account_limit` is the backstop for the distributed version.
+
+
+async def test_an_attacker_burns_their_own_allowance_not_the_victims():
+    redis = FakeRedis()
+    victim = "owner@example.com"
+
+    for _ in range(throttle.LOGIN.limit + 5):
+        await throttle.record_failure(
+            redis, throttle.LOGIN, account=victim, ip="203.0.113.9"
+        )
+
+    # The attacker's own address is done for this account.
+    assert (
+        await throttle.check(redis, throttle.LOGIN, ip="203.0.113.9", account=victim)
+        is True
+    )
+    # The owner, at their own desk, is not.
+    assert (
+        await throttle.check(redis, throttle.LOGIN, ip="198.51.100.4", account=victim)
+        is False
+    )
+
+
+async def test_the_distributed_version_is_still_caught():
+    """Pairing must not mean an account can be ground down for ever by rotating
+    addresses -- that would trade one hole for another."""
+    redis = FakeRedis()
+    victim = "owner@example.com"
+
+    for n in range(throttle.LOGIN.effective_account_limit + 1):
+        await throttle.record_failure(
+            redis, throttle.LOGIN, account=victim, ip=f"203.0.113.{n % 200}"
+        )
+
+    assert (
+        await throttle.check(redis, throttle.LOGIN, ip="198.51.100.4", account=victim)
+        is True
+    )
+
+
+async def test_the_backstop_is_far_enough_away_to_need_real_effort():
+    """If the two limits were equal, pairing would achieve nothing: one address
+    could spend the account's whole budget again."""
+    assert throttle.LOGIN.effective_account_limit >= throttle.LOGIN.limit * 3
+
+
+async def test_succeeding_forgets_the_failures_at_this_desk_too():
+    """Clearing only the account counter would leave a user who mistyped nine
+    times and then got in still one mistake from lockout on the very machine
+    they are sitting at."""
+    redis = FakeRedis()
+    for _ in range(throttle.LOGIN.limit):
+        await throttle.record_failure(
+            redis, throttle.LOGIN, account="user@example.com", ip="198.51.100.4"
+        )
+
+    await throttle.clear(
+        redis, throttle.LOGIN, account="user@example.com", ip="198.51.100.4"
+    )
+
+    assert (
+        await throttle.check(
+            redis, throttle.LOGIN, ip="198.51.100.4", account="user@example.com"
+        )
+        is False
+    )
+    assert [k for k in redis.values if ":pair:" in k and redis.values[k]] == []
+
+
+async def test_two_accounts_at_one_address_do_not_share_a_pair_budget():
+    """An office where one person is locked out must not lock out their
+    colleague, which is the whole point of pairing rather than using the
+    address alone."""
+    redis = FakeRedis()
+    for _ in range(throttle.LOGIN.limit + 1):
+        await throttle.record_failure(
+            redis, throttle.LOGIN, account="a@example.com", ip="198.51.100.4"
+        )
+
+    assert (
+        await throttle.check(
+            redis, throttle.LOGIN, ip="198.51.100.4", account="b@example.com"
+        )
+        is False
+    )
+
+
+def test_the_pair_subject_cannot_be_confused_between_two_pairs():
+    """`|` cannot appear in an email address, so no two pairs collide into one
+    subject -- which would merge two attackers' budgets, or split one."""
+    from app.core.throttle import _pair
+
+    assert _pair("a@b.com", "1.2.3.4") != _pair("a@b.com", "1.2.3.40")
+    assert _pair("a@b.com", "1.2.3.4") != _pair("a@b.co", "m1.2.3.4")
+    # And it normalises the address the same way the account counter does.
+    assert _pair("A@B.com ", "1.2.3.4") == _pair("a@b.com", "1.2.3.4")

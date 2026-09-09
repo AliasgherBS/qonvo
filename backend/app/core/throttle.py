@@ -39,12 +39,74 @@ class Throttle:
     name: str
     limit: int
     window_seconds: int
+    #: The allowance for one account across *all* addresses.
+    #:
+    #: ``limit`` is per (account, address) pair. This is the backstop for the
+    #: distributed version of the same attack, and it is deliberately much
+    #: larger, because it is also the number that decides how hard it is to
+    #: lock somebody out of their own business on purpose.
+    account_limit: int | None = None
+    #: The per-IP allowance, when it should differ from the per-account one.
+    #: An address is shared and an account is not, so the two are not the same
+    #: question -- see ``ip_counts_successes``.
+    ip_limit: int | None = None
+    #: Whether a *successful* request counts against the address.
+    #:
+    #: True for anything whose cost is paid per attempt however it turns out:
+    #: a signup creates a tenant, a config row and a session slot; a reset
+    #: sends an email. Refusing those after N attempts is the entire
+    #: protection, so the counter has to see all of them.
+    #:
+    #: False for login, where a success is somebody doing the ordinary thing
+    #: and costs us nothing. Counting successes there was a real bug: ten
+    #: correct logins from one office address locked out the eleventh for
+    #: fifteen minutes. Verified before the fix -- twelve valid logins in a
+    #: row went 200 x10 then 429, 429, with no failure anywhere.
+    ip_counts_successes: bool = True
+
+    @property
+    def effective_ip_limit(self) -> int:
+        return self.limit if self.ip_limit is None else self.ip_limit
+
+    @property
+    def effective_account_limit(self) -> int:
+        return self.limit if self.account_limit is None else self.account_limit
 
 
 #: Generous enough that a person fat-fingering their password never notices,
 #: tight enough that a dictionary attack is pointless. Ten failures in fifteen
 #: minutes is far past what a real login looks like.
-LOGIN = Throttle("login", limit=10, window_seconds=15 * 60)
+#:
+#: The address gets its own, much larger allowance, and only failures count
+#: against it. Both parts matter in this market: an owner and three staff on
+#: one office connection share an address, and Pakistani mobile networks put
+#: whole subscriber populations behind CGNAT -- so a per-attempt limit of ten
+#: per address is a limit on a business, or on a stranger, and not on an
+#: attacker.
+#: ``limit`` here is per (account, address) pair, not per account.
+#:
+#: Per account alone made locking somebody out of their own business trivial:
+#: eleven deliberate failures on a known email address and the owner's correct
+#: password returned 429 for fifteen minutes, from any address, repeatable for
+#: as long as the attacker cared to keep going. Verified before the change.
+#: The module used to claim in its own docstring that this could not happen.
+#:
+#: Pairing it means an attacker spends their *own* address's allowance against
+#: one account. ``account_limit`` is the backstop for a distributed attempt,
+#: and it is five times as large, so reaching it takes several addresses rather
+#: than one request loop.
+#:
+#: This narrows lockout-by-proxy rather than removing it. Any cap on an account
+#: can be reached by somebody willing to spend enough addresses; what changes
+#: is that it stops being free.
+LOGIN = Throttle(
+    "login",
+    limit=10,
+    window_seconds=15 * 60,
+    account_limit=50,
+    ip_limit=50,
+    ip_counts_successes=False,
+)
 
 #: Signup is a write and creates a tenant, a config row and a WhatsApp session
 #: slot, so the cost of abuse is ours rather than a wasted guess.
@@ -69,6 +131,16 @@ def _key(throttle: Throttle, kind: str, subject: str) -> str:
     return f"throttle:{throttle.name}:{kind}:{_hashed(subject)}"
 
 
+def _pair(account: str, ip: str) -> str:
+    """One account as attacked from one address.
+
+    ``|`` cannot appear in an email address, so no two (account, address) pairs
+    can collide into one subject -- which would either merge two attackers'
+    budgets or split one.
+    """
+    return f"{account.strip().lower()}|{ip.strip()}"
+
+
 async def check(client, throttle: Throttle, *, ip: str | None, account: str | None) -> bool:
     """True when this attempt should be refused.
 
@@ -81,16 +153,30 @@ async def check(client, throttle: Throttle, *, ip: str | None, account: str | No
     try:
         if ip:
             key = _key(throttle, "ip", ip)
-            count = await client.incr(key)
-            if count == 1:
-                await client.expire(key, throttle.window_seconds)
-            if count > throttle.limit:
+            if throttle.ip_counts_successes:
+                count = await client.incr(key)
+                if count == 1:
+                    await client.expire(key, throttle.window_seconds)
+            else:
+                # Read only. The bump lives in record_failure, so an ordinary
+                # working day never accumulates against a shared address.
+                raw = await client.get(key)
+                count = int(raw) if raw is not None else 0
+            if count > throttle.effective_ip_limit:
                 logger.warning(f"throttled {throttle.name} by ip")
                 return True
 
-        if account:
-            raw = await client.get(_key(throttle, "acct", account))
+        if account and ip:
+            # The tight one: this address, against this account.
+            raw = await client.get(_key(throttle, "pair", _pair(account, ip)))
             if raw is not None and int(raw) > throttle.limit:
+                logger.warning(f"throttled {throttle.name} by account+ip")
+                return True
+
+        if account:
+            # The backstop, for the same account attacked from many addresses.
+            raw = await client.get(_key(throttle, "acct", account))
+            if raw is not None and int(raw) > throttle.effective_account_limit:
                 logger.warning(f"throttled {throttle.name} by account")
                 return True
     except Exception as exc:  # noqa: BLE001 - never lock everyone out
@@ -102,42 +188,105 @@ async def check(client, throttle: Throttle, *, ip: str | None, account: str | No
     return False
 
 
-async def record_failure(client, throttle: Throttle, *, account: str | None) -> None:
-    """Count one failed attempt against an account."""
-    if not account:
-        return
-    try:
-        key = _key(throttle, "acct", account)
-        count = await client.incr(key)
-        if count == 1:
-            await client.expire(key, throttle.window_seconds)
-    except Exception as exc:  # noqa: BLE001 - counting is best effort
-        logger.warning(f"could not record throttle failure: {exc}")
+async def record_failure(
+    client, throttle: Throttle, *, account: str | None, ip: str | None = None
+) -> None:
+    """Count one failed attempt, against the account and against the address.
+
+    ``ip`` is where the per-address counter is bumped for a throttle that does
+    not count successes. Passing it is what makes the address limit exist at
+    all for login, so it is not optional in practice -- the caller that forgets
+    it gets an unlimited address.
+    """
+    subjects = [("acct", account)]
+    if account and ip:
+        subjects.append(("pair", _pair(account, ip)))
+    if ip and not throttle.ip_counts_successes:
+        subjects.append(("ip", ip))
+    for kind, subject in subjects:
+        if not subject:
+            continue
+        try:
+            key = _key(throttle, kind, subject)
+            count = await client.incr(key)
+            if count == 1:
+                await client.expire(key, throttle.window_seconds)
+        except Exception as exc:  # noqa: BLE001 - counting is best effort
+            logger.warning(f"could not record throttle failure: {exc}")
 
 
-async def clear(client, throttle: Throttle, *, account: str | None) -> None:
+async def clear(
+    client, throttle: Throttle, *, account: str | None, ip: str | None = None
+) -> None:
     """Forget an account's failures after a successful attempt.
 
     Otherwise a user who mistypes nine times and then succeeds stays one
-    mistake away from being locked out for the rest of the window.
+    mistake away from being locked out for the rest of the window. The pair
+    counter has to go too, or that is exactly what happens on the address they
+    are sitting at -- which is the only address they are likely to notice it
+    on.
     """
     if not account:
         return
-    try:
-        await client.delete(_key(throttle, "acct", account))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(f"could not clear throttle counter: {exc}")
+    keys = [_key(throttle, "acct", account)]
+    if ip:
+        keys.append(_key(throttle, "pair", _pair(account, ip)))
+    for key in keys:
+        try:
+            await client.delete(key)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"could not clear throttle counter: {exc}")
+
+
+#: The header our own edge sets, and the only one here a caller cannot forge.
+#:
+#: Cloudflare overwrites ``CF-Connecting-IP`` on every request it proxies, so
+#: whatever a client puts there is discarded. ``X-Forwarded-For`` gets no such
+#: treatment: Cloudflare adds to it and leaves what was already there, which is
+#: why the value below is preferred over it.
+_EDGE_IP_HEADER = "cf-connecting-ip"
 
 
 def client_ip(request) -> str | None:
     """The caller's address, as seen through the tunnel.
 
     ``request.client.host`` is the proxy, so it is the same for everyone and
-    useless as a key. ``X-Forwarded-For`` is the real client, and the **first**
-    entry is the one to take: later entries are proxies, and a caller can append
-    anything they like to the header, so trusting the last is trusting the
-    attacker.
+    useless as a key.
+
+    The header to believe is ``CF-Connecting-IP``. ``X-Forwarded-For`` is
+    **caller-controlled** and was being trusted, which made every per-address
+    limit here optional: send a different value each time and the counter never
+    accumulates. Verified against production before this change -- one request
+    to ``POST /api/auth/forgot-password`` carrying
+    ``X-Forwarded-For: 203.0.113.250`` created its own counter and left the real
+    client's sitting at 1. That is not only the login limiter; it is also the
+    five-signups-per-hour cap, which is the only thing standing between a
+    script and unlimited tenant rows.
+
+    Why not simply take the *last* entry, which is the usual advice: the chain
+    here is client -> Cloudflare -> cloudflared -> uvicorn, and cloudflared
+    dials uvicorn over loopback. If it appends, the last entry is ``127.0.0.1``
+    for every caller on earth, and a single shared counter would throttle the
+    whole product at ten attempts a window. Guessing wrong in that direction is
+    far worse than the bug being fixed, so the fallback below is deliberately
+    left exactly as it was rather than changed on an assumption.
+
+    CONFIRMED ON PRODUCTION (2026-09-09). The header was not taken on trust --
+    this codebase has been wrong about a forwarded header before, in
+    ``AUTH_URL``, where the tunnel forwarded ``Host`` correctly and Auth.js
+    still built ``https://localhost:3002/...``. The check costs one request and
+    is worth repeating if the tunnel or the proxy in front of it ever changes:
+    send a ``forgot-password`` through ``api.qonvo.org`` carrying a bogus
+    ``X-Forwarded-For``, then see which ``throttle:password_reset:ip:<hash>``
+    key it lands on. sha256(ip)[:32] of the real client means this header is
+    being read; sha256 of the spoofed value means it is not and every per-address
+    limit is decoration again. Before the fix the spoofed value won; after it,
+    the same request landed on the real client.
     """
+    edge = request.headers.get(_EDGE_IP_HEADER)
+    if edge and edge.strip():
+        return edge.strip()
+
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
         first = forwarded.split(",")[0].strip()

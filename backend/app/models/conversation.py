@@ -53,6 +53,10 @@ class Conversation(Base, TenantScopedMixin):
         index=True,
     )
     chat_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # The customer's WhatsApp push name, captured from the inbound payload and
+    # refreshed on every turn (``extract_push_name`` in app/api/webhooks.py).
+    # NULL for a conversation whose payloads never carried one, which is why the
+    # inbox label falls back to a formatted number (teardown I1).
     customer_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     state: Mapped[ConversationState] = mapped_column(
         Enum(ConversationState, name="conversation_state"),

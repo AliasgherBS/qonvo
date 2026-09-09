@@ -45,12 +45,30 @@ function readDismissed(): boolean {
   }
 }
 
-export function OnboardingChecklist() {
+/**
+ * `compact` collapses the step list behind a disclosure (teardown I2).
+ *
+ * The inbox is a fixed-height workspace: the conversation list, the transcript
+ * and the reply box are meant to fill the window between the top bar and the
+ * bottom of the screen. Expanded, this card is about 450 pixels of that, which
+ * on a 900-pixel viewport pushed the reply box off the bottom for exactly the
+ * people who most need the inbox to look finished -- a brand new owner, on
+ * their first visit, before they have dismissed anything.
+ *
+ * Compact keeps what makes a checklist work (progress, and the one next thing
+ * to do) at about seventy pixels, and the steps are one click away rather than
+ * gone.
+ */
+export function OnboardingChecklist({ compact = false }: { compact?: boolean }) {
   const token = useAuthToken();
   const { data } = useApi(() => onboarding.get({ token }), [token]);
   // Starts false and is read in an effect: reading localStorage during render
   // makes the server and client markup disagree, which React discards.
   const [dismissed, setDismissed] = useState(false);
+  // Collapsed by default in compact mode, and expanding is per-visit rather
+  // than remembered: somebody who opens the steps is doing them now, and would
+  // not thank us for the inbox being short again tomorrow.
+  const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
     setDismissed(readDismissed());
@@ -68,6 +86,7 @@ export function OnboardingChecklist() {
   if (!data || data.complete || dismissed) return null;
 
   const next = data.steps.find((s) => s.required && !s.done);
+  const showSteps = !compact || expanded;
 
   return (
     <Card className="border-primary/30 bg-primary/5">
@@ -83,17 +102,30 @@ export function OnboardingChecklist() {
               </CardDescription>
             </div>
           </div>
-          <button
-            onClick={dismiss}
-            aria-label="Hide the setup checklist"
-            className="rounded-lg p-1 text-muted-foreground transition hover:bg-border hover:text-foreground"
-          >
-            <X className="h-4 w-4" />
-          </button>
+          <div className="flex shrink-0 items-center gap-1">
+            {compact ? (
+              <button
+                onClick={() => setExpanded((v) => !v)}
+                aria-expanded={expanded}
+                className="rounded-lg px-2 py-1 text-xs font-semibold text-primary-strong transition hover:bg-primary/10"
+              >
+                {expanded ? "Hide steps" : "Show steps"}
+              </button>
+            ) : null}
+            <button
+              onClick={dismiss}
+              aria-label="Hide the setup checklist"
+              className="rounded-lg p-1 text-muted-foreground transition hover:bg-border hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
         </div>
 
         {/* Progress as a bar as well as a count: "2 of 5" is a fact, a bar is
-            a feeling, and the feeling is what gets someone to step three. */}
+            a feeling, and the feeling is what gets someone to step three.
+            Kept in compact mode: it is four pixels, and it is the half that
+            makes somebody finish. */}
         <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-border">
           <div
             className="h-full rounded-full bg-primary transition-all"
@@ -102,6 +134,7 @@ export function OnboardingChecklist() {
         </div>
       </CardHeader>
 
+      {!showSteps ? null : (
       <CardContent className="space-y-1">
         {data.steps.map((step) => (
           <Link
@@ -135,6 +168,7 @@ export function OnboardingChecklist() {
           </Link>
         ))}
       </CardContent>
+      )}
     </Card>
   );
 }

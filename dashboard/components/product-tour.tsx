@@ -25,6 +25,23 @@ const SEEN_KEY = "qonvo:tour-seen";
 
 type Step = { target: string; title: string; body: string };
 
+/**
+ * The first match that actually occupies space.
+ *
+ * Both navigations carry the same `data-tour` values -- the sidebar for
+ * desktop, the bottom bar for phones -- and whichever is not in use is
+ * `display:none` rather than unmounted. A zero-sized rect is the only reliable
+ * signal for that: `offsetParent` is also null for a `position: fixed`
+ * element, which the bottom bar is.
+ */
+function visibleTarget(selector: string): Element | null {
+  for (const candidate of document.querySelectorAll(selector)) {
+    const rect = candidate.getBoundingClientRect();
+    if (rect.width > 0 && rect.height > 0) return candidate;
+  }
+  return null;
+}
+
 const STEPS: Step[] = [
   {
     target: '[data-tour="nav:/inbox"]',
@@ -101,7 +118,15 @@ export function ProductTour() {
       finish();
       return;
     }
-    const element = document.querySelector(STEPS[index].target);
+    // The *visible* match, not the first one in the document.
+    //
+    // The sidebar is `hidden lg:flex`, so on a phone its links are still in
+    // the DOM with display:none, and getBoundingClientRect returns all zeros
+    // for them. querySelector found those, the rect was truthy, and the tour
+    // drew its highlight ring at 0,0 in the corner for three of its four steps
+    // -- present enough to render, absent enough to be useless, and silent.
+    // Found by opening the tour at 390x844.
+    const element = visibleTarget(STEPS[index].target);
     if (!element) {
       setIndex(index + 1);
       return;

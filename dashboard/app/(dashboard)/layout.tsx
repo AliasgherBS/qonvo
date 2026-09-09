@@ -5,8 +5,8 @@ import { MobileNav } from "@/components/mobile-nav";
 import { Sidebar } from "@/components/sidebar";
 import { Topbar } from "@/components/topbar";
 import { ProductTour } from "@/components/product-tour";
-import { RepSwitch } from "@/components/rep-switch";
 import { TrialBanner } from "@/components/trial-banner";
+import { VerifyEmailBanner } from "@/components/verify-email-banner";
 import { auth } from "@/auth";
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -30,18 +30,25 @@ export default async function DashboardLayout({ children }: { children: React.Re
           role={session.user.role}
         />
 
-        <main className="flex-1 overflow-y-auto p-4 lg:p-8">
+        {/* pb-28 on mobile: the bottom bar is fixed now, so it no longer
+            reserves its own space in the flex column and would otherwise cover
+            the last of the scrollable content (teardown S1). */}
+        <main className="flex-1 overflow-y-auto p-4 pb-28 lg:p-8">
           {/* Owner-only banners (a cross-tenant admin has no tenant/session). */}
           {session.user.role === "qonvo_admin" ? null : (
             <>
+              {/* Above the trial banner: an unconfirmed address blocks the
+                  next step, so it outranks a countdown. */}
+              <VerifyEmailBanner />
               <TrialBanner />
-              <ConnectionBanner />
-              {/* On every page, not only the home one. The reason to reach for
-                  it is usually urgent, and hunting for it is the failure. */}
-              <RepSwitch />
+              <ConnectionBanner role={session.user.role} />
+              {/* The rep switch used to render here, as a full-width card
+                  above every page's title. It lives in the top bar now
+                  (teardown S3): still global, still one click, and no longer
+                  charging every page ninety pixels for it. */}
               {/* Runs once per browser and describes the sidebar and the
                   switch, so it belongs in the layout rather than on a page:
-                  both of its targets live here. */}
+                  both of its targets are in the shell. */}
               <ProductTour />
             </>
           )}

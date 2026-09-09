@@ -126,9 +126,17 @@ async def enabled_skill_names(db: AsyncSession, tenant_id: uuid.UUID) -> set[str
 
 
 async def enabled_tools(db: AsyncSession, tenant_id: uuid.UUID) -> list[dict[str, Any]]:
-    """OpenAI tool schemas for every skill enabled for ``tenant_id``."""
+    """OpenAI tool schemas for every skill enabled for ``tenant_id``.
+
+    ``sorted``, not set order. Providers cache on the longest common prefix of
+    a request and the tool definitions are part of it, so a set's iteration
+    order would reshuffle several thousand bytes at the front of every request
+    and bill the whole prefix at full rate. Same reason the system prompt is
+    byte-stable (``test_prompt_caching``), and the same reason
+    ``pipeline.tool_authority`` sorts.
+    """
     names = await enabled_skill_names(db, tenant_id)
-    return [SKILL_REGISTRY[name].tool_schema() for name in names]
+    return [SKILL_REGISTRY[name].tool_schema() for name in sorted(names)]
 
 
 class UnknownSkillError(Exception):

@@ -69,7 +69,10 @@ for (const f of sources) {
   const lines = read(f).split("\n");
   lines.forEach((line, i) => {
     if (exempt(lines, i, "no-raw-hex")) return;
-    if (/#[0-9a-fA-F]{6}\b/.test(line)) {
+    // {6} then {2}? rather than {6}\b: an eight-digit hex carries an alpha
+    // channel, and `\b` cannot match when the seventh character is also hex,
+    // so `#000000ff` sailed through the gate that exists to catch `#000000`.
+    if (/#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?\b/.test(line)) {
       fail("no-raw-hex", `${rel(f)}:${i + 1} hardcodes a hex color`);
     }
   });

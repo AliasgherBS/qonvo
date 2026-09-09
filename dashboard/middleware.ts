@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { auth } from "@/auth";
+import { TENANT_PREFIXES, isOwnerOnlyPath, isTenantPath } from "@/lib/nav-access";
 import { cspWithNonce } from "@/lib/security-headers";
 
 /**
@@ -41,6 +42,7 @@ const PUBLIC_PREFIXES = [
   "/forgot-password",
   "/reset-password",
   "/accept-invite",
+  "/verify-email",
   "/api/auth",
   "/terms",
   "/privacy",
@@ -54,6 +56,40 @@ const PUBLIC_PREFIXES = [
 
 // Matched exactly, not by prefix — "/" as a prefix would make the whole app public.
 const PUBLIC_EXACT = ["/"];
+
+/**
+ * Every path prefix in the app that resolves to a real page behind auth.
+ *
+ * This exists for one reason (teardown A1): a URL that matches no route at all
+ * must reach Next's 404 rather than the login redirect. It used to reach the
+ * redirect, so a mistyped marketing link asked a stranger to sign in and a
+ * crawler recorded a soft 404 instead of a real one.
+ *
+ * Middleware runs before routing, so it cannot ask Next whether a route
+ * exists. It has to be told, and this is the telling. The tenant pages come
+ * from lib/nav-access, which the sidebar, the mobile bar and the redirects
+ * below already read, so a new tenant page has to be added there regardless.
+ * `/account` and `/admin` are the two that list does not cover, by design: it
+ * answers "which pages are a tenant's", and those two are neither.
+ *
+ * Why an omission here cannot make a page public. Middleware is not the only
+ * gate. Every route under app/(dashboard) renders inside a layout that calls
+ * `auth()` and redirects to /login when there is no session, and every API
+ * call those pages make carries the session's bearer token or 401s. Middleware
+ * is the gate that makes the redirect fast and gives it a callbackUrl; the
+ * layout is the gate that makes it safe. A route accidentally left out of this
+ * list therefore still redirects a signed-out visitor to /login, one hop later
+ * and without the callbackUrl. A route wrongly left *in* it is gated exactly as
+ * it is today. Neither mistake opens anything, which is why the list is allowed
+ * to be a list.
+ */
+const APP_PREFIXES = [...TENANT_PREFIXES, "/account", "/admin"];
+
+function isAppPath(pathname: string): boolean {
+  return APP_PREFIXES.some(
+    (prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`),
+  );
+}
 
 /**
  * Query parameters that are credentials and must never persist in a URL.
@@ -89,11 +125,12 @@ const ALWAYS_SENSITIVE = [
  * reset and every invitation, which is a worse outcome than the leak this is
  * trying to prevent.
  *
- * Those two are single-use by design: a reset token carries a fingerprint of
- * the current password hash, so using it invalidates it. A URL that stops
- * working once used is a different risk from one that keeps working.
+ * All three are single-use by design: a reset token carries a fingerprint of
+ * the current password hash and a verification token a fingerprint of the
+ * unverified state, so using either invalidates it. A URL that stops working
+ * once used is a different risk from one that keeps working.
  */
-const TOKEN_PARAM_ALLOWED_ON = ["/reset-password", "/accept-invite"];
+const TOKEN_PARAM_ALLOWED_ON = ["/reset-password", "/accept-invite", "/verify-email"];
 
 function sensitiveParams(pathname: string): string[] {
   const allowed = TOKEN_PARAM_ALLOWED_ON.some((prefix) => pathname.startsWith(prefix));
@@ -158,15 +195,27 @@ export default auth((req) => {
     ? `${req.headers.get("x-forwarded-proto") ?? "https"}://${fwdHost}`
     : nextUrl.origin;
 
-  // A cross-tenant admin has no tenant, so the owner pages (inbox, knowledge,
-  // …) 403 for them. Funnel admins to the admin console instead of ever landing
-  // them on a broken tenant-scoped page.
-  const OWNER_ONLY_PREFIXES = ["/inbox", "/knowledge", "/integrations", "/settings", "/analytics", "/onboarding"];
+  // A cross-tenant admin has no tenant, so the tenant-scoped pages (inbox,
+  // knowledge, …) 403 for them. Funnel admins to the admin console instead of
+  // ever landing them on a broken page. The prefix lists live in
+  // lib/nav-access so this and the two navs cannot disagree about who may go
+  // where -- a hidden sidebar entry is decoration if the URL still loads.
   const adminHome = "/admin/tenants";
 
-  if (!isLoggedIn && !isPublicPath) {
+  // `isAppPath` is the A1 condition: without it, an unmatched URL took this
+  // branch and became a login page. With it, an unmatched URL falls all the way
+  // through to `NextResponse.next()` at the bottom, Next finds no route for it,
+  // and app/not-found.tsx renders with a real 404 status. A signed-in visitor
+  // already fell through this way, which is why they were the ones seeing the
+  // unstyled default.
+  if (!isLoggedIn && !isPublicPath && isAppPath(nextUrl.pathname)) {
     const loginUrl = new URL("/login", origin);
     loginUrl.searchParams.set("callbackUrl", nextUrl.pathname);
+    // A Google sign-in that was refused for a reason leaves the reason on the
+    // session. Carrying it through means /login can say what happened; without
+    // it the user clicks Google, arrives back at the sign-in page, and has no
+    // way to tell a refusal from a bug.
+    if (req.auth?.authError) loginUrl.searchParams.set("error", req.auth.authError);
     return withCsp(NextResponse.redirect(loginUrl), nonce);
   }
 
@@ -178,8 +227,16 @@ export default auth((req) => {
   if (isLoggedIn && !isAdmin && nextUrl.pathname.startsWith("/admin")) {
     return withCsp(NextResponse.redirect(new URL("/inbox", origin)), nonce);
   }
-  if (isLoggedIn && isAdmin && OWNER_ONLY_PREFIXES.some((p) => nextUrl.pathname.startsWith(p))) {
+  if (isLoggedIn && isAdmin && isTenantPath(nextUrl.pathname)) {
     return withCsp(NextResponse.redirect(new URL(adminHome, origin)), nonce);
+  }
+
+  // A staff seat has no business on the owner pages, and every one of them
+  // refuses its primary action at the API now. Redirecting rather than
+  // rendering a form that cannot save: the alternative is a page that looks
+  // functional until the moment somebody presses the button.
+  if (isLoggedIn && req.auth?.user?.role === "staff" && isOwnerOnlyPath(nextUrl.pathname)) {
+    return withCsp(NextResponse.redirect(new URL("/inbox", origin)), nonce);
   }
 
   return withCsp(NextResponse.next(forward), nonce);

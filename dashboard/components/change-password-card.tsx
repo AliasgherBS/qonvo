@@ -7,7 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/components/ui/toast";
-import { auth, describeError } from "@/lib/api";
+import { MIN_PASSWORD_LENGTH, PasswordStrength } from "@/components/password-strength";
+import { ApiError, auth, describeError } from "@/lib/api";
 import { useAuthToken } from "@/lib/use-api";
 
 export function ChangePasswordCard() {
@@ -18,6 +19,7 @@ export function ChangePasswordCard() {
   const [confirm, setConfirm] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [weakReasons, setWeakReasons] = useState<string[] | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -34,7 +36,11 @@ export function ChangePasswordCard() {
       setNext("");
       setConfirm("");
     } catch (err) {
-      setError(describeError(err, "Couldn't change your password."));
+      if (err instanceof ApiError && err.detail?.code === "weak_password") {
+        setWeakReasons(err.detail.reasons ?? []);
+      } else {
+        setError(describeError(err, "Couldn't change your password."));
+      }
     } finally {
       setSaving(false);
     }
@@ -69,10 +75,13 @@ export function ChangePasswordCard() {
                 type="password"
                 autoComplete="new-password"
                 required
-                minLength={8}
+                minLength={MIN_PASSWORD_LENGTH}
                 value={next}
-                onChange={(e) => setNext(e.target.value)}
-                placeholder="At least 8 characters"
+                onChange={(e) => {
+                  setNext(e.target.value);
+                  setWeakReasons(null);
+                }}
+                placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
               />
             </div>
             <div className="space-y-1.5">
@@ -82,12 +91,13 @@ export function ChangePasswordCard() {
                 type="password"
                 autoComplete="new-password"
                 required
-                minLength={8}
+                minLength={MIN_PASSWORD_LENGTH}
                 value={confirm}
                 onChange={(e) => setConfirm(e.target.value)}
               />
             </div>
           </div>
+          <PasswordStrength password={next} serverReasons={weakReasons ?? undefined} />
           {error ? (
             <p role="alert" className="rounded-xl bg-danger/10 px-3 py-2 text-sm text-danger">
               {error}

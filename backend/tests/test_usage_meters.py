@@ -25,6 +25,7 @@ def _usage(**overrides) -> TenantUsage:
         "period_end": dt.date(2026, 10, 1),
         "messages": Meter(used=0, allowed=5_000),
         "voice_minutes": Meter(used=0, allowed=20),
+        "voice_seconds": Meter(used=0, allowed=20 * 60),
         "seats": Meter(used=1, allowed=5),
         "knowledge_sources": Meter(used=0, allowed=150),
         "knowledge_chars": Meter(used=0, allowed=5_000_000),

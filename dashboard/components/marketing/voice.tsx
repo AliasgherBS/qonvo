@@ -1,15 +1,14 @@
 import { Reveal } from "@/components/marketing/reveal";
+import { VoicePlayer } from "@/components/marketing/voice-player";
 
 /**
  * Full-width section, its own layout family.
  *
- * The waveform is decoration built from a fixed array, not random values, so
- * it is stable across renders. Deliberately no play button: a control that
- * does nothing is worse than no control, and there is no audio file to play.
+ * The waveform used to be decoration with deliberately nothing to press,
+ * because there was no audio file: the strongest claim on the page was the one
+ * piece of it a visitor could not check (teardown L7). There is a clip now, and
+ * the bars are its progress and its seek bar.
  */
-const BARS = [
-  18, 34, 52, 30, 66, 44, 78, 40, 58, 26, 70, 48, 36, 62, 22, 54, 38, 68, 30, 46,
-];
 
 export function Voice() {
   return (
@@ -28,18 +27,10 @@ export function Voice() {
         </Reveal>
 
         <Reveal delay={0.16}>
-          <div
-            className="mx-auto mt-12 flex h-20 max-w-md items-center justify-center gap-1.5"
-            aria-hidden="true"
-          >
-            {BARS.map((h, i) => (
-              <span
-                key={i}
-                className="w-1.5 rounded-full bg-primary/70"
-                style={{ height: `${h}%` }}
-              />
-            ))}
-          </div>
+          <VoicePlayer />
+          <p className="mx-auto mt-4 max-w-md text-sm text-muted-foreground">
+            A real reply from a Qonvo rep, answering a question and offering a time.
+          </p>
         </Reveal>
 
         <Reveal delay={0.22}>

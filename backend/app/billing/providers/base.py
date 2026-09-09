@@ -8,9 +8,17 @@ manual adapter without touching the domain.
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol, runtime_checkable
+
+#: How long before a card lapses the owner should be warned. Two months is
+#: enough to reach a bank and get a replacement, and it is the window the
+#: renewal that would fail almost certainly falls inside: an expiring card is
+#: the largest preventable cause of involuntary churn, and the warning is only
+#: worth anything if it arrives before the charge does.
+CARD_EXPIRY_WARNING_DAYS = 60
 
 
 class InvalidWebhookSignature(Exception):
@@ -109,6 +117,53 @@ class Payment:
     order_id: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class CardOnFile:
+    """The card the next renewal will be charged to, as the provider reports it.
+
+    Only what a customer needs to recognise their own card and to notice that
+    it is about to lapse. No token, no full number, nothing that could be used
+    to charge anybody: card details belong to the merchant of record and must
+    not pass through here even in transit.
+
+    ``state`` rather than a raw date comparison in the UI, for the same reason
+    ``usage.Meter.state`` exists: the threshold lives in one place, so the
+    owner's page and anything else reading this cannot disagree about when a
+    card counts as a problem.
+    """
+
+    brand: str
+    last4: str
+    exp_month: int
+    exp_year: int
+    #: ``apple_pay`` / ``google_pay`` when the card sits behind a wallet. Worth
+    #: carrying: somebody who paid with Apple Pay does not recognise "Visa
+    #: ending 4242" as theirs, and telling them to "update the card" is then
+    #: the wrong instruction.
+    wallet: str | None = None
+
+    @property
+    def expires_after(self) -> dt.date:
+        """The first day the card is no longer valid.
+
+        A card expires at the *end* of its printed month, so 09/28 is good
+        through 30 September 2028. Treating the 1st as the expiry would warn a
+        month early and, worse, call a working card dead.
+        """
+        year = self.exp_year + (1 if self.exp_month == 12 else 0)
+        month = 1 if self.exp_month == 12 else self.exp_month + 1
+        return dt.date(year, month, 1)
+
+    def state(self, *, now: dt.datetime | None = None) -> str:
+        """``ok`` | ``expiring`` | ``expired``."""
+        today = (now or dt.datetime.now(dt.UTC)).date()
+        if today >= self.expires_after:
+            return "expired"
+        if (self.expires_after - today).days <= CARD_EXPIRY_WARNING_DAYS:
+            return "expiring"
+        return "ok"
+
+
 @runtime_checkable
 class BillingProvider(Protocol):
     key: str
@@ -130,6 +185,17 @@ class BillingProvider(Protocol):
 
     def payments(self, *, customer_id: str, limit: int = 20) -> list[Payment]:
         """Payment history for this customer, newest first. Empty when unknown."""
+        ...
+
+    def card_on_file(self, *, customer_id: str) -> CardOnFile | None:
+        """The default card a renewal will be charged to, or None.
+
+        None covers "no gateway", "no saved card" and "the provider does not
+        report one" identically, and the page shows nothing in all three. That
+        is deliberate: a card the customer does not recognise is worse than no
+        card at all, so this never guesses and never falls back to the last
+        payment.
+        """
         ...
 
     def set_cancellation(
@@ -183,8 +249,10 @@ class BillingProvider(Protocol):
 
 
 __all__ = [
+    "CARD_EXPIRY_WARNING_DAYS",
     "BillingEvent",
     "BillingProvider",
+    "CardOnFile",
     "Checkout",
     "InvalidWebhookSignature",
     "Payment",

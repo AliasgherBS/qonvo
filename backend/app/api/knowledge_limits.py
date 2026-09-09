@@ -10,6 +10,7 @@ all until it has been fetched.
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 
 from sqlalchemy import BigInteger, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +26,14 @@ from app.core.limits import (
 from app.models.knowledge import KnowledgeChunk, KnowledgeSource
 from app.models.tenant import TenantConfig
 
-__all__ = ["KnowledgeUsage", "check_room_for", "source_chars", "usage_for"]
+__all__ = [
+    "KnowledgeUsage",
+    "SourceStats",
+    "check_room_for",
+    "source_chars",
+    "source_stats",
+    "usage_for",
+]
 
 #: Fallbacks for a tenant whose entitlements predate these keys. The trial
 #: figures, so a missing entitlement is restrictive-but-usable rather than
@@ -107,6 +115,52 @@ async def source_chars(db: AsyncSession, source_id: uuid.UUID) -> int:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class SourceStats:
+    """How much of one source the rep can actually use."""
+
+    chars: int
+    chunks: int
+
+
+async def source_stats(
+    db: AsyncSession, tenant_id: uuid.UUID, *, source_id: uuid.UUID | None = None
+) -> dict[uuid.UUID, SourceStats]:
+    """Stored characters and chunk count, per source.
+
+    One grouped query for the whole list rather than ``source_chars`` per row:
+    the sources table is the first screen an owner lands on, so N+1 there is
+    N+1 on the page that has to feel instant.
+
+    Tombstoned chunks are excluded, as they are everywhere else now.
+
+    This docstring used to explain that the divergence from ``usage_for`` was
+    deliberate: that the quota counted every row in pgvector while this counted
+    what retrieval could return. The explanation was accurate and the behaviour
+    it defended was a bug. A re-crawl left the previous crawl behind, so the
+    quota charged for text the business no longer held, for ever, and the two
+    numbers disagreed by however many times a page had been refreshed. A
+    re-crawl now deletes what it replaces, so there is nothing to diverge over
+    and the owner's page and the bill agree.
+    """
+    stmt = (
+        select(
+            KnowledgeChunk.source_id,
+            func.coalesce(func.sum(func.length(KnowledgeChunk.content)), 0),
+            func.count(KnowledgeChunk.id),
+        )
+        .where(
+            KnowledgeChunk.tenant_id == tenant_id,
+            KnowledgeChunk.tombstoned.is_(False),
+        )
+        .group_by(KnowledgeChunk.source_id)
+    )
+    if source_id is not None:
+        stmt = stmt.where(KnowledgeChunk.source_id == source_id)
+    rows = (await db.execute(stmt)).all()
+    return {r[0]: SourceStats(chars=int(r[1] or 0), chunks=int(r[2] or 0)) for r in rows}
+
+
 async def usage_for(db: AsyncSession, tenant_id: uuid.UUID) -> KnowledgeUsage:
     """Count what this tenant currently holds, against what its plan allows.
 
@@ -147,7 +201,13 @@ async def usage_for(db: AsyncSession, tenant_id: uuid.UUID) -> KnowledgeUsage:
     chars = (
         await db.execute(
             select(func.coalesce(func.sum(func.length(KnowledgeChunk.content)), 0)).where(
-                KnowledgeChunk.tenant_id == tenant_id
+                KnowledgeChunk.tenant_id == tenant_id,
+                # Belt and braces. Ingestion deletes what it replaces now, so
+                # there should be nothing tombstoned to exclude -- but this
+                # query is the one that charges a business, and it was the only
+                # reader in the codebase that counted tombstoned rows. If one
+                # ever comes back, it must not come back as a bill.
+                KnowledgeChunk.tombstoned.is_(False),
             )
         )
     ).scalar_one()

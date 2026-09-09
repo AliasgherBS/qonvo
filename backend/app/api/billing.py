@@ -21,13 +21,15 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_db, require_tenant
+from app.api.deps import get_claims, get_db, require_owner, require_tenant
 from app.billing.plans import PLANS, TRIAL_PLAN
 from app.billing.providers.registry import resolve_billing_provider
 from app.billing.service import get_subscription
 from app.billing.state import service_state
+from app.core.security import TokenClaims
 from app.models.billing import Subscription
 from app.models.tenant import Tenant, TenantConfig
+from app.services import audit
 
 router = APIRouter(prefix="/api/billing", tags=["billing"])
 
@@ -68,7 +70,7 @@ class CheckoutResponse(BaseModel):
 
 @router.get("/payments")
 async def payment_history(
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # what the business has spent
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     """This tenant's payments, newest first.
@@ -105,6 +107,55 @@ async def payment_history(
     ]
 
 
+class CardOnFileInfo(BaseModel):
+    """What is safe and useful to say about the card being charged."""
+
+    brand: str
+    last4: str
+    exp_month: int
+    exp_year: int
+    wallet: str | None
+    #: ok | expiring | expired, decided by the provider seam so the warning
+    #: window lives in one place rather than in a date comparison in the UI.
+    state: str
+
+
+@router.get("/card")
+async def card_on_file(
+    tenant_id: UUID = Depends(require_owner),  # which card is being charged
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """The card the next renewal will be charged to, if the provider reports one.
+
+    Worth a request of its own: an expiring card is the largest preventable
+    cause of involuntary churn, and it is preventable only if the owner is told
+    the expiry before the renewal fails. ``{"card": null}`` rather than an error
+    for a tenant with no gateway, no subscription or no saved method, because
+    all three mean the same thing to the page: show nothing, guess nothing.
+    """
+    customer_id = (
+        await db.execute(
+            select(Subscription.provider_customer_id).where(Subscription.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if not customer_id:
+        return {"card": None}
+
+    card = resolve_billing_provider().card_on_file(customer_id=customer_id)
+    if card is None:
+        return {"card": None}
+    return {
+        "card": CardOnFileInfo(
+            brand=card.brand,
+            last4=card.last4,
+            exp_month=card.exp_month,
+            exp_year=card.exp_year,
+            wallet=card.wallet,
+            state=card.state(),
+        ).model_dump()
+    }
+
+
 class CancelRequest(BaseModel):
     """Why they are leaving, optionally.
 
@@ -132,7 +183,8 @@ class CancelRequest(BaseModel):
 @router.post("/cancel")
 async def cancel_subscription(
     body: CancelRequest,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # ends the service the business pays for
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Schedule cancellation at the end of the paid period.
@@ -164,12 +216,27 @@ async def cancel_subscription(
     # The row is not written here. The provider's webhook does that, so a
     # failure at their end cannot leave us showing "cancelled" for a
     # subscription that is still billing.
+    #
+    # The audit row is written on the attempt rather than on the webhook,
+    # because it records a person's decision and the webhook records the
+    # provider's. Only a successful call, though: a refused one changed
+    # nothing.
+    if ok:
+        await audit.record(
+            db,
+            tenant_id=tenant_id,
+            claims=claims,
+            action="subscription_cancelled",
+            target=row.provider_subscription_id,
+            meta={"reason": body.reason, "comment": body.comment},
+        )
     return {"ok": ok, "reason": None if ok else "provider_unavailable"}
 
 
 @router.post("/resume")
 async def resume_subscription(
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # restores a paid subscription
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Undo a scheduled cancellation.
@@ -192,6 +259,14 @@ async def resume_subscription(
     ok = resolve_billing_provider().set_cancellation(
         subscription_id=subscription_id, cancel=False
     )
+    if ok:
+        await audit.record(
+            db,
+            tenant_id=tenant_id,
+            claims=claims,
+            action="subscription_resumed",
+            target=subscription_id,
+        )
     return {"ok": ok, "reason": None if ok else "provider_unavailable"}
 
 
@@ -202,7 +277,8 @@ class ChangePlanRequest(BaseModel):
 @router.post("/change-plan")
 async def change_plan(
     body: ChangePlanRequest,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # changes what is charged
+    claims: TokenClaims = Depends(get_claims),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Move an existing subscription onto another plan, without leaving here.
@@ -234,13 +310,22 @@ async def change_plan(
     ok = resolve_billing_provider().change_plan(
         subscription_id=subscription_id, plan_key=body.plan_key
     )
+    if ok:
+        await audit.record(
+            db,
+            tenant_id=tenant_id,
+            claims=claims,
+            action="plan_changed",
+            target=subscription_id,
+            meta={"to_plan": body.plan_key},
+        )
     return {"ok": ok, "reason": None if ok else "provider_unavailable"}
 
 
 @router.get("/invoice/{order_id}")
 async def invoice_link(
     order_id: str,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # a tax document naming the business
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """A link to one invoice, generated on demand.
@@ -280,7 +365,7 @@ async def invoice_link(
 
 @router.post("/portal")
 async def billing_portal(
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # hands over a session for the card on file
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """A link to the provider's billing portal, minted fresh.
@@ -316,6 +401,12 @@ async def billing_usage(
     Reads ``services.usage.tenant_usage``, which is also what the admin console
     reads. That is the point of §4.3: one computation, so an owner and an
     operator looking at the same tenant cannot be shown different numbers.
+
+    The payload carries ``scope: "tenant"`` and, for voice, both the minutes an
+    owner is sold and the seconds the gate counts. One computation was never
+    enough on its own: the same 89 stored seconds read as "2 min of 5" here and
+    as 89 on the admin endpoint, and neither said which unit or whose usage it
+    was (F7).
     """
     from app.services.usage import tenant_usage
 
@@ -398,7 +489,7 @@ async def list_plans(_tenant_id: UUID = Depends(require_tenant)) -> list[PlanInf
 @router.post("/checkout", response_model=CheckoutResponse)
 async def start_checkout(
     body: CheckoutRequest,
-    tenant_id: UUID = Depends(require_tenant),
+    tenant_id: UUID = Depends(require_owner),  # starts a charge
 ) -> CheckoutResponse:
     if body.plan_key not in PLANS:
         raise HTTPException(status_code=400, detail="unknown plan")

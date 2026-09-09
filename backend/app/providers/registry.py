@@ -45,6 +45,30 @@ def _resolve_base_url(provider_name: str, override: str | None) -> str | None:
     return PROVIDER_PRESETS.get(provider_name)
 
 
+def _require_base_url(capability: str, provider_name: str, base_url: str | None) -> str:
+    """The endpoint for a capability, or a loud failure.
+
+    These two used to end in ``or PROVIDER_PRESETS["groq"]`` for speech-to-text
+    and ``or PROVIDER_PRESETS["openai"]`` for text-to-speech. So a typo in
+    ``QONVO_TTS_PROVIDER`` sent the configured key, quite possibly a Groq one,
+    to OpenAI, while the same typo in the speech-to-text setting sent it to
+    Groq. One silent vendor switch, two different vendors, from one mistake,
+    and the only symptom is a 401 from a provider nobody chose.
+
+    An unknown provider name is a configuration error, and the honest response
+    is to say so at startup rather than to pick a vendor on the operator's
+    behalf. An explicit ``*_BASE_URL`` still wins, which is what a
+    self-hosted or proxied endpoint needs.
+    """
+    if base_url:
+        return base_url
+    raise ValueError(
+        f"QONVO_{capability.upper()}_PROVIDER is {provider_name!r}, which is not one of "
+        f"{sorted(PROVIDER_PRESETS)}. Set a known provider, or set "
+        f"QONVO_{capability.upper()}_BASE_URL explicitly."
+    )
+
+
 def resolve_llm_identity(tenant_config: TenantConfigLike | None = None) -> tuple[str, str]:
     """Return the ``(provider, model)`` an LLM call for this tenant will use.
 
@@ -147,7 +171,7 @@ def resolve_stt(tenant_config: TenantConfigLike | None = None):
     model = cfg.get("model") or settings.stt_model
     base_url = _resolve_base_url(provider_name, cfg.get("base_url") or settings.stt_base_url)
     return OpenAICompatSTT(
-        base_url=base_url or PROVIDER_PRESETS["groq"], api_key=api_key, model=model
+        base_url=_require_base_url("stt", provider_name, base_url), api_key=api_key, model=model
     )
 
 
@@ -164,7 +188,7 @@ def resolve_tts(tenant_config: TenantConfigLike | None = None):
     voice = cfg.get("voice") or settings.tts_voice
     base_url = _resolve_base_url(provider_name, cfg.get("base_url") or settings.tts_base_url)
     return OpenAICompatTTS(
-        base_url=base_url or PROVIDER_PRESETS["openai"],
+        base_url=_require_base_url("tts", provider_name, base_url),
         api_key=api_key,
         model=model,
         voice=voice,

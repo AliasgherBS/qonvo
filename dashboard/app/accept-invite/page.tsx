@@ -8,7 +8,8 @@ import { Logo } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { describeError, team } from "@/lib/api";
+import { MIN_PASSWORD_LENGTH, PasswordStrength } from "@/components/password-strength";
+import { ApiError, describeError, team } from "@/lib/api";
 
 interface Preview {
   valid: boolean;
@@ -28,6 +29,7 @@ function AcceptInviteForm() {
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [weakReasons, setWeakReasons] = useState<string[] | null>(null);
 
   useEffect(() => {
     if (!token) {
@@ -52,7 +54,11 @@ function AcceptInviteForm() {
       });
       setDone(true);
     } catch (err) {
-      setError(describeError(err, "Couldn't accept this invitation. It may have expired."));
+      if (err instanceof ApiError && err.detail?.code === "weak_password") {
+        setWeakReasons(err.detail.reasons ?? []);
+      } else {
+        setError(describeError(err, "Couldn't accept this invitation. It may have expired."));
+      }
     } finally {
       setSubmitting(false);
     }
@@ -111,10 +117,19 @@ function AcceptInviteForm() {
               type="password"
               autoComplete="new-password"
               required
-              minLength={8}
+              minLength={MIN_PASSWORD_LENGTH}
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="At least 8 characters"
+              onChange={(e) => {
+                setPassword(e.target.value);
+                setWeakReasons(null);
+              }}
+              placeholder={`At least ${MIN_PASSWORD_LENGTH} characters`}
+            />
+            <PasswordStrength
+              password={password}
+              email={preview.email ?? undefined}
+              businessName={preview.business_name ?? undefined}
+              serverReasons={weakReasons ?? undefined}
             />
           </div>
         </>

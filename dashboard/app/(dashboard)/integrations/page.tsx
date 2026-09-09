@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertTriangle, CalendarDays, FileSpreadsheet, Plus } from "lucide-react";
+import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -10,24 +11,19 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/components/ui/toast";
-import { type Integration, type IntegrationProvider, integrations } from "@/lib/api";
+import { UsageLine } from "@/components/integrations/usage-line";
+import { config as configApi, type Integration, type IntegrationProvider, integrations } from "@/lib/api";
+import { integrationUsage, type IntegrationUsage } from "@/lib/api/connections";
+import { timeIn } from "@/lib/timezones";
 import { useApi, useAuthToken } from "@/lib/use-api";
 import { openSheetPicker } from "@/lib/google-picker";
 
+/** A text link, for the two actions that must not compete with the primary. */
+const QUIET_LINK_CLASSES =
+  "text-sm font-medium text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline disabled:cursor-not-allowed disabled:opacity-50";
+
 const SELECT_CLASSES =
   "h-10 w-full rounded-xl border border-border-strong bg-surface px-3.5 text-sm text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
-
-// A short, opinionated list beats a free-text IANA field - the old input accepted
-// typos that only surfaced as events landing an hour off.
-const TIMEZONES = [
-  "Asia/Karachi",
-  "Asia/Dubai",
-  "Asia/Kolkata",
-  "Europe/London",
-  "America/New_York",
-  "America/Los_Angeles",
-  "UTC",
-];
 
 interface ProviderMeta {
   title: string;
@@ -63,6 +59,14 @@ const ERROR_COPY: Record<string, string> = {
 export default function IntegrationsPage() {
   const token = useAuthToken();
   const { data, loading, error, refetch } = useApi(() => integrations.list({ token }), [token]);
+  // Only for the clock shown on the calendar card. A failure here leaves the
+  // line reading "UTC", which is a cosmetic wrong rather than a broken page,
+  // so it deliberately does not gate rendering.
+  const { data: tenantConfig } = useApi(() => configApi.get({ token }), [token]);
+  // "Last booking 2 hours ago" (teardown N3). Deliberately not gating render:
+  // a card without its usage line is still a usable card, and a failure here
+  // must not hide the connect button.
+  const { data: usage } = useApi(() => integrationUsage.map({ token }), [token]);
   const { toast } = useToast();
   const handledRedirect = useRef(false);
 
@@ -119,6 +123,8 @@ export default function IntegrationsPage() {
               key={integration.provider}
               integration={integration}
               token={token}
+              timezone={tenantConfig?.timezone}
+              usage={usage?.[integration.provider]}
               onChanged={refetch}
             />
           ))}
@@ -131,10 +137,16 @@ export default function IntegrationsPage() {
 function IntegrationCard({
   integration,
   token,
+  timezone,
+  usage,
   onChanged,
 }: {
   integration: Integration;
   token: string | undefined;
+  /** The tenant's clock, shown on the calendar card. Undefined while loading. */
+  timezone: string | undefined;
+  /** Bookings made / rows written. Undefined while loading, or never connected. */
+  usage: IntegrationUsage | undefined;
   onChanged: () => void;
 }) {
   const meta = META[integration.provider];
@@ -252,6 +264,10 @@ function IntegrationCard({
           </p>
         ) : null}
 
+        {/* Whether the rep has actually used this, not just whether the token
+            works (teardown N3). */}
+        {hasGrant ? <UsageLine usage={usage} /> : null}
+
         {hasGrant && isCalendar ? (
           <div className="space-y-4">
             {config.calendar_id ? (
@@ -284,36 +300,28 @@ function IntegrationCard({
               </div>
             )}
 
-            <div className="max-w-xs space-y-1.5">
-              <Label htmlFor="calendar-timezone">Timezone</Label>
-              <select
-                id="calendar-timezone"
-                className={SELECT_CLASSES}
-                value={config.timezone ?? "UTC"}
-                disabled={busy !== null}
-                onChange={(e) =>
-                  run(
-                    "tz",
-                    () =>
-                      integrations.update(
-                        integration.provider,
-                        { config: { timezone: e.target.value } },
-                        { token },
-                      ),
-                    "Timezone updated",
-                  )
-                }
+            {/* Shown, not set. This used to be a select, and it was the only
+                place the timezone could be changed at all -- so a tenant with
+                no Google account could not reach the setting that governed
+                their opening hours (teardown N1/V2). The tenant's own clock
+                now governs both, and leaving an editable control here that no
+                longer decides anything would be worse than the original bug:
+                the owner would change it, see "Timezone updated", and nothing
+                would happen. */}
+            <p className="text-sm text-muted-foreground">
+              Bookings use your business time zone,{" "}
+              <strong className="font-bold text-foreground">
+                {(timezone ?? "UTC").replace(/_/g, " ")}
+              </strong>
+              {timeIn(timezone ?? "UTC") ? `, where it is ${timeIn(timezone ?? "UTC")}` : null}.{" "}
+              <Link
+                href="/business"
+                className="font-semibold text-primary-strong underline-offset-2 hover:underline"
               >
-                {!TIMEZONES.includes(config.timezone ?? "") && config.timezone ? (
-                  <option value={config.timezone}>{config.timezone}</option>
-                ) : null}
-                {TIMEZONES.map((tz) => (
-                  <option key={tz} value={tz}>
-                    {tz}
-                  </option>
-                ))}
-              </select>
-            </div>
+                Change it on Business
+              </Link>
+              .
+            </p>
           </div>
         ) : null}
 
@@ -406,25 +414,18 @@ function IntegrationCard({
           ) : (
             <span />
           )}
-          <div className="flex items-center gap-2">
+          {/* Emphasis follows the health of the connection (teardown N2).
+              Reconnect used to be the loudest thing on a card whose badge said
+              Connected -- a recovery action shouting at somebody with nothing
+              to recover. On a working connection the loud button is "Test
+              connection", which is what an owner actually came to do, and
+              Reconnect is a quiet link beside Disconnect. It only turns loud
+              when the connection itself reports a problem. */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
             {hasGrant ? (
               <>
                 <Button
-                  variant="ghost"
-                  size="sm"
-                  disabled={busy !== null}
-                  onClick={() =>
-                    run(
-                      "disconnect",
-                      () => integrations.disconnect(integration.provider, { token }),
-                      `${meta.title} disconnected`,
-                    )
-                  }
-                >
-                  Disconnect
-                </Button>
-                <Button
-                  variant="outline"
+                  variant={needsReconnect ? "outline" : "primary"}
                   size="sm"
                   disabled={busy !== null}
                   onClick={async () => {
@@ -445,17 +446,41 @@ function IntegrationCard({
                 >
                   {busy === "test" ? "Testing…" : "Test connection"}
                 </Button>
+                {needsReconnect ? (
+                  <Button size="sm" disabled={busy !== null} onClick={connect}>
+                    {busy === "connect" ? "Redirecting…" : "Reconnect Google"}
+                  </Button>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={busy !== null}
+                  onClick={() =>
+                    run(
+                      "disconnect",
+                      () => integrations.disconnect(integration.provider, { token }),
+                      `${meta.title} disconnected`,
+                    )
+                  }
+                  className={QUIET_LINK_CLASSES}
+                >
+                  Disconnect
+                </button>
+                {needsReconnect ? null : (
+                  <button
+                    type="button"
+                    disabled={busy !== null}
+                    onClick={connect}
+                    className={QUIET_LINK_CLASSES}
+                  >
+                    {busy === "connect" ? "Redirecting…" : "Reconnect"}
+                  </button>
+                )}
               </>
-            ) : null}
-            <Button size="sm" disabled={busy !== null} onClick={connect}>
-              {busy === "connect"
-                ? "Redirecting…"
-                : needsReconnect
-                  ? "Reconnect Google"
-                  : hasGrant
-                    ? "Reconnect"
-                    : "Connect Google"}
-            </Button>
+            ) : (
+              <Button size="sm" disabled={busy !== null} onClick={connect}>
+                {busy === "connect" ? "Redirecting…" : "Connect Google"}
+              </Button>
+            )}
           </div>
         </div>
       </CardContent>

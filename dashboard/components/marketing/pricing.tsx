@@ -11,11 +11,19 @@ import { trialHeadline } from "@/lib/plan";
  * this is one card rather than a tier comparison. When prices are settled it
  * expands into tiers in place without the section moving.
  *
- * Included list covers shipped features only.
+ * Included list covers shipped features only, and every line has to survive
+ * being quoted back at us. The knowledge line used to say "unlimited", which
+ * stopped being true the day the caps shipped (teardown L2): knowledge is
+ * bounded on every plan by three separate entitlements in
+ * `backend/app/billing/plans.py`, and the smallest of them, the trial and
+ * Starter figure, is 2,000,000 characters. So the line states that entry
+ * allowance, which is the one knowledge claim true on every plan, and the
+ * paragraph above says the allowance grows. A cap stated confidently sells;
+ * a cap that contradicts an earlier promise does not.
  */
 const INCLUDED = [
   "Your own WhatsApp number",
-  "Unlimited knowledge about your business",
+  "Two million characters of your own knowledge",
   "Replies by text and by voice note",
   "Google Calendar booking",
   "Order and lead capture to a Google Sheet",
@@ -35,9 +43,9 @@ export function Pricing() {
 
         <Reveal delay={0.08}>
           <p className="mx-auto mt-5 max-w-xl text-center text-lg text-muted-foreground">
-            Every plan includes the whole product. What you pay depends on how
-            many conversations you handle, so talk to us and we will size it
-            with you.
+            Every plan includes the whole product. What grows with the plan is
+            the volume: messages, voice minutes and how much you can teach it.
+            Talk to us and we will size it with you.
           </p>
         </Reveal>
 

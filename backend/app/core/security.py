@@ -45,6 +45,12 @@ def verify_waha_hmac(
 # --------------------------------------------------------------------------- #
 # JWT (tenant_id + role claims, minted by the dashboard — DESIGN.md §8)
 # --------------------------------------------------------------------------- #
+#: The `typ` every access token carries and every other kind must not.
+#: Anything signed with this secret is a credential; the claim is what says
+#: which kind, so the API cannot accept a token minted for another purpose.
+ACCESS_TOKEN_TYPE = "access"
+
+
 class TokenError(Exception):
     """Raised when a JWT is missing, expired, or otherwise invalid."""
 
@@ -56,6 +62,22 @@ class TokenClaims:
     role: str | None
     is_qonvo_admin: bool
     raw: dict
+    #: This token's unique id, for revoking exactly this session (teardown X6).
+    #: ``None`` for a token minted before the claim existed, which ages out.
+    jti: str | None = None
+    #: When it was issued, as a unix timestamp. Compared against the
+    #: "everything before this moment is void" markers that a password change
+    #: or a member removal writes.
+    issued_at: int | None = None
+    #: The sign-in this token belongs to, stable across refreshes, and when
+    #: that sign-in happened. Signing out ends the session rather than the
+    #: token, and the refresh endpoint refuses past an absolute age.
+    session_id: str | None = None
+    session_started_at: int | None = None
+    #: Who is really behind this session, when it is an impersonation
+    #: (teardown X4). ``None`` for an ordinary token. Everything audited during
+    #: the session names this person as well as the account being used.
+    acting_as: str | None = None
 
 
 def decode_jwt(token: str) -> TokenClaims:
@@ -64,7 +86,28 @@ def decode_jwt(token: str) -> TokenClaims:
     ``qonvo_admin`` is a cross-tenant superadmin flag (not a tenant role), so a
     valid admin token may carry no ``tenant_id`` until it impersonates one.
     """
-    options = {"require": ["exp", "sub"]}
+    # `typ` is required, and this is the whole of X7's fix.
+    #
+    # Reset tokens are signed with the same secret and algorithm as access
+    # tokens, and carry both `exp` and `sub`. read_password_reset_token checks
+    # typ == "pwreset" correctly; this function checked nothing. The only thing
+    # stopping a reset link working as a bearer token was that require_tenant
+    # found no tenant_id and answered 403 -- an accident of the payload, not a
+    # decision. The day somebody adds a tenant id to that payload, to greet the
+    # user by business name on the reset page say, every reset email becomes a
+    # thirty-minute full-access credential sitting in a URL.
+    # `aud` and `iss` are required, not merely verified-if-present: PyJWT
+    # skips a claim that is absent, so without this a token minted with neither
+    # would sail through the very check that was added for them (teardown X9).
+    options = {
+        "require": [
+            "exp",
+            "sub",
+            "typ",
+            *(["aud"] if settings.jwt_audience else []),
+            *(["iss"] if settings.jwt_issuer else []),
+        ]
+    }
     try:
         payload = jwt.decode(
             token,
@@ -76,6 +119,11 @@ def decode_jwt(token: str) -> TokenClaims:
         )
     except jwt.PyJWTError as exc:  # expired, bad signature, missing claim, ...
         raise TokenError(str(exc)) from exc
+
+    # Requiring the claim is not enough: it has to be the right one. A reset
+    # token carries typ="pwreset" and would otherwise satisfy the requirement.
+    if payload.get("typ") != ACCESS_TOKEN_TYPE:
+        raise TokenError(f"token type {payload.get('typ')!r} is not an access token")
 
     raw_tenant = payload.get("tenant_id")
     tenant_id: UUID | None = None
@@ -91,6 +139,11 @@ def decode_jwt(token: str) -> TokenClaims:
         role=payload.get("role"),
         is_qonvo_admin=bool(payload.get("qonvo_admin", False)),
         raw=payload,
+        jti=payload.get("jti"),
+        acting_as=(payload.get("act") or {}).get("sub"),
+        session_id=payload.get("sid"),
+        session_started_at=int(payload["sst"]) if payload.get("sst") is not None else None,
+        issued_at=int(payload["iat"]) if payload.get("iat") is not None else None,
     )
 
 
@@ -120,7 +173,40 @@ def decrypt_secret(token: str) -> str:
 # --------------------------------------------------------------------------- #
 from passlib.context import CryptContext  # noqa: E402
 
-_pwd_context = CryptContext(schemes=["argon2"], deprecated="auto")
+#: Argon2id parameters, pinned rather than inherited (teardown X9).
+#:
+#: These were passlib's defaults, which means a library upgrade could change
+#: the work factor silently -- downwards as easily as upwards, and nothing in
+#: the codebase would say so. Pinned, so a change to how expensive it is to
+#: guess a password is a change to this file.
+#:
+#: The values are the ones already in effect, so pinning them changes nothing
+#: except making them a decision. That matters: the first attempt at this
+#: pinned OWASP's published *minimum* for Argon2id (19 MiB, t=2, p=1), which is
+#: markedly weaker than what passlib was already doing, and would have quietly
+#: halved the work factor for every password set from then on. A floor is not a
+#: target, and checking what the library actually did before pinning it is the
+#: whole job.
+#:
+#: 64 MiB comfortably exceeds that floor. Memory is the parameter that matters
+#: against GPU cracking, which is why it is the large one.
+#:
+#: Changing these later is safe in both directions for *reading*: passlib
+#: records the parameters in the hash, so an existing hash still verifies, and
+#: ``deprecated="auto"`` marks it for rehash on the owner's next successful
+#: login. It is only new hashes that get the new cost.
+ARGON2_TIME_COST = 3
+ARGON2_MEMORY_COST_KIB = 65536
+ARGON2_PARALLELISM = 4
+
+_pwd_context = CryptContext(
+    schemes=["argon2"],
+    deprecated="auto",
+    argon2__type="ID",
+    argon2__time_cost=ARGON2_TIME_COST,
+    argon2__memory_cost=ARGON2_MEMORY_COST_KIB,
+    argon2__parallelism=ARGON2_PARALLELISM,
+)
 
 
 def hash_password(password: str) -> str:

@@ -21,6 +21,14 @@ stores a minute.
 **Running out degrades, it does not fail.** The rep keeps answering, by text.
 A silent bot is the failure mode this codebase has already been burned by three
 times, and none of them were worth a voice note.
+
+**The customer is never told.** A voice-to-text downgrade is invisible by
+design: the answer is the same and it arrives the same. This module used to
+export a line of copy that got appended to the reply, which announced the
+*business's* plan limits to the business's own customer. Whether a tenant has
+voice minutes left is their commercial relationship with us, and a customer
+reading about it is embarrassing for the tenant. The owner is told instead,
+through the notification path, once per period.
 """
 
 from __future__ import annotations
@@ -39,9 +47,10 @@ from app.models.tenant import TenantConfig
 __all__ = [
     "SECONDS_PER_VOICE_MINUTE",
     "VOICE_MINUTES_KEY",
-    "VOICE_QUOTA_NOTICE",
+    "VOICE_QUOTA_NOTIFICATION_TITLE",
     "VoiceAllowance",
     "period_start",
+    "period_start_dt",
     "voice_allowance",
 ]
 
@@ -56,11 +65,10 @@ VOICE_MINUTES_KEY = "monthly_voice_minutes"
 #: nobody has looked at, which is the population it most needs to cover.
 DEFAULT_VOICE_MINUTES = 5
 
-#: Said once per period, not once per message. Explains what changed and what
-#: did not, because "voice is off" reads like the rep is broken.
-VOICE_QUOTA_NOTICE = (
-    "I can keep answering by text. Voice replies are paused until your plan renews."
-)
+#: Owner-facing, dashboard and email only. Also the dedupe key for
+#: "have we already told them this period", so it must stay stable: changing
+#: the wording re-alerts every tenant whose allowance is already exhausted.
+VOICE_QUOTA_NOTIFICATION_TITLE = "Voice replies are paused"
 
 
 def period_start(now: dt.datetime) -> dt.date:
@@ -72,6 +80,16 @@ def period_start(now: dt.datetime) -> dt.date:
     place, rather than a second notion of "this month" invented here.
     """
     return now.date().replace(day=1)
+
+
+def period_start_dt(now: dt.datetime) -> dt.datetime:
+    """:func:`period_start` as an aware UTC datetime, for timestamp columns.
+
+    ``usage_counters.day`` is a date and ``notifications.created_at`` is a
+    timestamp, so the same boundary is needed in both shapes. Derived here so
+    the two can never drift apart by a day.
+    """
+    return dt.datetime.combine(period_start(now), dt.time.min, tzinfo=dt.UTC)
 
 
 @dataclass(frozen=True, slots=True)

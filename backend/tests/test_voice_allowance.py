@@ -23,7 +23,7 @@ from app.agent.voice_allowance import (
     DEFAULT_VOICE_MINUTES,
     SECONDS_PER_VOICE_MINUTE,
     VOICE_MINUTES_KEY,
-    VOICE_QUOTA_NOTICE,
+    VOICE_QUOTA_NOTIFICATION_TITLE,
     VoiceAllowance,
     period_start,
 )
@@ -105,12 +105,18 @@ def test_a_zero_allowance_is_exhausted_rather_than_dividing_by_zero():
     assert VoiceAllowance(used_seconds=0, allowed_seconds=0).ratio == 1.0
 
 
-def test_the_notice_says_what_still_works():
-    """"Voice is off" reads like the rep is broken. The customer needs to know
-    they will still get an answer."""
-    assert "keep answering by text" in VOICE_QUOTA_NOTICE
-    assert "paused" in VOICE_QUOTA_NOTICE
-    assert "renews" in VOICE_QUOTA_NOTICE
+def test_the_module_exports_no_customer_facing_copy():
+    """The downgrade is invisible to the customer.
+
+    ``VOICE_QUOTA_NOTICE`` used to be appended to the reply, telling the
+    business's customer about the business's plan. What is left is a
+    notification title, which only the owner ever sees, and it doubles as the
+    once-per-period dedupe key so it has to stay stable.
+    """
+    import app.agent.voice_allowance as mod
+
+    assert not hasattr(mod, "VOICE_QUOTA_NOTICE")
+    assert VOICE_QUOTA_NOTIFICATION_TITLE == "Voice replies are paused"
 
 
 # --- the period ----------------------------------------------------------------- #

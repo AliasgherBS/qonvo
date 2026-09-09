@@ -31,7 +31,27 @@ const GOOGLE_SCRIPTS = ["https://apis.google.com", "https://accounts.google.com"
  * to ignore the console, and that costs more than this script does.
  */
 const CLOUDFLARE_ANALYTICS = ["https://static.cloudflareinsights.com"];
-const GOOGLE_FRAMES = ["https://accounts.google.com", "https://content-sheets.googleapis.com"];
+/**
+ * Origins allowed to be framed by us. Getting this wrong is silent.
+ *
+ * The Sheets Picker's dialog is an iframe on `docs.google.com` -- its own
+ * module hard-codes that origin -- and gapi puts its RPC relay frames on
+ * `apis.google.com`. Neither was listed, so the chooser rendered as a blank
+ * dialog, the Picker's callback never fired, and the owner saw "could not
+ * change the sheet" with nothing in any log: `POST /select` was never made,
+ * because there was nothing to pick from.
+ *
+ * `content-sheets.googleapis.com` was here and is wrong: it is an API host and
+ * is never framed. It belongs in `connect-src`, where it also is.
+ *
+ * A CSP that blocks a frame produces no network error and no exception, only
+ * an empty box, which is why this cost a day rather than a minute.
+ */
+const GOOGLE_FRAMES = [
+  "https://accounts.google.com",
+  "https://docs.google.com",
+  "https://apis.google.com",
+];
 const GOOGLE_CONNECT = ["https://apis.google.com", "https://content-sheets.googleapis.com"];
 
 /** The API host, which is a different origin now the domain is live. */
