@@ -28,19 +28,13 @@ from app.core.passwords import MAX_LENGTH, PasswordRejected, check_password
 from app.core.redis import get_redis
 from app.core.revocation import revoke_all_for_subject
 from app.core.security import TokenClaims, hash_password
-from app.core.validation import QuietValidationRoute
 from app.models.enums import UserRole
 from app.models.tenant import TeamInvitation, Tenant, TenantConfig, TenantUser, User
 from app.services import audit
 from app.services.auth import create_access_token
 from app.services.email import send_team_invite_email
 
-#: ``route_class`` for the same reason as the auth router: accepting an
-#: invitation posts a single-use token and a chosen password, and a 422 on any
-#: other field in that body echoed both.
-router = APIRouter(
-    prefix="/api/team", tags=["team"], route_class=QuietValidationRoute
-)
+router = APIRouter(prefix="/api/team", tags=["team"])
 
 INVITE_TTL_DAYS = 7
 _ROLES = {"owner", "staff"}

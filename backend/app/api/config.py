@@ -27,14 +27,14 @@ from app.core.limits import (
 from app.core.security import TokenClaims
 from app.core.tenant_time import is_valid_timezone, tenant_timezone
 
-# Re-exported: this module owned them until three other routers needed them.
-from app.core.validation import QuietValidationRoute, quiet_errors
+# Re-exported: this module owned it until the handler went app-wide.
+from app.core.validation import quiet_errors
 from app.integrations import GOOGLE_CALENDAR
 from app.models.tenant import Tenant, TenantConfig
 from app.services import audit
 from app.services.audit import changed_fields
 
-router = APIRouter(prefix="/api/config", tags=["config"], route_class=QuietValidationRoute)
+router = APIRouter(prefix="/api/config", tags=["config"])
 
 
 class ConfigUpdateRequest(BaseModel):

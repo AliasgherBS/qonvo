@@ -25,7 +25,6 @@ from app.core.security import TokenClaims, TokenError, decrypt_secret, encrypt_s
 from app.core.signup_guard import is_disposable_email
 from app.core.tenant_time import is_valid_timezone
 from app.core.totp import generate_secret, provisioning_uri, verify_code
-from app.core.validation import QuietValidationRoute
 from app.models.tenant import Tenant, User
 from app.services.auth import (
     AuthResult,
@@ -50,14 +49,7 @@ from app.services.email import (
 )
 from app.services.google_identity import GoogleIdentityError, verify_google_id_token
 
-#: ``route_class`` because a 422 here used to hand back the password.
-#: pydantic's ``missing`` error sets ``input`` to the *whole* submitted body,
-#: so leaving any one field out of a signup returned every other field --
-#: verified: ``POST /api/auth/signup`` without ``owner_name`` came back 422
-#: with the plaintext password in it, and ``reset-password`` did the same with
-#: the reset token. Unauthenticated, so anything logging 4xx bodies collected
-#: them (F10).
-router = APIRouter(prefix="/api", tags=["auth"], route_class=QuietValidationRoute)
+router = APIRouter(prefix="/api", tags=["auth"])
 
 
 class LoginRequest(BaseModel):

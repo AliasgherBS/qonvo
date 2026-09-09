@@ -8,20 +8,23 @@ moved: ``POST /api/auth/signup`` with ``owner_name`` left out came back 422
 with the new customer's plaintext password in the response body, on the very
 first request they ever make, unauthenticated.
 
-This started life inside ``app.api.config`` because that was the router known
-to carry ``payment_details``. Three routers need it now (config, auth, team,
-admin), and the reason it is still a route class rather than an app-wide
-exception handler is unchanged: the ``detail``-is-a-list shape is a contract
-every client reads, and making it app-wide would change all of them at once.
+This started life inside ``app.api.config``, as a route class on the one
+router known to carry ``payment_details``, on the reasoning that the
+``detail``-is-a-list shape is a contract every client reads and a global
+change would change all of them at once. Both halves of that were wrong.
+
+The shape is not what changes -- ``quiet_errors`` preserves the status code and
+the list, and drops only ``input`` and ``ctx``, which no client reads
+(dashboard/lib/api.ts reads ``detail[0].msg`` and nothing else). And a curated
+list of routers only ever covers the routers somebody thought of: four were
+missed and found by asking the property of the route table, and a fifth was
+found by tripping over it. So the handler is installed app-wide in
+``app.main`` and this module is just the transformation.
 """
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
-
-from fastapi import HTTPException, Request, Response, status
-from fastapi.exceptions import RequestValidationError
-from fastapi.routing import APIRoute
+from collections.abc import Sequence
 
 
 def quiet_errors(errors: Sequence[dict]) -> list[dict]:
@@ -43,28 +46,3 @@ def quiet_errors(errors: Sequence[dict]) -> list[dict]:
     return [
         {k: v for k, v in error.items() if k not in ("input", "ctx", "url")} for error in errors
     ]
-
-
-class QuietValidationRoute(APIRoute):
-    """Routes whose 422 body reports the shape of the error, not the content.
-
-    Done as a route class rather than an app-wide exception handler so it stays
-    a property of this router: these are the endpoints that carry secrets, and
-    a global change to the error format would be a change to every client's
-    contract at once. The status code and the ``detail``-is-a-list shape are
-    unchanged, so a dashboard reading ``detail[0].msg`` keeps working.
-    """
-
-    def get_route_handler(self) -> Callable[[Request], Awaitable[Response]]:
-        original = super().get_route_handler()
-
-        async def handler(request: Request) -> Response:
-            try:
-                return await original(request)
-            except RequestValidationError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail=quiet_errors(exc.errors()),
-                ) from exc
-
-        return handler

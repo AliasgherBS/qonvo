@@ -22,7 +22,6 @@ from app.agent.storage import purge_tenant_files
 from app.api.config import (
     ConfigResponse,
     ConfigUpdateRequest,
-    QuietValidationRoute,
     _apply_config_update,
     _config_to_dict,
 )
@@ -43,15 +42,7 @@ from app.models.whatsapp import WhatsAppSession
 from app.services.auth import create_access_token
 from app.waha.client import WahaClient, WahaError
 
-#: ``route_class`` matters here for one route: ``PUT
-#: /tenants/{id}/config`` takes the very same ``ConfigUpdateRequest`` the
-#: owner's own router takes, ``payment_details`` and all. That router was given
-#: a quiet 422 for exactly that reason (F10) and this one was not, so an
-#: over-length account number was still coming back in full through the admin
-#: door -- verified before the fix: 422, 1,261 bytes, the IBAN in the body.
-router = APIRouter(
-    prefix="/api/admin", tags=["admin"], route_class=QuietValidationRoute
-)
+router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 
 class CreateTenantRequest(BaseModel):
