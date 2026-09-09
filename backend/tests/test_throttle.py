@@ -344,3 +344,111 @@ def test_forgot_password_still_answers_202_when_throttled():
 
     assert 'return {"status": "ok"}' in following
     assert "429" not in following
+
+
+# --- a stranger cannot lock you out of your own business -------------------------- #
+#
+# The account counter is failure-only, which stops a *correct* password from
+# counting -- but not somebody else's wrong ones. Eleven deliberate failures on
+# a known address and the owner's real password answered 429 for fifteen
+# minutes, from any address, repeatable indefinitely. Verified live before the
+# fix, and the module's own docstring claimed it could not happen.
+#
+# `limit` is now per (account, address) pair, so an attacker spends their own
+# allowance. `account_limit` is the backstop for the distributed version.
+
+
+async def test_an_attacker_burns_their_own_allowance_not_the_victims():
+    redis = FakeRedis()
+    victim = "owner@example.com"
+
+    for _ in range(throttle.LOGIN.limit + 5):
+        await throttle.record_failure(
+            redis, throttle.LOGIN, account=victim, ip="203.0.113.9"
+        )
+
+    # The attacker's own address is done for this account.
+    assert (
+        await throttle.check(redis, throttle.LOGIN, ip="203.0.113.9", account=victim)
+        is True
+    )
+    # The owner, at their own desk, is not.
+    assert (
+        await throttle.check(redis, throttle.LOGIN, ip="198.51.100.4", account=victim)
+        is False
+    )
+
+
+async def test_the_distributed_version_is_still_caught():
+    """Pairing must not mean an account can be ground down for ever by rotating
+    addresses -- that would trade one hole for another."""
+    redis = FakeRedis()
+    victim = "owner@example.com"
+
+    for n in range(throttle.LOGIN.effective_account_limit + 1):
+        await throttle.record_failure(
+            redis, throttle.LOGIN, account=victim, ip=f"203.0.113.{n % 200}"
+        )
+
+    assert (
+        await throttle.check(redis, throttle.LOGIN, ip="198.51.100.4", account=victim)
+        is True
+    )
+
+
+async def test_the_backstop_is_far_enough_away_to_need_real_effort():
+    """If the two limits were equal, pairing would achieve nothing: one address
+    could spend the account's whole budget again."""
+    assert throttle.LOGIN.effective_account_limit >= throttle.LOGIN.limit * 3
+
+
+async def test_succeeding_forgets_the_failures_at_this_desk_too():
+    """Clearing only the account counter would leave a user who mistyped nine
+    times and then got in still one mistake from lockout on the very machine
+    they are sitting at."""
+    redis = FakeRedis()
+    for _ in range(throttle.LOGIN.limit):
+        await throttle.record_failure(
+            redis, throttle.LOGIN, account="user@example.com", ip="198.51.100.4"
+        )
+
+    await throttle.clear(
+        redis, throttle.LOGIN, account="user@example.com", ip="198.51.100.4"
+    )
+
+    assert (
+        await throttle.check(
+            redis, throttle.LOGIN, ip="198.51.100.4", account="user@example.com"
+        )
+        is False
+    )
+    assert [k for k in redis.values if ":pair:" in k and redis.values[k]] == []
+
+
+async def test_two_accounts_at_one_address_do_not_share_a_pair_budget():
+    """An office where one person is locked out must not lock out their
+    colleague, which is the whole point of pairing rather than using the
+    address alone."""
+    redis = FakeRedis()
+    for _ in range(throttle.LOGIN.limit + 1):
+        await throttle.record_failure(
+            redis, throttle.LOGIN, account="a@example.com", ip="198.51.100.4"
+        )
+
+    assert (
+        await throttle.check(
+            redis, throttle.LOGIN, ip="198.51.100.4", account="b@example.com"
+        )
+        is False
+    )
+
+
+def test_the_pair_subject_cannot_be_confused_between_two_pairs():
+    """`|` cannot appear in an email address, so no two pairs collide into one
+    subject -- which would merge two attackers' budgets, or split one."""
+    from app.core.throttle import _pair
+
+    assert _pair("a@b.com", "1.2.3.4") != _pair("a@b.com", "1.2.3.40")
+    assert _pair("a@b.com", "1.2.3.4") != _pair("a@b.co", "m1.2.3.4")
+    # And it normalises the address the same way the account counter does.
+    assert _pair("A@B.com ", "1.2.3.4") == _pair("a@b.com", "1.2.3.4")

@@ -179,7 +179,7 @@ async def login(
 
     # Forget the failures. Otherwise someone who mistypes nine times and then
     # succeeds stays one mistake from being locked out for the rest of the hour.
-    await throttle.clear(redis, throttle.LOGIN, account=body.email)
+    await throttle.clear(redis, throttle.LOGIN, account=body.email, ip=caller_ip)
     return _login_response(result)
 
 

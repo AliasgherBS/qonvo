@@ -39,6 +39,13 @@ class Throttle:
     name: str
     limit: int
     window_seconds: int
+    #: The allowance for one account across *all* addresses.
+    #:
+    #: ``limit`` is per (account, address) pair. This is the backstop for the
+    #: distributed version of the same attack, and it is deliberately much
+    #: larger, because it is also the number that decides how hard it is to
+    #: lock somebody out of their own business on purpose.
+    account_limit: int | None = None
     #: The per-IP allowance, when it should differ from the per-account one.
     #: An address is shared and an account is not, so the two are not the same
     #: question -- see ``ip_counts_successes``.
@@ -61,6 +68,10 @@ class Throttle:
     def effective_ip_limit(self) -> int:
         return self.limit if self.ip_limit is None else self.ip_limit
 
+    @property
+    def effective_account_limit(self) -> int:
+        return self.limit if self.account_limit is None else self.account_limit
+
 
 #: Generous enough that a person fat-fingering their password never notices,
 #: tight enough that a dictionary attack is pointless. Ten failures in fifteen
@@ -72,10 +83,27 @@ class Throttle:
 #: whole subscriber populations behind CGNAT -- so a per-attempt limit of ten
 #: per address is a limit on a business, or on a stranger, and not on an
 #: attacker.
+#: ``limit`` here is per (account, address) pair, not per account.
+#:
+#: Per account alone made locking somebody out of their own business trivial:
+#: eleven deliberate failures on a known email address and the owner's correct
+#: password returned 429 for fifteen minutes, from any address, repeatable for
+#: as long as the attacker cared to keep going. Verified before the change.
+#: The module used to claim in its own docstring that this could not happen.
+#:
+#: Pairing it means an attacker spends their *own* address's allowance against
+#: one account. ``account_limit`` is the backstop for a distributed attempt,
+#: and it is five times as large, so reaching it takes several addresses rather
+#: than one request loop.
+#:
+#: This narrows lockout-by-proxy rather than removing it. Any cap on an account
+#: can be reached by somebody willing to spend enough addresses; what changes
+#: is that it stops being free.
 LOGIN = Throttle(
     "login",
     limit=10,
     window_seconds=15 * 60,
+    account_limit=50,
     ip_limit=50,
     ip_counts_successes=False,
 )
@@ -103,6 +131,16 @@ def _key(throttle: Throttle, kind: str, subject: str) -> str:
     return f"throttle:{throttle.name}:{kind}:{_hashed(subject)}"
 
 
+def _pair(account: str, ip: str) -> str:
+    """One account as attacked from one address.
+
+    ``|`` cannot appear in an email address, so no two (account, address) pairs
+    can collide into one subject -- which would either merge two attackers'
+    budgets or split one.
+    """
+    return f"{account.strip().lower()}|{ip.strip()}"
+
+
 async def check(client, throttle: Throttle, *, ip: str | None, account: str | None) -> bool:
     """True when this attempt should be refused.
 
@@ -128,9 +166,17 @@ async def check(client, throttle: Throttle, *, ip: str | None, account: str | No
                 logger.warning(f"throttled {throttle.name} by ip")
                 return True
 
-        if account:
-            raw = await client.get(_key(throttle, "acct", account))
+        if account and ip:
+            # The tight one: this address, against this account.
+            raw = await client.get(_key(throttle, "pair", _pair(account, ip)))
             if raw is not None and int(raw) > throttle.limit:
+                logger.warning(f"throttled {throttle.name} by account+ip")
+                return True
+
+        if account:
+            # The backstop, for the same account attacked from many addresses.
+            raw = await client.get(_key(throttle, "acct", account))
+            if raw is not None and int(raw) > throttle.effective_account_limit:
                 logger.warning(f"throttled {throttle.name} by account")
                 return True
     except Exception as exc:  # noqa: BLE001 - never lock everyone out
@@ -153,6 +199,8 @@ async def record_failure(
     it gets an unlimited address.
     """
     subjects = [("acct", account)]
+    if account and ip:
+        subjects.append(("pair", _pair(account, ip)))
     if ip and not throttle.ip_counts_successes:
         subjects.append(("ip", ip))
     for kind, subject in subjects:
@@ -167,18 +215,27 @@ async def record_failure(
             logger.warning(f"could not record throttle failure: {exc}")
 
 
-async def clear(client, throttle: Throttle, *, account: str | None) -> None:
+async def clear(
+    client, throttle: Throttle, *, account: str | None, ip: str | None = None
+) -> None:
     """Forget an account's failures after a successful attempt.
 
     Otherwise a user who mistypes nine times and then succeeds stays one
-    mistake away from being locked out for the rest of the window.
+    mistake away from being locked out for the rest of the window. The pair
+    counter has to go too, or that is exactly what happens on the address they
+    are sitting at -- which is the only address they are likely to notice it
+    on.
     """
     if not account:
         return
-    try:
-        await client.delete(_key(throttle, "acct", account))
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(f"could not clear throttle counter: {exc}")
+    keys = [_key(throttle, "acct", account)]
+    if ip:
+        keys.append(_key(throttle, "pair", _pair(account, ip)))
+    for key in keys:
+        try:
+            await client.delete(key)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"could not clear throttle counter: {exc}")
 
 
 #: The header our own edge sets, and the only one here a caller cannot forge.
