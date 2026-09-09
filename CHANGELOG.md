@@ -9,6 +9,8 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-09-10
+
 ### Fixed
 
 - **The containerised dashboard was never actually configurable.** The compose
@@ -415,3 +417,4 @@ could be sold.
 [0.10.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.1
 [0.10.2]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.2
 [0.11.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.0
+[0.11.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.1
