@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Check, Lock } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, Lock } from "lucide-react";
 import Link from "next/link";
 
 import { Card, CardContent } from "@/components/ui/card";
@@ -112,6 +112,49 @@ function unblockHref(skill: SkillInfo): string | null {
   return null;
 }
 
+/**
+ * A working skill the owner's own instructions appear to forbid (teardown E4).
+ *
+ * The live tenant had Google Calendar connected and passing its test, and
+ * instructions reading "Never say a time slot is free or booked. You cannot see
+ * any diary." This page said "Check availability: Available" and the rep never
+ * once called it. Two surfaces of the same product contradicted each other and
+ * nothing reconciled them, so the only way to find out was to read a customer's
+ * transcript.
+ *
+ * The product now decides: a connected integration wins, and the rep is told so
+ * in the prompt. That is the right default and it is also invisible, which is
+ * why this notice exists. It names the winner, quotes the owner's own sentence
+ * so they can find it, and links to the page where they would change it.
+ *
+ * It admits to being a keyword check. Claiming to have understood someone's
+ * instructions would be a larger promise than a phrase list can keep, and an
+ * owner who is told "this might be wrong" can judge for themselves; one who is
+ * told "this is wrong" and disagrees has no move.
+ */
+function ConflictNotice({ skill }: { skill: SkillInfo }) {
+  return (
+    <div className="mt-2 w-full rounded-xl border border-warning/30 bg-warning/10 px-3 py-2">
+      <p className="flex items-start gap-2 text-xs font-semibold">
+        <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+        <span>{skill.conflict}</span>
+      </p>
+      {skill.conflictQuote ? (
+        <p className="mt-1.5 pl-5 text-xs italic text-muted-foreground">
+          &ldquo;{skill.conflictQuote}&rdquo;
+        </p>
+      ) : null}
+      <Link
+        href="/behavior"
+        className="mt-1.5 ml-5 inline-flex items-center gap-1.5 text-xs font-semibold text-primary-strong underline-offset-2 hover:underline"
+      >
+        Edit your instructions
+        <ArrowRight className="h-3.5 w-3.5" />
+      </Link>
+    </div>
+  );
+}
+
 function SkillRow({ skill }: { skill: SkillInfo }) {
   const href = skill.available ? null : unblockHref(skill);
 
@@ -120,6 +163,7 @@ function SkillRow({ skill }: { skill: SkillInfo }) {
       className={cn(
         "flex flex-wrap items-start gap-3 rounded-2xl border border-border bg-surface px-4 py-3",
         !skill.available && "bg-surface-muted",
+        skill.conflict && "border-warning/40",
       )}
     >
       <span
@@ -149,6 +193,8 @@ function SkillRow({ skill }: { skill: SkillInfo }) {
       ) : (
         <span className="text-xs font-semibold text-muted-foreground">{skill.needs}</span>
       )}
+
+      {skill.conflict ? <ConflictNotice skill={skill} /> : null}
     </div>
   );
 }

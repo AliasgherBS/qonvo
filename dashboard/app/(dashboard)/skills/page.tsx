@@ -22,7 +22,8 @@ export default function SkillsPage() {
         <h1 className="text-2xl font-extrabold tracking-tight">Skills</h1>
         <p className="text-sm text-muted-foreground">
           What your AI rep can do for a customer beyond answering questions. Anything waiting on
-          you says so, and links to the one place that fixes it.
+          you says so, and links to the one place that fixes it. If your own instructions look
+          like they forbid something that is connected and working, the row says so too.
         </p>
       </div>
 

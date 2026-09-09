@@ -15,6 +15,7 @@ from app.api import (
     activation,
     admin,
     auth,
+    behavior_assist,
     billing,
     billing_webhooks,
     conversations,
@@ -134,6 +135,8 @@ app.include_router(activation.router)
 app.include_router(team.router)
 app.include_router(account.router)
 app.include_router(admin.router)
+# The "Improve with AI" review on the Behavior page's custom instructions.
+app.include_router(behavior_assist.router)
 
 # --- Phase 3: agentic integrations (Google Calendar / Sheets) + analytics ---
 app.include_router(integrations_api.router)

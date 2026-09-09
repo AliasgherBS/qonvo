@@ -1,5 +1,6 @@
 "use client";
 
+import { ImproveInstructionsSection } from "@/components/behavior/improve-instructions";
 import {
   PersonaSection,
   TenantConfigPage,
@@ -36,6 +37,11 @@ export default function BehaviorPage() {
       {(props) => (
         <>
           <PersonaSection {...props} />
+          {/* Directly under the field it reviews, and it edits the same draft
+              object, so accepting a suggestion just makes the page dirty and
+              the page's own Save bar does the saving. Nothing about this
+              control writes to the API. */}
+          <ImproveInstructionsSection {...props} />
           <VoiceSection {...props} />
         </>
       )}

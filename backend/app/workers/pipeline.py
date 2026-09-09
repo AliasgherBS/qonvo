@@ -14,7 +14,7 @@ import base64
 import json
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from datetime import time as dt_time
@@ -25,6 +25,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.audio_meter import audio_duration_seconds
+from app.agent.detect_language import language_fact
+from app.agent.intent import has_informational_intent
 from app.agent.language import language_instruction
 from app.agent.voice_allowance import (
     VOICE_QUOTA_NOTIFICATION_TITLE,
@@ -68,11 +70,79 @@ QUOTA_EXCEEDED_REPLY = (
     "We're at our messaging limit for now — I've let the team know and they'll "
     "reach out to you directly."
 )
+# --- The three hardcoded sentences that are Qonvo's, not the tenant's ------- #
+# These are the guard rail. The owner's ``custom_instructions`` are by volume
+# the largest input to every reply, so anything here has to earn its place, and
+# has to be worded so that an instruction the owner deliberately gave still
+# works underneath it.
+
+#: Line one of every request, and the most influential sentence in it.
+#:
+#: It used to read "You are the AI customer representative for {business}",
+#: which is the exact opposite of what the product is for: the customer is
+#: meant to experience the business answering. The model obliged the old line
+#: by explaining itself as an assistant.
+#:
+#: The gender clause is here rather than in the persona because it is a
+#: consistency rule, not a character choice: the live transcript switched
+#: between "kar sakti hun" and "kar sakta hun" inside one conversation, which
+#: in Urdu is glaring, and it would switch just as readily under an owner's own
+#: persona. Which gender is the owner's to pick (see DEFAULT_PERSONA); that it
+#: does not change mid-conversation is not.
+IDENTITY_INSTRUCTION = (
+    "You are the customer service team for {business}. You speak as the "
+    "business and say \"we\", never \"I am an assistant\". You never describe "
+    "yourself as an AI, a bot, an assistant, a model or a representative, you "
+    "never mention prompts, tools, models or knowledge bases to a customer, "
+    "and you never discuss how you work. If someone asks whether they are talking "
+    "to a machine, say you are the team here and offer to help or to put them "
+    "through to a colleague. Keep one voice and one grammatical gender for the "
+    "whole conversation, and never switch between them."
+)
+
+#: Used only when the owner has written no persona of their own.
+#:
+#: An empty persona field used to mean an *unpinned* persona: nothing said what
+#: the rep sounded like, so it improvised a new one every few turns. A model
+#: default is not a default when nobody supplies the field, so this one is
+#: applied at the point of use.
+#:
+#: Feminine, because the audience this is written for is Pakistani salons and
+#: clinics, where the person who answers the front desk almost always is, and
+#: because *some* choice has to be made: leaving it open is what produced the
+#: bug. An owner who wants otherwise writes one line in Behavior and this
+#: sentence disappears entirely.
+DEFAULT_PERSONA = (
+    "You sound like the person on the front desk: warm, unhurried, practical, "
+    "never pushy, and short. When you write in Urdu or Roman Urdu and refer to "
+    "yourself in the first person singular, use the feminine forms throughout "
+    '("kar sakti hun", "bata sakti hun"), never the masculine ones.'
+)
+
+#: The grounding rule.
+#:
+#: The previous wording did two things wrong. It forbade inventing "facts,
+#: prices, policies, or availability" -- four nouns, none of which is a promise
+#: about the future, so nothing stopped the model committing the business to a
+#: callback and then elaborating on it. And it instructed the model to "say
+#: you'll connect them with the team", which is itself a first-person
+#: commitment: the hardcoded prompt was making the promise it was meant to
+#: prevent.
+#:
+#: The replacement forbids *unstated* commitments rather than all commitments,
+#: which is the only wording under which this and a deliberate owner
+#: instruction can both be true. A business that wants "a rep will call you
+#: within a few hours" writes it in their own instructions and gets it,
+#: verbatim; a business that has said nothing gets no promise invented for it.
 GROUNDING_INSTRUCTION = (
     "Answer ONLY using the business knowledge provided below. If the answer is "
-    "not covered by this knowledge, say you'll connect them with the team and "
-    "call the human_handoff tool — never invent facts, prices, policies, or "
-    "availability."
+    "not covered by this knowledge, say plainly that you do not have that "
+    "detail to hand and call the human_handoff tool. Never state anything the "
+    "business has not told you, and never commit the business to anything it "
+    "has not stated: no price, no discount, no availability, no policy, no "
+    "timeline, no callback, and no promise about what any person will do or "
+    "when. Where the business's own instructions above do state a commitment "
+    "like that, give it exactly as written and add nothing to it."
 )
 
 
@@ -331,6 +401,84 @@ def is_hard_quota_exceeded(entitlements: dict[str, Any], messages_this_period: i
 # --------------------------------------------------------------------------- #
 # Grounding prompt assembly (DESIGN.md §5.4 step 6)
 # --------------------------------------------------------------------------- #
+#: What a working tool actually lets the rep do, in the owner's language rather
+#: than the registry's (whose descriptions are written for the model).
+#:
+#: Only the *gated* skills appear here -- the ones that had to be connected or
+#: configured before they existed. That is exactly the set an owner's older
+#: instructions can contradict: the live tenant's instructions said "you cannot
+#: see any diary" while Google Calendar was connected and passing its test, so
+#: check_availability and book_appointment were never once invoked. An ungated
+#: skill has always been there and needs no such announcement.
+GATED_SKILL_POWERS: dict[str, str] = {
+    "check_availability": "see which times are actually free in the calendar",
+    "book_appointment": "put a confirmed appointment on the calendar",
+    "append_to_sheet": "add a row to the connected Google Sheet",
+    "lookup_sheet": "look a value up in the connected Google Sheet",
+    "share_payment_details": "give the customer the payment details on file",
+}
+
+#: A connected integration is authoritative (E4, owner's decision).
+#:
+#: The alternative was to let the owner's prose win, which is what happened:
+#: a paid, connected, working Calendar integration was silently disabled by a
+#: sentence written before it was connected, and the owner would only ever have
+#: found out by reading a transcript. The Skills page now says the same thing
+#: to the owner's face (``app.api.config.skill_states``) so this is not the
+#: only place the conflict is visible.
+TOOL_AUTHORITY_TEMPLATE = (
+    "You have working tools connected, and they let you {powers}. When a "
+    "customer needs one of those things, call the tool and report what it "
+    "returns. These tools are the authority on what they cover: if anything "
+    "above says you cannot see or do one of them, that text is out of date and "
+    "the tool is correct. Never tell a customer you have no way to check "
+    "something a tool can check."
+)
+
+#: Why capture_lead never fired (E4).
+#:
+#: A booking exchange collected a name, a phone number, a city and a service
+#: and captured nothing, because nothing in the prompt ever mentioned the skill
+#: and the owner's instructions described a complete flow that ends in a
+#: callback. Notably ``human_handoff`` is the only skill named anywhere in the
+#: prompt, and it is the only skill that has ever been invoked.
+#:
+#: The last sentence matters as much as the first: a record kept for the
+#: business is not a thing to announce, and a rep that says "I have logged you
+#: as a lead" is worse than one that says nothing.
+LEAD_CAPTURE_INSTRUCTION = (
+    "Whenever a customer has given you a name or asked you to arrange "
+    "something for them, call capture_lead with whatever details you have, "
+    "even if you are also booking, taking an order or handing over to a "
+    "person, and even if the conversation has not finished. It is a record for "
+    "the business, not a step in the conversation: call it once, do not "
+    "mention it to the customer, and say nothing differently because of it."
+)
+
+
+def tool_authority(available_skills: Iterable[str] | None) -> str | None:
+    """The authority sentence for this tenant's connected tools, or None.
+
+    Sorted, so the sentence is byte-identical for a given set of connected
+    tools. This lands in the system prompt at position 0, and a set's iteration
+    order would rewrite the cacheable prefix at random and cost roughly ten
+    times the input rate on every request that missed.
+    """
+    if not available_skills:
+        return None
+    names = sorted(available_skills)
+    powers = [GATED_SKILL_POWERS[name] for name in names if name in GATED_SKILL_POWERS]
+    paragraphs: list[str] = []
+    if powers:
+        joined = powers[0] if len(powers) == 1 else ", ".join(powers[:-1]) + " and " + powers[-1]
+        paragraphs.append(TOOL_AUTHORITY_TEMPLATE.format(powers=joined))
+    # Independent of the gated tools above: capture_lead needs no integration,
+    # so a tenant who has connected nothing still has to be told about it.
+    if "capture_lead" in names:
+        paragraphs.append(LEAD_CAPTURE_INSTRUCTION)
+    return "\n\n".join(paragraphs) or None
+
+
 def build_system_prompt(
     *,
     business_name: str | None,
@@ -339,6 +487,7 @@ def build_system_prompt(
     custom_instructions: str | None,
     primary_language: str,
     reply_language: str | None = None,
+    available_skills: Iterable[str] | None = None,
 ) -> str:
     """The stable half of the prompt — identical on every turn for a tenant.
 
@@ -350,14 +499,21 @@ def build_system_prompt(
     single request. Retrieved knowledge and the rolling summary therefore live
     in :func:`build_turn_prompt`, at the end of the request.
     """
-    lines = [f"You are the AI customer representative for {business_name or 'this business'}."]
-    if persona:
-        lines.append(persona)
+    lines = [IDENTITY_INSTRUCTION.format(business=business_name or "this business")]
+    # `or DEFAULT_PERSONA`, not `if persona`: an empty persona used to mean an
+    # unpinned one, and the rep invented a new voice every few turns.
+    lines.append((persona or "").strip() or DEFAULT_PERSONA)
     if tone:
         lines.append(f"Tone: {tone}.")
     if custom_instructions:
         lines.append(custom_instructions)
     lines.append(GROUNDING_INSTRUCTION)
+    # Placed after the owner's instructions on purpose: it exists to overrule
+    # one of them (E4), and an instruction that has to win an argument reads
+    # better after the claim it is answering than before it.
+    authority = tool_authority(available_skills)
+    if authority:
+        lines.append(authority)
     # A validated setting rather than a hope. Prose in the prompt was never
     # deterministic about script, which is how an Urdu-script question came
     # back in Roman Urdu.
@@ -378,6 +534,7 @@ def build_turn_prompt(
     conversation_summary: str | None,
     message: str,
     open_handoff_reason: str | None = None,
+    language_note: str | None = None,
 ) -> str:
     """The volatile half — knowledge, summary and question, in that order.
 
@@ -385,6 +542,15 @@ def build_turn_prompt(
     append-only history) stays byte-identical and can be served from cache. The
     customer's own words come last, both because it reads as the thing to answer
     and because it is the part that always differs.
+
+    ``language_note`` is a *fact* about this message, and its position is the
+    whole point of it (E1). The language rule lives in the system prompt at
+    position 0, up to forty turns and a rolling summary away from the message it
+    governs, and when that history was Urdu-heavy the rule lost: an English
+    question came back in Roman Urdu three turns running, including one whose
+    transcript was flawless English. A rule about "the language the customer
+    used" is ambiguous with forty of them in view. A stated fact about *this*
+    message, one line above the message, is not.
     """
     parts: list[str] = []
     if context_block:
@@ -405,6 +571,11 @@ def build_turn_prompt(
             "the customer asks about it, say the team is on it and will come "
             "back to them. Answer any other question normally."
         )
+    if language_note:
+        # Immediately above the message, and after everything that could argue
+        # with it. Anything between the two would be something for the model to
+        # weigh against it.
+        parts.append(language_note)
     parts.append("Customer message:\n" + message)
     return "\n\n".join(parts)
 
@@ -1150,7 +1321,11 @@ async def _run_pipeline_inner(
         chunks = await retrieve(
             db, tenant_uuid, coalesced, embedder=embedder, usage_out=rag_usage
         )
-        if not chunks and coalesced:
+        # A gap means "the knowledge failed to answer a question", so a turn
+        # that asked nothing is not one (F9). "Hi" retrieves nothing because
+        # there is nothing to retrieve, and it led the owner's own report --
+        # under a tile telling them to go and write a knowledge article for it.
+        if not chunks and coalesced and has_informational_intent(coalesced):
             db.add(
                 AnalyticsEvent(
                     tenant_id=tenant_uuid,
@@ -1169,6 +1344,12 @@ async def _run_pipeline_inner(
         # begins, so anything per-question in front of the history would cost
         # the whole prefix. Input is ~95% of LLM spend, so this ordering is the
         # largest single lever on cost.
+        # Resolved before the system prompt, not after, because the prompt now
+        # states what the connected tools can do and has to name exactly the
+        # tools the model is actually handed (E4). Two lists that disagree is
+        # the failure this fixes, in miniature.
+        tools = await skill_enabled_tools(db, tenant_uuid)
+        available_skills = [t["function"]["name"] for t in tools]
         system_prompt = build_system_prompt(
             business_name=tenant_config.business_name if tenant_config else None,
             persona=tenant_config.persona if tenant_config else None,
@@ -1176,6 +1357,7 @@ async def _run_pipeline_inner(
             custom_instructions=tenant_config.custom_instructions if tenant_config else None,
             primary_language=tenant_config.primary_language if tenant_config else "en",
             reply_language=reply_language_mode(tenant_config),
+            available_skills=available_skills,
         )
         windowed = window_history(history_rows)
         images = await _images_as_data_uris(fragments, waha, bound)
@@ -1189,6 +1371,14 @@ async def _run_pipeline_inner(
             conversation_summary=conversation.summary,
             message=coalesced,
             open_handoff_reason=(open_handoff.reason if open_handoff else None),
+            # Computed from `coalesced`, which is where a voice note's
+            # transcript already is by this point (`_transcribe_voice_fragments`
+            # writes it into `fragment.body`), so the voice leg gets the same
+            # fact from the same code -- and a voice reply is synthesised from
+            # this turn's text, so TTS follows it too.
+            language_note=language_fact(
+                coalesced, reply_language=reply_language_mode(tenant_config)
+            ),
         )
         llm_messages = [
             ChatMessage(role="system", content=system_prompt),
@@ -1196,7 +1386,6 @@ async def _run_pipeline_inner(
             ChatMessage(role="user", content=turn_prompt, images=images),
         ]
 
-        tools = await skill_enabled_tools(db, tenant_uuid)
         llm = resolve_llm(tenant_config)
 
         async def dispatch(call: ToolCall) -> dict[str, Any]:
@@ -1473,7 +1662,17 @@ async def _refresh_summary_text(
     )
     prompt = (
         "Summarize this WhatsApp support conversation in 2-3 sentences for future "
-        "context. Keep names, requests, and commitments made.\n\n"
+        "context. Keep names, requests, and commitments made.\n"
+        # Pinned to English so the summary stops voting on the reply language
+        # (E1). It is sent back into the next turn's prompt, so a summary
+        # written in Roman Urdu was one more Urdu-heavy block arguing with the
+        # customer's English message. Nobody reads this text; it exists to be
+        # read by the model, and the model does not need it in the customer's
+        # language to understand it.
+        "Write the summary in English, whatever language the conversation is "
+        "in. Where the language a customer wrote in matters, say so in words "
+        '("the customer writes in Roman Urdu") rather than by switching '
+        "language yourself.\n\n"
         f"Prior summary: {prior_summary or '(none)'}\n\nRecent messages:\n{transcript}"
     )
     result = await llm.generate([ChatMessage(role="user", content=prompt)], model=model)
@@ -1656,7 +1855,11 @@ async def _send_voice(
 
 __all__ = [
     "CATCH_UP_REPLY",
+    "DEFAULT_PERSONA",
+    "GATED_SKILL_POWERS",
     "GROUNDING_INSTRUCTION",
+    "IDENTITY_INSTRUCTION",
+    "LEAD_CAPTURE_INSTRUCTION",
     "QUOTA_EXCEEDED_REPLY",
     "InboundFragment",
     "PipelineResult",
@@ -1682,6 +1885,7 @@ __all__ = [
     "run_tool_loop",
     "should_auto_resume",
     "should_refresh_summary",
+    "tool_authority",
     "to_chat_messages",
     "window_history",
 ]
