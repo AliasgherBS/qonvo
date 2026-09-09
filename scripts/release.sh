@@ -61,13 +61,23 @@ echo "→ backend tests"
 (cd backend && uv run pytest -q >/dev/null && uv run ruff check >/dev/null)
 echo "  ✓ green"
 
-echo "→ dashboard typecheck, lint and brand gates"
+echo "→ dashboard typecheck, lint and the verify gates"
 (
   cd dashboard
   export NVM_DIR="$HOME/.nvm"
   # shellcheck disable=SC1091
   [[ -s "$NVM_DIR/nvm.sh" ]] && . "$NVM_DIR/nvm.sh"
-  npx tsc --noEmit && npm run lint --silent && npm run verify:brand --silent
+  # Every verify:* script, not a hand-listed subset. Two of them (nav, qr) were
+  # written after this list and were not in it, which is how a gate stops being
+  # a gate: it passes locally and nothing at release time asks it.
+  npx tsc --noEmit && npm run lint --silent
+  for gate in $(node -e '
+    const s = require("./package.json").scripts;
+    console.log(Object.keys(s).filter(k => k.startsWith("verify:")).join(" "));
+  '); do
+    echo "  · $gate" >&2
+    npm run "$gate" --silent
+  done
 ) >/dev/null
 echo "  ✓ green"
 
