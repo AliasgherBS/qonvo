@@ -164,6 +164,16 @@ export type Role = "owner" | "staff" | "qonvo_admin";
 export interface LoginRequest {
   email: string;
   password: string;
+  /**
+   * The six-digit code, for an account with two-factor enabled.
+   *
+   * Optional here and required in effect: the API refuses an enrolled account
+   * without one, answering `totp_required`. Optional so the form can ask for
+   * the password first and only then discover a code is needed, rather than
+   * having to know in advance which addresses have 2FA, which would be an
+   * enumeration oracle.
+   */
+  totpCode?: string;
 }
 
 interface LoginResponseDto {
@@ -214,7 +224,18 @@ export interface SignupRequest {
 
 export const auth = {
   login: (payload: LoginRequest, opts: CallOpts = {}) =>
-    apiFetch<LoginResponseDto>("/api/auth/login", { method: "POST", body: payload, signal: opts.signal }).then(
+    apiFetch<LoginResponseDto>("/api/auth/login", {
+      method: "POST",
+      // snake_case on the wire: the API field is `totp_code`, and passing the
+      // camelCase key silently sends nothing, which looks exactly like a
+      // missing code.
+      body: {
+        email: payload.email,
+        password: payload.password,
+        ...(payload.totpCode ? { totp_code: payload.totpCode } : {}),
+      },
+      signal: opts.signal,
+    }).then(
       (dto): LoginResult => ({
         accessToken: dto.access_token,
         tokenType: dto.token_type,

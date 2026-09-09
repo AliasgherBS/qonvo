@@ -165,6 +165,57 @@ async def _tenant_timezone(db: AsyncSession, tenant_id: UUID) -> str:
     return tenant_timezone(row)
 
 
+def _http_status(exc: BaseException) -> int | None:
+    """The HTTP status inside a googleapiclient ``HttpError``, if it is one.
+
+    Read by duck-typing rather than by importing ``googleapiclient.errors``:
+    this module is deliberately free of the heavy Google client imports (see
+    ``app.integrations.google_auth``), and a test that injects a fake client
+    should be able to raise a fake error without installing them either.
+    """
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        return status_code
+    resp_status = getattr(getattr(exc, "resp", None), "status", None)
+    if isinstance(resp_status, int):
+        return resp_status
+    return None
+
+
+def _ping_failure_message(provider: str, exc: BaseException) -> str:
+    """What to tell the owner when the live read failed.
+
+    ``str(HttpError)`` is a full request dump — it names the API endpoint and
+    embeds the spreadsheet or calendar id, and it ends with a Google phrase
+    ("Requested entity was not found.") that tells an owner nothing about what
+    to do. Two statuses have exactly one owner-actionable cause each, so they
+    get an instruction instead:
+
+    * **Sheets 404/403** — under per-file ``drive.file`` scope the grant only
+      reaches files picked through the Picker with this client id. A stored id
+      that has stopped resolving means the selection no longer grants access
+      (the file was deleted, or Qonvo's access to it was removed), and the fix
+      is to choose the sheet again. Nothing else the owner can do helps, and
+      "Reconnect" specifically does not.
+    * **Calendar 404** — the "Qonvo Bookings" calendar is gone from the
+      account, which the Create-it button re-provisions.
+
+    Anything else keeps Google's own text, which is more useful than a guess.
+    """
+    code = _http_status(exc)
+    if provider == GOOGLE_SHEETS and code in (403, 404):
+        return (
+            "Qonvo can't open that spreadsheet any more. Click Change sheet and "
+            "pick it again — choosing it in the chooser is what grants access."
+        )
+    if provider == GOOGLE_CALENDAR and code == 404:
+        return (
+            "The Qonvo Bookings calendar no longer exists in this Google account. "
+            "Disconnect and reconnect to have Qonvo create it again."
+        )
+    return str(exc)
+
+
 async def _month_start(db: AsyncSession, tenant_id: UUID) -> datetime:
     """The first of the current month in the tenant's own clock.
 
@@ -657,8 +708,17 @@ async def test_integration(
 
     try:
         await client.ping()
-    except Exception as exc:  # noqa: BLE001
-        return TestResult(ok=False, message=str(exc), account_email=email)
+    except Exception as exc:  # noqa: BLE001 — surfaced as a failed test, not a 500
+        # Logged, because this is the only branch of this route that actually
+        # reaches Google and it used to record nothing at all: a live failure
+        # left the reason in one owner's browser and nowhere on the server, so
+        # "Test connection failed" was unanswerable afterwards.
+        logger.bind(tenant_id=str(tenant_id)).warning(
+            f"integration test ping failed for {provider}: {exc}"
+        )
+        return TestResult(
+            ok=False, message=_ping_failure_message(provider, exc), account_email=email
+        )
 
     label = "Calendar" if provider == GOOGLE_CALENDAR else "Sheet"
     return TestResult(ok=True, message=f"{label} connected.", account_email=email)

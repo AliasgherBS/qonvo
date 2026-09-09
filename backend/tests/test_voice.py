@@ -128,14 +128,28 @@ async def test_transcribe_skips_oversized_audio(monkeypatch):
 
 
 # --- synthesis (voice-out) ------------------------------------------------------- #
-async def test_synthesize_reply_returns_base64(monkeypatch):
+async def test_synthesize_reply_returns_raw_bytes(monkeypatch):
+    """Raw, not base64: the caller has to measure this audio to meter it, and
+    base64 hides the container the measurement reads."""
     fake_tts = AsyncMock()
     fake_tts.synthesize = AsyncMock(return_value=b"opusaudio")
     monkeypatch.setattr(registry, "resolve_tts", lambda _tc: fake_tts)
     bound = SimpleNamespace(info=lambda *_a, **_k: None, warning=lambda *_a, **_k: None)
 
     out = await pipeline._synthesize_reply("your appointment is booked", None, bound)
-    assert out == base64.b64encode(b"opusaudio").decode()
+    assert out == b"opusaudio"
+    assert out != base64.b64encode(b"opusaudio").decode()
+
+
+async def test_synthesize_reply_none_on_empty_audio(monkeypatch):
+    """A 200 with no body is a provider failure. Sending it would post a
+    zero-length voice note in place of the answer."""
+    fake_tts = AsyncMock()
+    fake_tts.synthesize = AsyncMock(return_value=b"")
+    monkeypatch.setattr(registry, "resolve_tts", lambda _tc: fake_tts)
+    bound = SimpleNamespace(info=lambda *_a, **_k: None, warning=lambda *_a, **_k: None)
+
+    assert await pipeline._synthesize_reply("hi", None, bound) is None
 
 
 async def test_synthesize_reply_none_without_tts(monkeypatch):

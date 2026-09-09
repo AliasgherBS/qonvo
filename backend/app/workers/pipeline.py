@@ -10,6 +10,7 @@ logic is unit-testable without Postgres.
 
 from __future__ import annotations
 
+import base64
 import json
 import time
 import uuid
@@ -23,8 +24,13 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.audio_meter import audio_duration_seconds
 from app.agent.language import language_instruction
-from app.agent.voice_allowance import VOICE_QUOTA_NOTICE, period_start, voice_allowance
+from app.agent.voice_allowance import (
+    VOICE_QUOTA_NOTIFICATION_TITLE,
+    period_start_dt,
+    voice_allowance,
+)
 from app.billing.service import get_subscription
 from app.billing.state import service_state
 from app.core import obs
@@ -162,7 +168,7 @@ async def _transcribe_voice_fragments(
             result = await stt.transcribe(audio)
             fragment.body = result.text or ""
             fragment.type = "voice"
-            total_seconds += max(1, len(audio) // settings.voice_bytes_per_second)
+            total_seconds += audio_duration_seconds(audio)
             bound.info(f"transcribed voice fragment ({len(fragment.body)} chars)")
         except Exception as exc:  # noqa: BLE001 — degrade to text-only, don't crash the turn
             bound.warning(f"voice transcription failed: {exc}")
@@ -1250,7 +1256,6 @@ async def _run_pipeline_inner(
         # Checked here rather than before the model call on purpose: the answer
         # is worth the same either way, and refusing earlier would turn an
         # exhausted voice allowance into a silent conversation.
-        voice_quota_note = ""
         if reply_voice:
             allowance = await voice_allowance(
                 db, tenant_uuid, now=now, tenant_config=tenant_config
@@ -1260,30 +1265,24 @@ async def _run_pipeline_inner(
                 bound.info(
                     f"voice paused: {allowance.used_minutes}/{allowance.allowed_minutes} min used"
                 )
-                # Said once per period, not once per message. Without the
-                # dedupe every voice note for the rest of the month carries an
-                # apology, which reads worse than the limit itself.
-                already_told = any(
-                    m.meta.get("auto_reply") == "voice_quota"
-                    and m.created_at is not None
-                    and m.created_at.date() >= period_start(now)
-                    for m in history_rows
-                )
-                if not already_told:
-                    voice_quota_note = f"\n\n{VOICE_QUOTA_NOTICE}"
-                    await _notify_voice_quota(bound, tenant_uuid, allowance)
+                # The customer is told NOTHING. A voice-to-text downgrade needs
+                # no explanation: the answer is identical and arrives just the
+                # same. What used to be appended here announced the business's
+                # plan limits to the business's own customer ("voice replies
+                # are paused until your plan renews"), which is the tenant's
+                # commercial state and none of the customer's business. Only
+                # the owner hears about it, once per period.
+                await _notify_voice_quota(bound, tenant_uuid, allowance, now=now)
 
-        if voice_quota_note:
-            reply_text = f"{reply_text}{voice_quota_note}"
-
-        audio_b64 = (
+        reply_audio = (
             await _synthesize_reply(reply_text, tenant_config, bound) if reply_voice else None
         )
-        was_voice = audio_b64 is not None
-        if was_voice and audio_b64:
-            # base64 → raw bytes ≈ len * 3/4; meter the synthesized reply too.
-            out_bytes = (len(audio_b64) * 3) // 4
-            voice_seconds += max(1, out_bytes // settings.voice_bytes_per_second)
+        was_voice = reply_audio is not None
+        if reply_audio:
+            # Measured from the audio itself, not guessed from its length: a
+            # bytes-per-second constant is only ever right for one format
+            # (see app/agent/audio_meter.py).
+            voice_seconds += audio_duration_seconds(reply_audio)
 
         # --- Persist outbound + usage, refresh rolling summary (§5.4 step 6, §13) ---
         conversation.last_activity_at = now
@@ -1388,8 +1387,15 @@ async def _run_pipeline_inner(
                     ),
                 )
 
-        if was_voice:
-            await _send_voice(bound, send_gateway, session, chat_id, audio_b64, pacing)
+        if reply_audio is not None:  # == was_voice, narrowed for the encode
+            await _send_voice(
+                bound,
+                send_gateway,
+                session,
+                chat_id,
+                base64.b64encode(reply_audio).decode(),
+                pacing,
+            )
         else:
             await _send(bound, send_gateway, session, chat_id, reply_text, pacing)
 
@@ -1465,6 +1471,8 @@ async def _notify_voice_quota(
     bound: Any,
     tenant_id: uuid.UUID,
     allowance: Any,
+    *,
+    now: datetime,
 ) -> None:
     """Tell the owner their voice allowance ran out. Once per period.
 
@@ -1473,19 +1481,41 @@ async def _notify_voice_quota(
     notification would go with it. That trap has cost this codebase inbound
     messages, usage rows and an outage alert already.
 
+    The once-per-period dedupe reads the ``notifications`` table rather than
+    the conversation history. It used to look for an ``auto_reply``
+    ``"voice_quota"`` marker on past outbound messages, but nothing ever wrote
+    that marker, so the check was always False: live on 2026-09-08 the owner
+    got the same alert twice inside 40 minutes. The notification row is the
+    thing being deduped, so it is also the thing to ask, and it is per-tenant
+    rather than per-conversation — the allowance is too.
+
     Best effort throughout. A missing notification must never cost a customer
     their reply, which is the entire point of degrading rather than failing.
     """
     from app.models.enums import NotificationType
+    from app.models.ops import Notification
     from app.services.notifications import notify
 
     try:
         async with tenant_session(tenant_id) as alert_db:
+            already_told = (
+                await alert_db.execute(
+                    select(Notification.id)
+                    .where(
+                        Notification.tenant_id == tenant_id,
+                        Notification.title == VOICE_QUOTA_NOTIFICATION_TITLE,
+                        Notification.created_at >= period_start_dt(now),
+                    )
+                    .limit(1)
+                )
+            ).first()
+            if already_told is not None:
+                return
             await notify(
                 alert_db,
                 tenant_id=tenant_id,
                 type=NotificationType.disconnect,
-                title="Voice replies are paused",
+                title=VOICE_QUOTA_NOTIFICATION_TITLE,
                 body=(
                     f"Your rep has used its {allowance.allowed_minutes} voice minutes "
                     "for this month, so it is answering by text until the plan renews. "
@@ -1565,10 +1595,13 @@ async def _send(
         raise
 
 
-async def _synthesize_reply(text: str, tenant_config: Any, bound: Any) -> str | None:
-    """TTS the reply → base64 audio, or None to fall back to text (§2)."""
-    import base64
+async def _synthesize_reply(text: str, tenant_config: Any, bound: Any) -> bytes | None:
+    """TTS the reply → raw audio bytes, or None to fall back to text (§2).
 
+    Raw rather than base64 because the caller has to *measure* this audio to
+    meter it, and base64 hides the container the measurement reads. The send
+    gateway encodes at the point it needs to.
+    """
     from app.providers.registry import resolve_tts
 
     tts = resolve_tts(tenant_config)
@@ -1577,13 +1610,18 @@ async def _synthesize_reply(text: str, tenant_config: Any, bound: Any) -> str | 
         return None
     try:
         audio = await tts.synthesize(text)
-        return base64.b64encode(audio).decode()
     except Exception as exc:  # noqa: BLE001 — degrade to text, never drop the reply
         bound.warning(f"TTS synthesis failed, falling back to text: {exc}")
         return None
     finally:
         if hasattr(tts, "aclose"):
             await tts.aclose()
+    if not audio:
+        # An empty body is a provider failure that returned 200. Sending it
+        # would post a zero-length voice note in place of the answer.
+        bound.warning("TTS returned no audio, falling back to text")
+        return None
+    return audio
 
 
 async def _send_voice(

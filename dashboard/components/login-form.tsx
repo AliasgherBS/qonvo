@@ -20,6 +20,12 @@ import { Label } from "@/components/ui/label";
  * clicks Google and simply arrives back at this page, which is
  * indistinguishable from a bug.
  */
+const TOTP_ERRORS: Record<string, string> = {
+  totp_required: "",
+  totp_invalid: "That code is not right, or it has expired. Try the next one your app shows.",
+  totp_replayed: "That code has already been used. Wait for your app to show the next one.",
+};
+
 const SIGN_IN_ERRORS: Record<string, string> = {
   password_account_unverified:
     "An account with this email already exists and uses a password. Sign in with that " +
@@ -35,6 +41,12 @@ export function LoginForm() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode] = useState("");
+  // Revealed only once the API has said a code is needed, so the form never
+  // has to know in advance which addresses have 2FA. Asking everybody would
+  // be confusing; asking only enrolled addresses would tell an attacker which
+  // ones those are.
+  const [needsCode, setNeedsCode] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(
     refusal ? (SIGN_IN_ERRORS[refusal] ?? SIGN_IN_ERRORS.google_exchange) : null,
@@ -48,6 +60,7 @@ export function LoginForm() {
     const result = await signIn("credentials", {
       email,
       password,
+      totpCode,
       redirect: false,
       callbackUrl,
     });
@@ -55,6 +68,16 @@ export function LoginForm() {
     setLoading(false);
 
     if (!result || result.error) {
+      // A second factor is not a failed password. Collapsing the two was a
+      // lockout: an account with 2FA enabled could not sign in at all, and the
+      // form blamed a password that was correct.
+      const code = (result as { code?: string } | undefined)?.code;
+      if (code === "totp_required" || code === "totp_invalid" || code === "totp_replayed") {
+        setNeedsCode(true);
+        setTotpCode("");
+        setError(TOTP_ERRORS[code]);
+        return;
+      }
       setError("Couldn't sign you in. Check your email and password and try again.");
       return;
     }
@@ -96,6 +119,31 @@ export function LoginForm() {
           placeholder="••••••••"
         />
       </div>
+
+      {needsCode ? (
+        <div className="space-y-1.5">
+          <Label htmlFor="totp-code">Authentication code</Label>
+          <Input
+            id="totp-code"
+            // `text` with a numeric mode, not `type="number"`: a number input
+            // strips a leading zero, and a fifth of all valid codes start with
+            // one.
+            type="text"
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            pattern="[0-9]*"
+            maxLength={6}
+            required
+            autoFocus
+            value={totpCode}
+            onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ""))}
+            placeholder="123456"
+          />
+          <p className="text-xs text-muted-foreground">
+            The six digits from your authenticator app.
+          </p>
+        </div>
+      ) : null}
 
       {error ? (
         <p role="alert" className="rounded-xl bg-danger/10 px-3 py-2 text-sm text-danger">
