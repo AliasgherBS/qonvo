@@ -192,6 +192,8 @@ services:
         NEXT_PUBLIC_API_URL: https://api.${DOMAIN}
         NEXT_PUBLIC_SITE_URL: https://${DOMAIN}
         NEXT_PUBLIC_GOOGLE_AUTH_ENABLED: ${NEXT_PUBLIC_GOOGLE_AUTH_ENABLED:-true}
+        # Baked into the rewrite in routes-manifest.json, not read at runtime.
+        INTERNAL_API_URL: http://api:8000
     restart: unless-stopped
     env_file:
       # AUTH_SECRET, AUTH_URL and AUTH_GOOGLE_* live with the dashboard, not in

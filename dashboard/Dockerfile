@@ -20,9 +20,16 @@ COPY . .
 ARG NEXT_PUBLIC_API_URL
 ARG NEXT_PUBLIC_SITE_URL
 ARG NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=false
+# Not a NEXT_PUBLIC_* value, but baked all the same: next.config.ts uses it as a
+# rewrite destination, and Next serialises rewrites into routes-manifest.json.
+# The default is the compose service name, because that is what this image runs
+# next to. The host-process build (run-dashboard.sh) picks up .env.local
+# instead, where localhost is the correct answer.
+ARG INTERNAL_API_URL=http://api:8000
 ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL \
     NEXT_PUBLIC_SITE_URL=$NEXT_PUBLIC_SITE_URL \
-    NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=$NEXT_PUBLIC_GOOGLE_AUTH_ENABLED
+    NEXT_PUBLIC_GOOGLE_AUTH_ENABLED=$NEXT_PUBLIC_GOOGLE_AUTH_ENABLED \
+    INTERNAL_API_URL=$INTERNAL_API_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 
 # Fail loudly rather than baking a default. Unset, `lib/api.ts` falls back to
