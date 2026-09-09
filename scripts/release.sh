@@ -22,6 +22,38 @@ TAG="v$VERSION"
 branch=$(git rev-parse --abbrev-ref HEAD)
 [[ "$branch" == "dev" ]] || { echo "Release from 'dev', not '$branch'." >&2; exit 1; }
 
+# The sha this release is *for*, pinned now.
+#
+# Checking the branch name once at startup and then working for several minutes
+# assumes HEAD does not move, and it does. It happened: a second agent in this
+# working tree ran `git checkout -b` while the gates were running, so the
+# version-bump commit below landed on that branch instead of dev, `main` was
+# then merged from a dev that never received the bump, and v0.11.0 was tagged
+# declaring version 0.10.2 with no changelog section. Nothing was pushed, so it
+# was recoverable, but only because somebody noticed.
+#
+# An interrupted-and-resumed release does the same thing without a second
+# agent, which is the more likely way to hit it alone.
+RELEASE_SHA=$(git rev-parse HEAD)
+
+# Called before each step that writes. Cheap, and the alternative is finding out
+# afterwards from a tag that describes the wrong tree.
+assert_head_unmoved() {
+  local now
+  now=$(git rev-parse --abbrev-ref HEAD)
+  [[ "$now" == "dev" ]] || {
+    echo "HEAD moved to '$now' mid-release (expected dev). Nothing further written." >&2
+    echo "Something else is using this working tree. Stop it, then re-run." >&2
+    exit 1
+  }
+  now=$(git rev-parse HEAD)
+  [[ "$now" == "$RELEASE_SHA" ]] || {
+    echo "dev moved from ${RELEASE_SHA:0:7} to ${now:0:7} mid-release." >&2
+    echo "Re-run so the release describes what you actually tested." >&2
+    exit 1
+  }
+}
+
 # Block on uncommitted changes to TRACKED files: those would be silently left
 # out of the release. Untracked files only warn -- a stray scratch file or an
 # asset not yet decided on should not stop a release, but you should see it.
@@ -82,6 +114,9 @@ echo "→ dashboard typecheck, lint and the verify gates"
 echo "  ✓ green"
 
 # --- changelog: promote Unreleased to this version -------------------------- #
+# The gates above take minutes. This is the first step that writes anything.
+assert_head_unmoved
+
 TODAY=$(date +%F)
 python3 - "$VERSION" "$TODAY" <<'PY'
 import pathlib, re, sys
@@ -111,11 +146,17 @@ echo "→ bumped to $VERSION and promoted the changelog"
 # --- the release notes are that version's changelog section ----------------- #
 NOTES=$(awk -v v="## [$VERSION]" 'index($0,v)==1{f=1;next} /^## \[/{f=0} f' CHANGELOG.md)
 
+assert_head_unmoved
 git add CHANGELOG.md backend/pyproject.toml backend/uv.lock dashboard/package.json
 git commit -q -m "chore(release): $TAG"
+# From here dev is one ahead of the sha we pinned, deliberately.
+RELEASE_SHA=$(git rev-parse HEAD)
 
+# Merge the sha, not the branch name. If anything moves dev between the commit
+# above and the merge below, the release still describes the tree that passed
+# the gates rather than whatever arrived in the meantime.
 git switch -q main
-git merge --no-ff -q dev -m "release: $TAG"
+git merge --no-ff -q "$RELEASE_SHA" -m "release: $TAG"
 git tag -a "$TAG" -m "$TAG
 
 $NOTES"
