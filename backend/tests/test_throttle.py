@@ -243,10 +243,63 @@ class FakeRequest:
         self.client = type("C", (), {"host": host})()
 
 
-def test_the_first_forwarded_address_is_the_client():
-    """A caller can append anything to X-Forwarded-For, so trusting the last
-    entry is trusting the attacker. The first is the real origin."""
+def test_the_edge_header_beats_a_caller_supplied_one():
+    """The finding, pinned.
+
+    ``X-Forwarded-For`` is caller-controlled. Cloudflare adds to it and leaves
+    what was already there, so a client that sends its own value gets that
+    value used as the throttle key -- verified against production, where a
+    request carrying ``X-Forwarded-For: 203.0.113.250`` created its own counter
+    and left the real client's at 1. Every per-address limit was therefore
+    optional, including the five-signups-per-hour cap.
+
+    ``CF-Connecting-IP`` is overwritten by Cloudflare on every proxied request,
+    so it is the one a caller cannot choose.
+    """
+    request = FakeRequest(
+        {
+            "x-forwarded-for": "203.0.113.250",  # what the attacker sent
+            "cf-connecting-ip": "198.51.100.23",  # what the edge observed
+        }
+    )
+
+    assert throttle.client_ip(request) == "198.51.100.23"
+
+
+def test_a_spoofed_header_cannot_reset_the_counter():
+    """The property that actually matters: two requests from one client are one
+    counter, however they decorate themselves."""
+    keys = set()
+    for spoof in ("203.0.113.1", "203.0.113.2", "203.0.113.3"):
+        request = FakeRequest(
+            {"x-forwarded-for": spoof, "cf-connecting-ip": "198.51.100.23"}
+        )
+        keys.add(throttle.client_ip(request))
+
+    assert keys == {"198.51.100.23"}
+
+
+def test_the_first_forwarded_address_is_the_client_when_there_is_no_edge_header():
+    """The fallback is deliberately unchanged.
+
+    Taking the *last* entry is the usual advice and would be wrong here: the
+    chain is client -> Cloudflare -> cloudflared -> uvicorn over loopback, so if
+    cloudflared appends, the last entry is 127.0.0.1 for everybody and one
+    shared counter throttles the whole product. Being wrong that way round is
+    much worse than the bug, so this path stays as it was until somebody has
+    looked at a real header.
+    """
     request = FakeRequest({"x-forwarded-for": "203.0.113.9, 10.0.0.1, 172.16.0.1"})
+
+    assert throttle.client_ip(request) == "203.0.113.9"
+
+
+def test_a_blank_edge_header_falls_through_rather_than_keying_everyone_together():
+    """An empty string would key every caller to one bucket, which is the
+    global-throttle failure the note above is about."""
+    request = FakeRequest(
+        {"cf-connecting-ip": "   ", "x-forwarded-for": "203.0.113.9"}
+    )
 
     assert throttle.client_ip(request) == "203.0.113.9"
 

@@ -181,15 +181,53 @@ async def clear(client, throttle: Throttle, *, account: str | None) -> None:
         logger.warning(f"could not clear throttle counter: {exc}")
 
 
+#: The header our own edge sets, and the only one here a caller cannot forge.
+#:
+#: Cloudflare overwrites ``CF-Connecting-IP`` on every request it proxies, so
+#: whatever a client puts there is discarded. ``X-Forwarded-For`` gets no such
+#: treatment: Cloudflare adds to it and leaves what was already there, which is
+#: why the value below is preferred over it.
+_EDGE_IP_HEADER = "cf-connecting-ip"
+
+
 def client_ip(request) -> str | None:
     """The caller's address, as seen through the tunnel.
 
     ``request.client.host`` is the proxy, so it is the same for everyone and
-    useless as a key. ``X-Forwarded-For`` is the real client, and the **first**
-    entry is the one to take: later entries are proxies, and a caller can append
-    anything they like to the header, so trusting the last is trusting the
-    attacker.
+    useless as a key.
+
+    The header to believe is ``CF-Connecting-IP``. ``X-Forwarded-For`` is
+    **caller-controlled** and was being trusted, which made every per-address
+    limit here optional: send a different value each time and the counter never
+    accumulates. Verified against production before this change -- one request
+    to ``POST /api/auth/forgot-password`` carrying
+    ``X-Forwarded-For: 203.0.113.250`` created its own counter and left the real
+    client's sitting at 1. That is not only the login limiter; it is also the
+    five-signups-per-hour cap, which is the only thing standing between a
+    script and unlimited tenant rows.
+
+    Why not simply take the *last* entry, which is the usual advice: the chain
+    here is client -> Cloudflare -> cloudflared -> uvicorn, and cloudflared
+    dials uvicorn over loopback. If it appends, the last entry is ``127.0.0.1``
+    for every caller on earth, and a single shared counter would throttle the
+    whole product at ten attempts a window. Guessing wrong in that direction is
+    far worse than the bug being fixed, so the fallback below is deliberately
+    left exactly as it was rather than changed on an assumption.
+
+    NOT YET CONFIRMED ON PRODUCTION: that ``CF-Connecting-IP`` arrives at all.
+    It is documented and it is what Cloudflare sets, but this codebase has been
+    wrong about a forwarded header before (``AUTH_URL``, where the tunnel
+    forwarded ``Host`` and Auth.js still built the wrong redirect URI). Confirm
+    it the same way the bug was found, which costs one request: send a
+    ``forgot-password`` through ``api.qonvo.org`` with a bogus
+    ``X-Forwarded-For``, then check which ``throttle:password_reset:ip:<hash>``
+    key it lands on. sha256(ip)[:32] of the real client means the header is
+    being read; sha256 of the spoofed value means it is not.
     """
+    edge = request.headers.get(_EDGE_IP_HEADER)
+    if edge and edge.strip():
+        return edge.strip()
+
     forwarded = request.headers.get("x-forwarded-for")
     if forwarded:
         first = forwarded.split(",")[0].strip()
