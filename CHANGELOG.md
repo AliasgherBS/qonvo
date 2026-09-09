@@ -9,6 +9,48 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-09-10
+
+### Fixed
+
+- **The containerised dashboard was never actually configurable.** The compose
+  `dashboard` service passed `NEXT_PUBLIC_API_URL` as a runtime environment
+  variable, which does nothing: `next build` inlines `NEXT_PUBLIC_*` into the
+  client bundle, so the value was already fixed by the time the container
+  started. With no build args declared, the image would have sent every browser
+  API call to `http://localhost:8000`, published `http://localhost:3002` as the
+  canonical origin in the sitemap and OG tags, and emitted a CSP whose
+  `connect-src` omitted the API — blocking the calls regardless. With no
+  `env_file` it also had no `AUTH_SECRET`, so Auth.js could not sign a session
+  cookie, and no `AUTH_URL`, reproducing a `redirect_uri_mismatch` this project
+  has already paid for once. None of it had ever surfaced because dev and
+  tunnel-era production both ran the dashboard as a host node process. The
+  three baked values are build args now, and the build **fails** rather than
+  defaulting when they are missing.
+
+- **Caddy still served the dashboard from `app.<DOMAIN>`.** Production is on the
+  apex — which is what `NEXT_PUBLIC_SITE_URL`, `AUTH_URL` and the Google console
+  redirect URI already said. Caddy was the last place disagreeing, and it is the
+  one that decides which certificate to request, so on a VPS it would have asked
+  for a certificate for a hostname with no DNS record and taken the whole stack
+  down with it. Adds the `www` → apex redirect.
+
+- **A rewrite destination that looked like a runtime read was baked at build
+  time.** `next.config.ts` asserted that `INTERNAL_API_URL` "is read at server
+  start, so it works in standalone". Next serialises `rewrites()` into
+  `routes-manifest.json` during the build. Demonstrated on a running container
+  that held `INTERNAL_API_URL=http://api:8000` in its environment and could
+  fetch `http://api:8000/healthz` from inside itself, while `/backend/healthz`
+  returned 500 because the manifest said `localhost:8000`. Harmless until now
+  only because the host process runs where `localhost:8000` really is the API.
+
+### Added
+
+- **`dashboard/.env.local.example`**, which the docs already claimed was tracked
+  but which did not exist — a fresh clone had no template for the nine variables
+  the dashboard needs, and the two that are read at build time were
+  indistinguishable from the seven that are not.
+
 ## [0.11.0] - 2026-09-09
 
 ### Added
@@ -375,3 +417,4 @@ could be sold.
 [0.10.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.1
 [0.10.2]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.2
 [0.11.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.0
+[0.11.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.1

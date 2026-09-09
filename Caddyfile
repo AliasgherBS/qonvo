@@ -2,8 +2,14 @@
 # Automatic HTTPS via Let's Encrypt. {$DOMAIN} comes from the environment.
 #
 #   PRODUCTION            STAGING
-#   app.<DOMAIN>          dev.app.<DOMAIN>     dashboard
+#   <DOMAIN>              dev.app.<DOMAIN>     dashboard (landing page AND app)
+#   www.<DOMAIN>                               redirect to the apex
 #   api.<DOMAIN>          dev.api.<DOMAIN>     api
+#
+# The dashboard is on the APEX, not app.<DOMAIN>: the landing page is the
+# marketing site, so it belongs where links and SEO point, and it is the same
+# Next app as the dashboard. This must agree with NEXT_PUBLIC_SITE_URL and
+# AUTH_URL, which are the apex too.
 #
 # The staging hosts are commented out until a real domain exists — Caddy fails
 # to start if it cannot get a certificate, so an unused host block would take
@@ -21,9 +27,13 @@
 # --------------------------------------------------------------------------- #
 # Production
 # --------------------------------------------------------------------------- #
-app.{$DOMAIN} {
+{$DOMAIN} {
 	encode zstd gzip
 	reverse_proxy dashboard:3000
+}
+
+www.{$DOMAIN} {
+	redir https://{$DOMAIN}{uri} permanent
 }
 
 api.{$DOMAIN} {
