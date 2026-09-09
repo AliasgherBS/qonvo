@@ -51,12 +51,45 @@ async def fetch_url_text(url: str) -> str:
     cleaned = "\n".join(ln for ln in lines if ln)
     if not cleaned.strip():
         raise ValueError("no readable text found at that URL")
-    return cleaned
+    return sanitise_extracted_text(cleaned)
 
 
 # --------------------------------------------------------------------------- #
 # Parsers: raw bytes/text → plain text
 # --------------------------------------------------------------------------- #
+#: Characters Postgres will not store in a text column, whatever the encoding.
+#:
+#: A NUL byte is the one that matters: ``0x00`` is legal in a Python str and
+#: illegal in Postgres text, so extracted text containing one gets all the way
+#: to the INSERT before failing with
+#: ``CharacterNotInRepertoireError: invalid byte sequence for encoding "UTF8"``.
+#: PDF text layers produce them routinely, which is why a genuine 391 KB price
+#: list could sit on "Processing" for ever while a hand-built minimal PDF was
+#: fine.
+#:
+#: The surrogates go too. A lone surrogate survives ``str`` and cannot be
+#: encoded to UTF-8 at all, and PDF and DOCX extraction both produce them from
+#: broken glyph maps.
+def sanitise_extracted_text(text: str) -> str:
+    """Strip what a Postgres text column cannot hold.
+
+    Applied to every parser's output rather than inside each one, so a parser
+    added later cannot forget: the failure is not visible in the parser, in the
+    chunker, or anywhere before the insert.
+
+    Replaced with a space rather than deleted, because a NUL in a PDF text
+    layer is usually where a glyph should have been, and joining the words
+    either side of it invents a word that was never there.
+    """
+    if not text:
+        return text
+    cleaned = text.replace("\x00", " ")
+    # Encode-decode round trip drops lone surrogates without touching anything
+    # legitimate, including every non-Latin script we support.
+    cleaned = cleaned.encode("utf-8", "replace").decode("utf-8", "replace")
+    return cleaned
+
+
 def parse_text(raw: str) -> str:
     """Plain text or markdown — passed through as-is."""
     return raw
@@ -101,22 +134,30 @@ def extract_text(
     *, source_type: str, raw_text: str | None = None, raw_bytes: bytes | None = None
 ) -> str:
     """Dispatch to the right parser based on ``source_type`` (a file extension
-    or a simple type tag: ``pdf``, ``docx``, ``csv``, ``text``/``markdown``)."""
+    or a simple type tag: ``pdf``, ``docx``, ``csv``, ``text``/``markdown``).
+
+    Every return goes through :func:`sanitise_extracted_text`, so this is the
+    one place a parser's output is made storable. Doing it here rather than in
+    each parser means a parser added later cannot forget, and forgetting is
+    expensive: a NUL byte from a PDF text layer is legal in a Python str and
+    illegal in a Postgres text column, so it survives parsing, chunking and
+    embedding and only fails at the INSERT.
+    """
     kind = source_type.lower().lstrip(".")
     if kind == "pdf":
         if raw_bytes is None:
             raise ValueError("PDF ingestion requires raw_bytes")
-        return parse_pdf(raw_bytes)
+        return sanitise_extracted_text(parse_pdf(raw_bytes))
     if kind in ("docx", "doc"):
         if raw_bytes is None:
             raise ValueError("DOCX ingestion requires raw_bytes")
-        return parse_docx(raw_bytes)
+        return sanitise_extracted_text(parse_docx(raw_bytes))
     if kind == "csv":
         text = raw_text if raw_text is not None else (raw_bytes or b"").decode("utf-8", "ignore")
-        return parse_csv(text)
+        return sanitise_extracted_text(parse_csv(text))
     # text, markdown, md, or anything else falls back to plain text.
     text = raw_text if raw_text is not None else (raw_bytes or b"").decode("utf-8", "ignore")
-    return parse_text(text)
+    return sanitise_extracted_text(parse_text(text))
 
 
 # --------------------------------------------------------------------------- #
@@ -242,6 +283,7 @@ async def ingest_raw(
 
 
 __all__ = [
+    "sanitise_extracted_text",
     "chunk_text",
     "extract_text",
     "ingest_raw",

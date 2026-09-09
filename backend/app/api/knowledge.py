@@ -110,6 +110,13 @@ class SourceResponse(BaseModel):
     url: str | None
     content: str | None
     status: str
+    #: Why an ingestion failed, in words the owner can act on (F5).
+    #:
+    #: The table read "Nothing indexed - Error" and the API carried no error
+    #: field at all, so there was no way to tell a corrupt file from an
+    #: unsupported variant from a bad minute, and no way to try again short of
+    #: deleting and re-uploading.
+    error: str | None = None
     auto_refresh: bool
     created_at: datetime
     # What a row could not say before (teardown K2): how much of it the rep
@@ -132,6 +139,7 @@ def _to_response(row: KnowledgeSource, stats: SourceStats | None = None) -> Sour
         url=row.url,
         content=row.content,
         status=row.status,
+        error=meta.get("error") if row.status == "error" else None,
         auto_refresh=row.auto_refresh,
         created_at=row.created_at,
         chars=stats.chars if stats else 0,
