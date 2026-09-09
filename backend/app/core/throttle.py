@@ -271,15 +271,17 @@ def client_ip(request) -> str | None:
     far worse than the bug being fixed, so the fallback below is deliberately
     left exactly as it was rather than changed on an assumption.
 
-    NOT YET CONFIRMED ON PRODUCTION: that ``CF-Connecting-IP`` arrives at all.
-    It is documented and it is what Cloudflare sets, but this codebase has been
-    wrong about a forwarded header before (``AUTH_URL``, where the tunnel
-    forwarded ``Host`` and Auth.js still built the wrong redirect URI). Confirm
-    it the same way the bug was found, which costs one request: send a
-    ``forgot-password`` through ``api.qonvo.org`` with a bogus
-    ``X-Forwarded-For``, then check which ``throttle:password_reset:ip:<hash>``
-    key it lands on. sha256(ip)[:32] of the real client means the header is
-    being read; sha256 of the spoofed value means it is not.
+    CONFIRMED ON PRODUCTION (2026-09-09). The header was not taken on trust --
+    this codebase has been wrong about a forwarded header before, in
+    ``AUTH_URL``, where the tunnel forwarded ``Host`` correctly and Auth.js
+    still built ``https://localhost:3002/...``. The check costs one request and
+    is worth repeating if the tunnel or the proxy in front of it ever changes:
+    send a ``forgot-password`` through ``api.qonvo.org`` carrying a bogus
+    ``X-Forwarded-For``, then see which ``throttle:password_reset:ip:<hash>``
+    key it lands on. sha256(ip)[:32] of the real client means this header is
+    being read; sha256 of the spoofed value means it is not and every per-address
+    limit is decoration again. Before the fix the spoofed value won; after it,
+    the same request landed on the real client.
     """
     edge = request.headers.get(_EDGE_IP_HEADER)
     if edge and edge.strip():
