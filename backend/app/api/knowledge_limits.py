@@ -132,13 +132,16 @@ async def source_stats(
     the sources table is the first screen an owner lands on, so N+1 there is
     N+1 on the page that has to feel instant.
 
-    Tombstoned chunks are excluded, and that is deliberately *not* the same
-    measure as ``usage_for``. The two answer different questions: the quota
-    counts every row stored in pgvector, this counts what retrieval can return
-    (``agent/rag.py`` filters tombstoned), and a re-crawl leaves the previous
-    crawl behind as tombstones. Counting those here would double a source's
-    reported size the first time it was refreshed, which is a wrong fact about
-    that source rather than a conservative one.
+    Tombstoned chunks are excluded, as they are everywhere else now.
+
+    This docstring used to explain that the divergence from ``usage_for`` was
+    deliberate: that the quota counted every row in pgvector while this counted
+    what retrieval could return. The explanation was accurate and the behaviour
+    it defended was a bug. A re-crawl left the previous crawl behind, so the
+    quota charged for text the business no longer held, for ever, and the two
+    numbers disagreed by however many times a page had been refreshed. A
+    re-crawl now deletes what it replaces, so there is nothing to diverge over
+    and the owner's page and the bill agree.
     """
     stmt = (
         select(
@@ -198,7 +201,13 @@ async def usage_for(db: AsyncSession, tenant_id: uuid.UUID) -> KnowledgeUsage:
     chars = (
         await db.execute(
             select(func.coalesce(func.sum(func.length(KnowledgeChunk.content)), 0)).where(
-                KnowledgeChunk.tenant_id == tenant_id
+                KnowledgeChunk.tenant_id == tenant_id,
+                # Belt and braces. Ingestion deletes what it replaces now, so
+                # there should be nothing tombstoned to exclude -- but this
+                # query is the one that charges a business, and it was the only
+                # reader in the codebase that counted tombstoned rows. If one
+                # ever comes back, it must not come back as a bill.
+                KnowledgeChunk.tombstoned.is_(False),
             )
         )
     ).scalar_one()

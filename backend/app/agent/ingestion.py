@@ -16,7 +16,7 @@ from __future__ import annotations
 import csv
 import io
 
-from sqlalchemy import update
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -227,19 +227,31 @@ async def ingest_source(
     embedder: EmbeddingProvider,
     usage_out: dict[str, int] | None = None,
 ) -> list[KnowledgeChunk]:
-    """Chunk + embed ``text`` for ``source``, tombstoning any prior chunks.
+    """Chunk + embed ``text`` for ``source``, deleting any prior chunks.
 
     Caller owns the transaction (commit/rollback) — this only stages ORM
-    objects via ``db.add`` and an ``UPDATE`` for the tombstone.
+    objects via ``db.add`` and a ``DELETE`` of what is being replaced.
+
+    Deleted rather than tombstoned, which is what this used to do. Nothing ever
+    read a tombstoned chunk: retrieval filters them (``agent/rag.py``) and so
+    does the per-source size an owner sees (``source_stats``). The one thing
+    that did count them was the quota in ``usage_for``, which is the reverse of
+    useful -- every re-crawl of a page charged a business again for text it no
+    longer holds, permanently, with no way for them to get it back. Nothing
+    purged them either, so the only bound on a source's cost was how many times
+    it had ever been refreshed.
+
+    The delete is as safe as the update it replaces, for the same reason: it is
+    the caller's transaction, so a reader mid-ingest sees the previous chunks
+    until commit under MVCC either way, and a failure anywhere below rolls the
+    whole thing back and leaves them in place. Verified against a real
+    Postgres, both directions.
     """
     await db.execute(
-        update(KnowledgeChunk)
-        .where(
+        delete(KnowledgeChunk).where(
             KnowledgeChunk.tenant_id == source.tenant_id,
             KnowledgeChunk.source_id == source.id,
-            KnowledgeChunk.tombstoned.is_(False),
         )
-        .values(tombstoned=True)
     )
 
     pieces = chunk_text(text)
