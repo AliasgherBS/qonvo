@@ -9,6 +9,46 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-09-10
+
+### Added
+
+- **Production deploys itself from a release tag.** `dev` already merged itself
+  when CI went green; the other half was missing, so going live still meant a
+  person on an SSH session. A tag now triggers a deploy, and rolling back is
+  re-running the workflow with an older tag rather than reverting commits and
+  hoping the rebuild matches. The credential is a **forced-command SSH key**:
+  whatever the workflow sends arrives as an argument to a script that accepts
+  nothing but a `vX.Y.Z` tag that exists on origin, so a leaked CI secret is
+  not server access. Verified against the live box, which refuses a shell,
+  refuses `rm -rf`, refuses a branch name and refuses a tag that does not
+  exist. The deploy builds before switching, rolls back if `/readyz` does not
+  recover, and checks the **public** URLs rather than only the containers.
+
+- **[Measured capacity, and the nine things that cap it](docs/CAPACITY-AND-SCALING.md).**
+  The load test the cost doc admitted had never been run. ~50-70 tenants as
+  shipped, ~150-200 tuned, on 4 vCPU and 8 GB. CPU is not the limit: at three
+  times the current ceiling the box uses 0.85 of four cores, because the
+  workers idle-wait on HTTP. The ceiling is a concurrency default nobody set,
+  living in a dependency's source rather than in this codebase.
+
+### Fixed
+
+- **Staging was publicly indexable.** `dev.qonvo.org` went live serving the
+  same marketing copy as production, with `robots.txt` saying `Allow: /` and no
+  `X-Robots-Tag`, so it would have been indexed as duplicate content against
+  the real site. The runbook pointed at the Caddyfile, but staging reaches the
+  internet through the Cloudflare Tunnel, which applies no headers at all, so
+  the app has to say it itself. Both signals are sent, because they fail
+  differently: `robots.txt` asks, `X-Robots-Tag` tells a crawler that arrived
+  without reading it.
+
+- **CI could not validate the compose file.** The `dashboard` service began
+  reading `dashboard/.env.local`, which is gitignored, so a fresh checkout had
+  nothing to read and `docker compose config` failed on every branch. Fixed the
+  way `.env` was already handled one line above: copy the tracked template into
+  place.
+
 ## [0.11.1] - 2026-09-10
 
 ### Fixed
@@ -418,3 +458,4 @@ could be sold.
 [0.10.2]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.2
 [0.11.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.0
 [0.11.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.1
+[0.11.2]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.2

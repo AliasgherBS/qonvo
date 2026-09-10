@@ -38,7 +38,7 @@ roughly doubles. Neither changes the conclusion â€” the margins are still good â
 the earlier figures came from a machine with no real knowledge base and no real
 conversation, which is the wrong shape of data to extrapolate from.
 
-Load behaviour remains untested.
+Load behaviour was untested when this was written. It has since been measured: see [CAPACITY-AND-SCALING.md](CAPACITY-AND-SCALING.md) for throughput, the tenant ceiling and the nine findings that came out of it.
 
 ---
 
