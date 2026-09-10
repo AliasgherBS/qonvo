@@ -10,7 +10,7 @@ import { SITE } from "@/lib/site";
  * the same marketing copy on dev.qonvo.org, so without this it competes with
  * production as duplicate content. The Caddyfile carries an X-Robots-Tag for
  * its staging hosts, but staging reaches the internet through the Cloudflare
- * Tunnel, which applies no headers — so the app has to say it itself. Default
+ * Tunnel, which applies no headers, so the app has to say it itself. Default
  * "production" matches components/env-badge.tsx: an unset value means the real
  * thing, which is the safe reading for a variable that is baked in at build
  * time and therefore easy to forget.
