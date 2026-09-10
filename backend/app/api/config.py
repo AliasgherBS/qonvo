@@ -13,7 +13,7 @@ from uuid import UUID
 
 from email_validator import EmailNotValidError, validate_email
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -37,7 +37,60 @@ from app.services.audit import changed_fields
 router = APIRouter(prefix="/api/config", tags=["config"])
 
 
+#: Fields where an explicit ``null`` is a real instruction rather than an
+#: accident: it means "clear this override and fall back to the default".
+#:
+#:   billing_email  -- reverts billing notices to the owner's login address
+#:   llm_provider   -- drops a per-tenant engine override back to the system one
+#:   llm_model      -- the same, and the two are always cleared together
+#:
+#: These are *overrides*, where absence is a meaningful state the owner or an
+#: admin deliberately chooses.
+#:
+#: Everything else is *content*, and ``null`` there is almost never intent: it
+#: is what most JSON serialisers, form libraries and typed clients emit for an
+#: absent optional, so a partner integration or a retry of a half-filled form
+#: would erase a business's grounding rules and be told it succeeded.
+_CLEARABLE_WITH_NULL = frozenset({"billing_email", "llm_provider", "llm_model"})
+
+
 class ConfigUpdateRequest(BaseModel):
+    # forbid, not ignore: a misspelled field name used to return 200 with an
+    # unchanged body, so a caller could not tell "you sent nonsense" from "it
+    # worked". A typo is now a 422 that names the field.
+    model_config = ConfigDict(extra="forbid")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_to_erase(cls, data: object) -> object:
+        """Reject an explicit ``null`` on a partial update.
+
+        This is a PATCH-shaped PUT: ``exclude_unset`` means only the keys the
+        caller actually sent are applied, so ``{"persona": null}`` reaches
+        ``setattr(row, "persona", None)`` and the field is gone. It returned
+        200. Five fields of a live tenant were erased that way, including 1,821
+        characters of grounding rules, while the rep was answering customers.
+
+        Two of the columns are NOT NULL (``primary_language``, ``timezone``), so
+        the same request crashed there with a 500 instead -- the same bug
+        wearing a different face.
+
+        To blank a text field deliberately, send an empty string. It is explicit,
+        it survives a round trip, and no serialiser produces it by accident.
+        """
+        if not isinstance(data, dict):
+            return data
+        offenders = sorted(
+            str(k) for k, v in data.items() if v is None and k not in _CLEARABLE_WITH_NULL
+        )
+        if offenders:
+            raise ValueError(
+                "null is not how a field is cleared: "
+                + ", ".join(offenders)
+                + '. Send "" to blank a text field, or omit the key to leave it unchanged.'
+            )
+        return data
+
     persona: str | None = None
     business_name: str | None = None
     primary_language: str | None = None

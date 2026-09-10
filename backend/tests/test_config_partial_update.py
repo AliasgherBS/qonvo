@@ -18,6 +18,7 @@ from types import SimpleNamespace
 
 import pytest
 from app.api.config import ConfigUpdateRequest, _apply_config_update
+from pydantic import ValidationError
 
 
 def _stored() -> SimpleNamespace:
@@ -82,3 +83,54 @@ def test_each_page_can_save_its_own_field_without_touching_the_engine(field, val
     assert getattr(row, field) == value
     assert row.llm_provider == "openai"
     assert row.llm_model == "gpt-5.6-nano"
+
+
+# --------------------------------------------------------------------------- #
+# C1 (VPS audit, 2026-09-11): a live tenant lost business_name, persona, tone,
+# custom_instructions (1,821 characters of grounding rules) and payment_details
+# to a single PUT that returned 200. `exclude_unset` means an explicit null is
+# *sent*, so it reached setattr(row, field, None) and the field was gone.
+#
+# The distinction these tests pin down is override vs content: null clears an
+# override on purpose, and must never touch content.
+# --------------------------------------------------------------------------- #
+
+DESTRUCTIVE_NULLS = [
+    "persona",
+    "business_name",
+    "tone",
+    "custom_instructions",
+    "payment_details",
+    # These two are NOT NULL columns, so the same request used to reach the
+    # database and come back as a 500 rather than an erasure. Same bug.
+    "primary_language",
+    "timezone",
+]
+
+
+@pytest.mark.parametrize("field", DESTRUCTIVE_NULLS)
+def test_null_never_erases_content(field):
+    with pytest.raises(ValidationError):
+        ConfigUpdateRequest(**{field: None})
+
+
+@pytest.mark.parametrize("field", ["billing_email", "llm_provider", "llm_model"])
+def test_null_still_clears_an_override(field):
+    """The other half of the same rule: these are overrides, and absence is a
+    state an owner or admin deliberately chooses."""
+    assert getattr(ConfigUpdateRequest(**{field: None}), field) is None
+
+
+def test_an_unknown_field_is_a_422_not_a_silent_200():
+    """A misspelled name used to return 200 with an unchanged body, so a caller
+    could not tell "you sent nonsense" from "it worked"."""
+    with pytest.raises(ValidationError):
+        ConfigUpdateRequest(totally_unknown_field="x")
+
+
+def test_empty_string_is_how_you_deliberately_blank_a_field():
+    """Rejecting null has to leave a way to actually clear content."""
+    row = _stored()
+    _apply_config_update(row, ConfigUpdateRequest(persona=""))
+    assert row.persona == ""
+    assert row.custom_instructions == "Never quote a price."
