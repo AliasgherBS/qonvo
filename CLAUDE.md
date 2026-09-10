@@ -57,38 +57,86 @@ Scheduler and worker are **separate consumer processes** and must use **differen
 (`arq:scheduler` vs the default). If they share the queue, the scheduler grabs worker jobs
 (e.g. `ingest_knowledge_source`) and drops them as *function not found*.
 
-## Public access (live since 2026-09-06)
+## The two environments (this is the important section)
 
-`qonvo.org` is live, served from **this machine** through a **Cloudflare Tunnel**
-(`cloudflared tunnel run qonvo`, in the `cloudflared` tmux window). The tunnel dials
-outward, so nothing is port-forwarded and no public IP is needed — this box sits behind
-CGNAT and could never have been pointed at directly.
+Since **2026-09-10** there are two, and they are on different machines. Almost every
+stale instruction in this project comes from before that split.
 
-| Host | Serves | Local target |
+| | **Production** | **Staging** |
 |---|---|---|
-| `qonvo.org` | landing page + dashboard | `localhost:3002` (host node process) |
-| `api.qonvo.org` | FastAPI | `localhost:8000` |
+| Runs on | netcup VPS, `159.195.253.176` | **this machine**, in Docker + a host node process |
+| Install path | `/opt/qonvo`, checked out at a **release tag** | `~/qonvo`, your working tree |
+| Public at | `qonvo.org` · `www` · `api.qonvo.org` | `dev.qonvo.org` · `dev-api.qonvo.org` |
+| Reached via | **Caddy** + real A records + Let's Encrypt | **Cloudflare Tunnel** (`~/.cloudflared/config.yml`) |
+| Dashboard | the compose `dashboard` service | host node process on `3012` |
+| API | compose `api`, behind Caddy | compose `api` on `8010` |
+| Email | ZeptoMail SMTP, real | `log` — it can never mail a customer |
+| Deployed by | **GitHub Actions, on a release tag** | you, by rebuilding locally |
+| Data | 3 real tenants | its own database, own volumes, own secrets |
 
-Routing lives in `~/.cloudflared/config.yml`. **The dashboard and API are now separate
-origins**, so `QONVO_CORS_ORIGINS` must contain `https://qonvo.org` or every browser call
-fails while curl keeps working.
+**The Cloudflare Tunnel was not retired, it was repurposed.** It fronts staging only.
+Production stopped going through it the moment DNS moved to A records.
 
-Moving to a VPS later changes only where DNS points; every application setting stays as
-it is. Runbook, including rollback: [`docs/GOING-LIVE-ON-A-DOMAIN.md`](docs/GOING-LIVE-ON-A-DOMAIN.md).
+### How code reaches production
 
-## Dev environment quirks on this VPS
+```
+feature branch  ->  PR into dev  ->  CI (.github/workflows/ci.yml)
+                                      |
+                    auto-merge into dev when every job is green
+                                      |
+                    ./scripts/release.sh X.Y.Z   (runs every gate again, tags)
+                                      |
+                    git push origin main dev && git push origin vX.Y.Z
+                                      |
+                    Deploy workflow fires ON THE TAG -> ssh -> /opt/qonvo/deploy.sh
+                                      |
+                    build, switch, health-check, ROLL BACK if /readyz fails
+```
+
+- **Never commit directly to `dev` or `main`.** The auto-merge job in `ci.yml` merges
+  feature PRs into `dev` itself and deletes the branch.
+- **`dev`'s CI badge is permanently stale, by design.** GitHub does not trigger
+  workflows for pushes made with `GITHUB_TOKEN`, so the auto-merge commit runs nothing.
+  A red X on `dev` usually means "the last *direct* push was red", not "dev is broken".
+- **The deploy key is a forced-command key.** It can run `/opt/qonvo/deploy.sh` with a
+  `vX.Y.Z` argument and literally nothing else — verified: it refuses a shell, refuses
+  `rm -rf`, refuses a branch name, refuses a tag that does not exist. Secrets
+  `QONVO_DEPLOY_KEY` and `QONVO_DEPLOY_KNOWN_HOSTS`.
+- **Rollback is `workflow_dispatch` on the Deploy workflow with an older tag.** Not a
+  revert commit.
+
+### Staging runs under systemd, not tmux
+
+`qonvo-tunnel.service` and `qonvo-dashboard-staging.service` are **user units**
+(`~/.config/systemd/user/`), because tmux died once and took staging offline with it
+while the Docker containers happily survived.
+
+```bash
+systemctl --user status  qonvo-tunnel qonvo-dashboard-staging
+systemctl --user restart qonvo-dashboard-staging     # after a staging rebuild
+```
+
+Requires `sudo loginctl enable-linger aliasgher` once, or the units stop when your last
+terminal closes.
+
+## Dev environment quirks on this machine
+
+This is a **WSL2 box behind CGNAT**, which is why production could never be pointed at
+it directly and why the tunnel existed in the first place.
 
 - Host port `3000` is held by an unrelated `evolution-api` container (user's, don't kill).
   WAHA maps to `127.0.0.1:3001`. Set by [`docker-compose.override.yml`](docker-compose.override.yml)
-  (dev-only, auto-merged).
+  (dev-only, auto-merged, every bind is `127.0.0.1`).
 - Datastores exposed on localhost for host-run migrations/tests: postgres `5433`, redis `6380`,
   api `8000`.
-- Dashboard runs as a **host node process on port 3002** (not the compose service in dev). It
-  requires standalone mode: `node .next/standalone/server.js` — `next start` does nothing when
-  `output: "standalone"` is set. Environment variables must be passed explicitly (standalone
-  doesn't load `.env.local` at runtime).
+- The dashboard requires standalone mode: `node .next/standalone/server.js` — `next start`
+  does nothing when `output: "standalone"` is set. Environment variables must be passed
+  explicitly (standalone doesn't load `.env.local` at runtime).
 - Dashboard middleware must whitelist `/api/auth/*` — Auth.js's own routes must be public or
   login is a chicken-and-egg lockout.
+- **`NEXT_PUBLIC_*` and `INTERNAL_API_URL` are baked at BUILD time**, including the
+  `rewrites()` destination, which Next serialises into `routes-manifest.json`. Setting them
+  on a container does nothing. The compose `dashboard` service passes them as **build args**.
 
 ## Provider gotchas
 
@@ -120,227 +168,130 @@ Qonvo/
 └─ dashboard/              (Next.js 15 App Router, Tailwind 4, Auth.js)
 ```
 
-## Dev credentials (seeded by `scripts/seed_dev.py`)
+## Credentials
 
 | What | Where | Login |
 |---|---|---|
-| Dashboard | http://localhost:3002 | `owner@dev.dev` / `dev-password-123` |
-| Dashboard (`/admin`) | same | `admin@qonvo.dev` / **rotated — no longer `dev-admin-123`**; re-run `seed_dev.py` to reset it |
-| WAHA Swagger | http://localhost:3001 | `X-Api-Key: dev-waha-key-change-me` |
-| Postgres | `localhost:5433` | app: `qonvo_app`/`dev-app-pass` · owner: `qonvo`/`dev-postgres-pass` |
+| Production dashboard | https://qonvo.org | real accounts |
+| Staging dashboard | https://dev.qonvo.org | `admin@qonvo.dev` — password in `~/qonvo-migration/staging-admin-password.txt` |
+| Local dashboard | http://localhost:3012 (staging build) | same as staging |
+| WAHA Swagger (local) | http://localhost:3001 | `X-Api-Key` from `.env` |
+| Postgres (local dev) | `localhost:5433` | `qonvo_app` / `qonvo` per `.env` |
+| Postgres (local staging) | `localhost:5443` | per `.env.staging` |
+| Production, anything | SSH `qonvo@159.195.253.176` | key only, **no sudo** |
 
-All in [`.env`](.env), which is **gitignored** (`a80ca3a` stopped tracking secrets). Only the
-templates are tracked: [`.env.example`](.env.example), `.env.staging.example`,
-`dashboard/.env.local.example`. A fresh clone therefore has no working `.env` — copy the
-templates and fill them in, or carry the files across out of band.
+**`seed_dev.py` does NOT reset an existing password.** It is `if admin is None:` — it
+only *creates* accounts that are missing. This doc used to claim otherwise and it cost a
+debugging session. To reset one, hash a new password with `app.services.auth.hash_password`
+and update the row.
 
-The staging stack keeps its own `.env.staging` (also gitignored) with **different** secrets,
-ports and `QONVO_EMAIL_PROVIDER=log`, so it can never mail a real customer.
+Secrets live in `.env`, `.env.staging` and `dashboard/.env.local*`, all gitignored. Only
+the `.example` templates are tracked — and **`docker compose config` prints resolved
+secrets to stdout**, so never run it bare when the output is going anywhere.
 
 ## Common commands
 
-**Use the committed scripts — don't hand-roll the dashboard start line.**
+**Production is deployed by CI. Do not deploy it by hand unless CI is broken.**
 
 ```bash
-# Rebuild + restart EVERYTHING after code changes (the usual one)
-cd ~/qonvo && ./qonvo-redeploy.sh
+# --- PRODUCTION -------------------------------------------------------------
+# The normal path: merge to dev via PR, then cut a release. CD does the rest.
+./scripts/release.sh 0.11.3
+git push origin main dev && git push origin v0.11.3
 
-# Bring the whole stack up from scratch (after a reboot / tmux gone)
-cd ~/qonvo && ./qonvo-up.sh          # docker + tmux(dashboard, cloudflared) + a public health check
+# Roll back: re-run the Deploy workflow with an older tag
+gh workflow run deploy.yml -f tag=v0.11.2
 
-# Backend tests (must stay green — 286 passing, 8 skipped)
-cd backend && uv run pytest -q && uv run ruff check
+# Look at production (read-only; the qonvo user has no sudo)
+ssh qonvo@159.195.253.176 'cd /opt/qonvo && docker compose ps'
+ssh qonvo@159.195.253.176 'cd /opt/qonvo && docker compose logs --tail=50 api'
+curl -s https://api.qonvo.org/readyz
 
-# Staging: a second, fully isolated stack on this box (own DB/Redis/WAHA/volumes)
-cd ~/qonvo && ./qonvo-staging.sh up && ./qonvo-staging.sh migrate && ./qonvo-staging.sh seed
-#   api 8010 · postgres 5443 · redis 6390 · waha 3011 · minio 9010/9011
-#   Integration tests belong HERE, not against 5433 — they create/delete real tenants.
+# Break-glass manual deploy, only if Actions is down
+ssh qonvo@159.195.253.176 '/opt/qonvo/deploy.sh v0.11.3'
+
+# --- STAGING (this machine) --------------------------------------------------
+./qonvo-staging.sh up            # docker services
+./run-dashboard-staging.sh --build   # rebuild the dashboard (NEXT_PUBLIC_* is build-time)
+systemctl --user restart qonvo-dashboard-staging
+systemctl --user status  qonvo-tunnel
+
+# --- LOCAL DEV ----------------------------------------------------------------
+cd backend && uv run pytest -q && uv run ruff check      # must stay green
+cd dashboard && npx tsc --noEmit && npm run lint && npm run verify:brand
 
 # Migrations (owner role)
 QONVO_MIGRATIONS_DATABASE_URL="postgresql+asyncpg://qonvo:dev-postgres-pass@localhost:5433/qonvo" \
   uv run alembic upgrade head
-
-# Piece-by-piece: backend only
-docker compose up -d --build api worker scheduler
-
-# Piece-by-piece: frontend only (respawns the tmux window)
-cd ~/qonvo/dashboard && export NVM_DIR="$HOME/.nvm" && . "$NVM_DIR/nvm.sh" && \
-  npm run build && \
-  rm -rf .next/standalone/.next/static .next/standalone/public && \
-  cp -r public .next/standalone/ && cp -r .next/static .next/standalone/.next/ && \
-  tmux respawn-window -k -t qonvo:dashboard "~/qonvo/run-dashboard.sh 2>&1 | tee /tmp/qonvo-dashboard.log"
-
-# Restart only, no rebuild (nothing changed)
-docker compose restart api worker scheduler
-tmux respawn-window -k -t qonvo:dashboard "~/qonvo/run-dashboard.sh"
-
-# Seed / re-mint owner+admin+JWT
-cd backend && QONVO_SYSTEM_DATABASE_URL=... QONVO_JWT_SECRET=... \
-  uv run python scripts/seed_dev.py
 ```
 
-**Deploy gotchas (hard-won):**
-- `rm -rf .next/standalone/.next/static .next/standalone/public` before copying is
-  **required** — stale chunks left behind cause `ChunkLoadError` in the browser.
-- **Hard-refresh (Ctrl+Shift+R)** after every frontend restart; a rebuild changes
-  chunk hashes and the browser caches the old HTML.
-- `run-dashboard.sh` parses env with `grep -v '^#' .env.local | xargs`, so comment
-  lines in `.env.local` are fine but **inline `#` comments after a value are not**.
-- `NEXT_PUBLIC_*` vars are baked in at **build** time — a bare restart won't pick
-  them up, you need `npm run build`. Server-side vars (`AUTH_URL`, `AUTH_GOOGLE_*`)
-  only need a restart.
+**Gotchas that have each cost real time:**
+- `verify:brand` **rejects em and en dashes** in dashboard sources. Use plain hyphens.
+- `rm -rf .next/standalone/.next/static .next/standalone/public` before copying, or stale
+  chunks give `ChunkLoadError`.
+- **Hard-refresh (Ctrl+Shift+R)** after any frontend restart.
+- `.env` files are read **literally** by docker and by `run-dashboard.sh`. An inline `#`
+  after a value becomes part of the value. Comments go on their own line.
+- `.env.staging` sets `QONVO_EMAIL_PROVIDER` **twice**; last wins. Editing the first one
+  silently does nothing.
 
-## Security posture (audited 2026-09-07)
+## Security posture
 
-Full findings: [`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md).
+Full findings: [`docs/SECURITY-AUDIT.md`](docs/SECURITY-AUDIT.md). Capacity and the work
+it implies: [`docs/CAPACITY-AND-SCALING.md`](docs/CAPACITY-AND-SCALING.md).
 
-- **`.env` was tracked once** (`4a48a52`, untracked in `a80ca3a`). A removed file
-  stays in history, so ten still-live secrets were readable by anyone who could
-  clone. All rotated by [`scripts/rotate-secrets.sh`](scripts/rotate-secrets.sh).
-  **The values in git history are now worthless; they have not been erased.** A
-  history rewrite is the only way to do that and it invalidates every clone, so
-  it belongs before the repo is ever public, not today.
-- **Never put a secret in a tracked file, including a doc or a test fixture.**
-  `.env`, `.env.staging` and `dashboard/.env.local` are gitignored; only the
-  `.example` templates are tracked.
-- Both hosts now send security headers, set in **application** middleware rather
-  than the proxy so they survive the move from Cloudflare Tunnel to Caddy.
-  `script-src` keeps `'unsafe-inline'` because Next inlines its hydration
-  bootstrap and `ThemeScript` runs pre-paint; nonces are the real fix.
-- **Middleware strips credential query parameters**, because Polar appends
-  `customer_session_token` to its success URL. `token` is exempt on
-  `/reset-password` and `/accept-invite` only, since our own emails link there
-  and stripping it breaks every reset and invitation.
-- The WAHA webhook HMAC is **per session** (`secrets.token_urlsafe(32)`, stored
-  on the session row). `QONVO_WAHA_HMAC_SECRET` is only the fallback for a row
-  with none.
-- Rotating `QONVO_FERNET_KEY` requires re-encrypting
-  `integrations.encrypted_credentials` first
-  ([`backend/scripts/reencrypt_fernet.py`](backend/scripts/reencrypt_fernet.py)).
-  Swapping the key alone leaves every tenant's Google token undecryptable, and
-  it fails silently: the next booking attempt, for an owner who has no idea.
-- Still open: no rate limiting on auth endpoints, load testing never run,
-  backups local-only.
+- **The repository is PUBLIC.** The audit assumed it was not, and said the git-history
+  rewrite "belongs before the repo is ever public". That moment has passed. What makes it
+  survivable is that rotation, not rewriting, is the real remedy: of the **14** secret-shaped
+  values in the tracked-`.env` commit (`4a48a52`), **13 are rotated**. The audit's "ten" was
+  an undercount.
+- **Still live in public history: `QONVO_MINIO_ACCESS_KEY`.** Low severity — it is the
+  username half, `QONVO_MINIO_SECRET_KEY` was rotated, MinIO binds to `127.0.0.1` only, and
+  nothing in the codebase constructs a MinIO client. Rotate it anyway.
+- **Never put a secret in a tracked file**, including docs and test fixtures.
+- Both hosts send security headers from **application** middleware, so they survived the
+  move from tunnel to Caddy unchanged.
+- **`/docs`, `/redoc` and `/openapi.json` are disabled in production** and enabled
+  everywhere else, keyed on `settings.environment`.
+- The WAHA webhook HMAC is **per session**, stored on the session row.
+- **Rotating `QONVO_FERNET_KEY` requires re-encrypting `integrations.encrypted_credentials`
+  first.** Swapping it alone leaves every tenant's Google token undecryptable and fails
+  silently. This is also why the VPS migration carried the key across byte-identical.
+- Production SSH is **key-only**, root login is `prohibit-password`, and the `qonvo` user
+  has **no sudo at all**. netcup's VNC console in SCP is the break-glass path.
+- Still open: no rate limiting on auth endpoints, backups local-only.
 
-## Session status right now
+## Infrastructure gotchas (hard-won, 2026-09-10)
 
-- Phase 0 (foundation) ✅ and Phase 1 (base offering: RAG + grounded replies + auth + inbox
-  with takeover + knowledge manager + ops console) ✅ — both live-verified against a real
-  WhatsApp number using Gemini as the LLM/embedding provider.
-- Phase 3 (agentic VAS) — **substantially complete + live-verified** against a real Google account
-  (SA `qonvo-bot@fastapi-cloudrun-454710`, calendar `alihuzezzy@gmail.com`, a Sheets doc):
-  - **Skills:** `book_appointment`, `append_to_sheet`, `check_availability`, `lookup_sheet`,
-    `take_order` (→ `orders` table), `share_payment_details`. Gated by `requires_integration`
-    (Google connected) and `requires_config_key` (e.g. payment_details set).
-  - **Google auth = per-tenant user OAuth** (service accounts fully removed). Owner clicks
-    **Connect Google** on `/integrations`; refresh token Fernet-encrypted in
-    `integrations.encrypted_credentials`, non-secret metadata (`granted_scopes`, `account_email`,
-    target ids) in `integrations.config` so listing never decrypts. One platform-wide OAuth client
-    (`QONVO_GOOGLE_OAUTH_CLIENT_ID`/`_SECRET`/`_REDIRECT_BASE`) also backs **Sign in with Google**.
-    **Scopes are all non-sensitive → no Google verification needed:** `calendar.app.created` (Qonvo
-    creates a "Qonvo Bookings" calendar on connect) + `calendar.freebusy` (so availability sees the
-    owner's *real* busy blocks — `app.created` alone is blind to them and would double-book) and
-    `drive.file` for Sheets (valid for `values.append`; the file becomes reachable *because* the
-    owner picked it in the Google Picker, so a typed spreadsheet id 404s by design).
-  - **Analytics** `GET /api/analytics/summary` + `/analytics` page (live). **Email** owner-alerts
-    (config-driven log/resend/smtp; wired to human_handoff). **Metrics** `GET /metrics` (Prometheus,
-    hand-rolled, no dep). **Payments** = Settings field, shared verbatim by the skill.
-  - **Booking reminders (§5.7)** ✅ — scheduler cron (every 15 min) sends a confirmation + a 24h
-    reminder, capped at 2/booking (per-timestamp), business-hours-aware, opt-out via
-    `reminder_suppressions` (a "stop" reply suppresses). Verified live with a fake gateway.
-  - Remaining Phase 3: CRM sync (want). Chained flows already work via the tool loop.
-- **Phase 2 (voice VAS)** ✅ landed (commit 1ad91b7): OpenAI-compat STT (`/audio/transcriptions`) +
-  TTS (`/audio/speech`) adapters, `resolve_stt`/`resolve_tts` (return None w/o key → voice off),
-  pipeline voice-in (WAHA media → STT → transcript) + voice-out (TTS → `send_voice`), per-tenant
-  `voice_reply_mode` (match/always/never) in Settings. **Gemini's OpenAI-compat has NO audio
-  endpoints — voice needs a Groq/OpenAI STT/TTS key even when the LLM is Gemini.** Live voice E2E
-  still needs that key + a real voice note.
-- **Gotchas locked in (2026-09-04 cycle):**
-  - `alembic upgrade head` used to **fail on any fresh database**: 0001 builds the schema with
-    `create_all` from the *current* models, so 0007's bare `add_column` hit columns that already
-    existed. Every new migration that touches an existing table must guard (`sa.inspect`), and
-    every new table must `create(..., checkfirst=True)` — 0003/0006/0008 already do.
-  - Bot replies passed a bare `SessionPacing()`, so the daily cap and warm-up ceiling were
-    unenforced on the majority of traffic while manual replies and reminders honoured them.
-    `pacing` is now a **required** argument on the gateway so it cannot silently default again.
-  - Cost was priced from the flat `llm_provider/llm_model` columns while `resolve_llm` prefers
-    `providers["llm"]` — a tenant configured through the nested map was billed against the wrong
-    model (usually $0.00 on a pricing-table miss). Both now call `resolve_llm_identity`.
-  - `warmup_stage` was never set by anything: the ORM default was dead code because
-    `sessions.py` always passes `body.warmup_stage` explicitly. **A model default is not a
-    default when the caller always supplies the field.**
-  - WAHA `fullSync` is off by default now (`QONVO_WAHA_FULL_SYNC`). Existing session volumes keep
-    their history — only newly created sessions are affected.
-- **Gotchas locked in:** (1) dev `.env` `QONVO_FERNET_KEY` was a placeholder → real key now (local,
-  gitignored). (2) A migration-owner-created table does NOT inherit the superuser's DEFAULT
-  PRIVILEGES — new tables need explicit `GRANT … TO qonvo_app, qonvo_system` in the migration
-  (see 0003). (3) Sheets: quote bare tab names in A1 ranges; append with `RAW` (USER_ENTERED
-  evaluates `+`/`=` → corrupts phones + formula-injection risk).
-- **Google OAuth gotchas (hard-won):**
-  - Google's `/revoke` kills the **entire grant** for a client id, not one provider's scopes — so
-    revoking on a Sheets disconnect would also break Calendar. `delete_integration` guards it behind
-    `other_google_provider_has_token`.
-  - An OAuth client left in **Testing** publishing status issues refresh tokens that expire after
-    **7 days** — every tenant's bot would die weekly. Must be "In production" (free for
-    non-sensitive scopes).
-  - `prompt=consent` is mandatory: without it a *re*-connect returns **no** refresh token and you
-    silently keep serving the stale one.
-  - `JSONBType` has no `MutableDict`, so every `integrations.config` write must **reassign** the
-    dict (`config = {**config, ...}`) — in-place mutation is never flushed. And config now mixes
-    owner-written with system-written keys, so `upsert_integration` **merges** rather than replaces
-    (a PUT of just `timezone` used to wipe `calendar_id`).
-  - **Corrected 2026-09-07.** This note used to say a bare `UPDATE <tenant_table>` in a
-    migration matches zero rows under `FORCE ROW LEVEL SECURITY`, and cited
-    `0004_billing.py:29` as a silent no-op. **That is wrong.** The migration role `qonvo` is
-    the bootstrap superuser (`rolsuper = true`), and a superuser bypasses row security
-    including FORCE, so such an UPDATE does match. 0004's statement was a no-op only because
-    its `WHERE plan='trial' AND trial_ends_at IS NULL` matched nothing: every tenant was
-    created after signup existed and already had a `trial_ends_at`.
-    RLS is still real where it matters, verified: `qonvo_app` sees **0 rows** in `tenants`
-    with no `app.tenant_id` set. The caution worth keeping is narrower: a migration that
-    backfills via UPDATE is relying on the migration role being a superuser. Prefer
-    `ADD COLUMN ... DEFAULT <value>`, which fills existing rows as DDL and does not care
-    (`0009_rep_activation.py`).
-  - The OAuth callback uses `tenant_session`, **not** `system_session`: its state token was minted
-    inside an authenticated request and is single-use (Redis `GETDEL`), so the tenant is already
-    established. Unlike the WAHA webhook, it has no cross-tenant lookup to do, and handing an
-    unauthenticated public endpoint a BYPASSRLS connection would discard RLS for nothing.
-  - The id_token read in `google_oauth.py` is **unverified on purpose** (server-to-server from
-    Google's token endpoint, display string only). The one in `services/google_identity.py` comes
-    from the browser and gets full JWKS signature + `aud`/`iss`/`exp` verification — never conflate
-    the two.
-  - **`AUTH_URL` must be set explicitly in `dashboard/.env.local`.** Auth.js host-derivation is
-    broken behind a proxy: verified live that the tunnel forwards `Host` *and* `X-Forwarded-Host`
-    as the public domain, yet Auth.js still built `https://localhost:3002/api/auth/callback/google`
-    (it honoured `X-Forwarded-Proto` but not the host) → `redirect_uri_mismatch` from every device.
-    Pinning `AUTH_URL` fixes it. Consequence: SSO from `localhost:3002` finishes on the public
-    domain, so the cookie lands there — use email+password locally. **`AUTH_URL`,
-    `QONVO_GOOGLE_OAUTH_REDIRECT_BASE`, `QONVO_DASHBOARD_BASE_URL` and the Cloud console redirect
-    URIs are all coupled to the public hostname — change one, change all four.**
-  - **The two Google redirect URIs live on different hosts**, which is easy to get wrong:
-    integrations on the API host (`https://api.qonvo.org/api/integrations/oauth/callback`),
-    Sign in with Google on the dashboard host (`https://qonvo.org/api/auth/callback/google`).
-    The `/backend` prefix the integrations URI used to carry is **gone**: it existed only while
-    one tunnel host fronted the dashboard and proxied `/backend/*` to the API.
-  - **`.env` is read by docker as a literal env file, not by a shell.** Inline `#` comments after
-    a value and leading spaces become *part of the value* — proved with a throwaway container
-    after an edit produced `" https://api.qonvo.org #https://old-host"`. Comments go on their own
-    line. (`run-dashboard.sh` has the same constraint for `.env.local`.)
-- **Billing (2026-09-04)** ✅ — provider-agnostic subsystem shaped around a merchant of record
-  (Paddle/Polar), shipped with a **manual adapter** so it works before any gateway account exists.
-  Plan catalogue in code (`app/billing/plans.py`, entitlements only — **prices deliberately live
-  with the provider, never in this repo**), `subscriptions` + `billing_events` (migration 0008,
-  the latter an idempotency ledger because MoRs retry webhooks), a pure `service_state` gate
-  (suspended / trial_expired / past_due-with-7-day-grace / cancelled-but-paid-through), seat
-  enforcement on team invites, and `POST /webhooks/billing/{provider}`. Entitlements are
-  **derived** from the catalogue by `apply_plan`, so a plan change can never leave a stale quota.
-  Design: [`docs/superpowers/specs/2026-09-04-billing-design.md`](docs/superpowers/specs/2026-09-04-billing-design.md).
-- **Staging (2026-09-04)** ✅ — `./qonvo-staging.sh` runs a second compose project
-  (`qonvo-staging`) beside production: own volumes, own secrets, own ports, email forced to `log`
-  so it can never mail a real customer. **The trap it exposed:** compose's `--env-file` only feeds
-  *interpolation*; the containers read `env_file:` literally, so a staging stack silently ran on
-  production's JWT/Fernet/WAHA secrets until the anchor became `${QONVO_ENV_FILE:-.env}`.
-- All four tracks (Phases 0–3 + Phase 2 voice) are built; remaining work is CRM sync (want),
-  a live voice test with a real STT/TTS key, an MoR account, and the VPS/domain move.
-- WhatsApp session `dev-tenant-main` is linked to the user's demo number; unlink from
-  WhatsApp → Settings → Linked devices when done.
+- **netcup's firewall is default-DENY per direction once any rule exists for that
+  direction.** A single "DROP outbound port 25" rule blocked *all* outbound TCP, which
+  took WhatsApp and the LLM offline while the site kept serving and `/readyz` stayed
+  green. Any egress rule needs an explicit `ACCEPT` catch-all below it.
+- **The netcup Mail Block blocks outbound SMTP**, not inbound. Using a hosted relay does
+  not avoid it: your server still dials out to port 465.
+- **Debian 13 minimal has no `gpg`.** Docker's documented `curl | gpg --dearmor` line fails
+  and leaves an unsigned-repo error pointing at the wrong cause. Use the armored `.asc`
+  directly; apt verifies it natively.
+- **`cloudflared` cannot manage DNS.** Its only DNS verb is `tunnel route dns`, which
+  creates a CNAME *to a tunnel*. Anything else needs the Cloudflare API.
+- **A CNAME cannot share a name with an A record.** Converting the tunnel hostnames meant
+  editing the existing records in place, not adding new ones.
+- **WhatsApp sessions cannot be migrated.** WAHA session state is Signal-protocol key
+  material; the database row survives a move but WAHA will 404, and the API turns that into
+  a **502**. Repair by recreating the session in WAHA under its existing name and stored
+  HMAC — never by deleting the row, because `whatsapp_sessions -> conversations -> messages`
+  all cascade.
+- **A freshly linked session duplicates messages** while it uploads pre-keys and syncs
+  app state. One `sendText`, two deliveries. It settles.
+
+## Session status
+
+- Phases 0-3 complete and live-verified. Billing, staging, voice, agentic skills all shipped.
+- **Production migrated to the netcup VPS on 2026-09-10** and is served by Caddy on real
+  A records. Data, RLS, Google integrations and knowledge uploads all carried across;
+  the WhatsApp number was relinked by QR, which is the one thing that cannot move.
+- **CI/CD is closed end to end**: PR -> CI -> auto-merge to `dev` -> `release.sh` -> tag ->
+  GitHub Actions deploys production and verifies the public URLs.
+- Remaining work: the nine findings in `docs/CAPACITY-AND-SCALING.md` (P2 pool sizes and
+  P1 `max_jobs` first), CRM sync, a live voice test with a real STT/TTS key, and rotating
+  `QONVO_MINIO_ACCESS_KEY`.
