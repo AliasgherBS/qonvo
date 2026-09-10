@@ -25,6 +25,10 @@ const INTERNAL_API_URL = process.env.INTERNAL_API_URL ?? "http://localhost:8000"
 // other silently serves the wrong API URL and environment badge.
 const DIST_DIR = process.env.NEXT_DIST_DIR ?? ".next";
 
+// Staging must never be indexed — see app/robots.ts for why the app, rather
+// than the proxy, is the right place for this.
+const IS_PRODUCTION = (process.env.NEXT_PUBLIC_QONVO_ENV ?? "production") === "production";
+
 const nextConfig: NextConfig = {
   output: "standalone",
   distDir: DIST_DIR,
@@ -34,7 +38,15 @@ const nextConfig: NextConfig = {
   async headers() {
     // Every route, including the marketing pages: a missing CSP on the landing
     // page is the same origin as the dashboard.
-    return [{ source: "/:path*", headers: SECURITY_HEADERS }];
+    //
+    // Off production, add noindex as well. robots.txt asks a crawler not to
+    // index; X-Robots-Tag tells it not to, and covers the crawlers that reach a
+    // URL without fetching robots.txt first. Belt and braces, because getting a
+    // staging domain de-indexed afterwards is slow.
+    const headers = IS_PRODUCTION
+      ? SECURITY_HEADERS
+      : [...SECURITY_HEADERS, { key: "X-Robots-Tag", value: "noindex, nofollow" }];
+    return [{ source: "/:path*", headers }];
   },
   async rewrites() {
     return [{ source: "/backend/:path*", destination: `${INTERNAL_API_URL}/:path*` }];
