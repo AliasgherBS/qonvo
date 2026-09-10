@@ -22,7 +22,18 @@ export default async function DashboardLayout({ children }: { children: React.Re
     <div className="flex min-h-screen">
       <Sidebar role={session.user.role} />
 
-      <div className="flex flex-1 flex-col">
+      {/* min-w-0 is load-bearing, and its absence was audit finding H3.
+          A flex item defaults to min-width:auto, which means "never shrink
+          below your content". So this column grew to whatever the widest table
+          inside it wanted, and /knowledge rendered 922px wide on a 390px phone
+          with the rep switch, the bell and the avatar all off-screen.
+
+          The tables were already wrapped in overflow-x:auto. Those wrappers
+          were correct and completely inert: a scroll container can only scroll
+          if something upstream has bounded it, and nothing had. Same family as
+          the inbox height bug -- a container that cannot do its job because an
+          ancestor never gave it a size. */}
+      <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
           tenantName={session.user.tenantName}
           userName={session.user.name ?? session.user.email ?? "You"}
@@ -33,7 +44,7 @@ export default async function DashboardLayout({ children }: { children: React.Re
         {/* pb-28 on mobile: the bottom bar is fixed now, so it no longer
             reserves its own space in the flex column and would otherwise cover
             the last of the scrollable content (teardown S1). */}
-        <main className="flex-1 overflow-y-auto p-4 pb-28 lg:p-8">
+        <main className="min-w-0 flex-1 overflow-y-auto p-4 pb-28 lg:p-8">
           {/* Owner-only banners (a cross-tenant admin has no tenant/session). */}
           {session.user.role === "qonvo_admin" ? null : (
             <>
