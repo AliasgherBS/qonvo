@@ -56,10 +56,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("api stopped")
 
 
+#: The interactive docs publish the entire shape of the API -- every route,
+#: every field, every error -- to anyone who asks, with no authentication in
+#: front of them. That is exactly what you want while building and exactly what
+#: production should not hand out, so they are on everywhere except production.
+#:
+#: Turning them off also removes /openapi.json, which is the part that actually
+#: enumerates the surface; leaving that reachable would make hiding /docs
+#: cosmetic.
+DOCS_ENABLED = settings.environment != "production"
+
 app = FastAPI(
     title="Qonvo API",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url="/docs" if DOCS_ENABLED else None,
+    redoc_url="/redoc" if DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if DOCS_ENABLED else None,
 )
 
 @app.exception_handler(RequestValidationError)
@@ -115,6 +128,21 @@ _SECURITY_HEADERS = {
     "Cross-Origin-Resource-Policy": "same-site",
 }
 
+#: Swagger UI and ReDoc load their JS and CSS from jsdelivr, so the blanket
+#: `default-src 'none'` returns a 200 that renders an empty page -- observed on
+#: api.qonvo.org. This relaxation is scoped to the docs routes and applies only
+#: where DOCS_ENABLED is true, so production never serves it at all.
+_DOCS_CSP = (
+    "default-src 'none'; "
+    "script-src 'self' https://cdn.jsdelivr.net; "
+    "style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
+    "img-src 'self' https://fastapi.tiangolo.com data:; "
+    "font-src 'self' https://cdn.jsdelivr.net; "
+    "connect-src 'self'; "
+    "frame-ancestors 'none'"
+)
+_DOCS_PATHS = ("/docs", "/redoc")
+
 
 @app.middleware("http")
 async def _security_headers(request, call_next):
@@ -126,6 +154,8 @@ async def _security_headers(request, call_next):
     silently disappears when the proxy changes.
     """
     response = await call_next(request)
+    if DOCS_ENABLED and request.url.path.startswith(_DOCS_PATHS):
+        response.headers.setdefault("Content-Security-Policy", _DOCS_CSP)
     for key, value in _SECURITY_HEADERS.items():
         # setdefault, not assignment: a route that deliberately set its own
         # (the docs UI needs a looser CSP) must win over the default.
