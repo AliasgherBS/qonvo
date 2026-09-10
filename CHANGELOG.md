@@ -9,6 +9,8 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-09-10
+
 ### Added
 
 - **Production deploys itself from a release tag.** `dev` already merged itself
@@ -456,3 +458,4 @@ could be sold.
 [0.10.2]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.10.2
 [0.11.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.0
 [0.11.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.1
+[0.11.2]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.2
