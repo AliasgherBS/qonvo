@@ -87,3 +87,58 @@ def test_the_gate_is_wired_into_the_pipeline():
     source = inspect.getsource(pipeline._run_pipeline_inner)
     assert "has_informational_intent(coalesced)" in source
     assert 'event_type="knowledge_gap"' in source
+
+# --------------------------------------------------------------------------- #
+# Small talk (VPS audit, 2026-09-11). "Hello how are you doing?" was the top
+# knowledge gap in the owner's report on 2026-09-10 -- "Hi" in a longer coat.
+# It asks the business nothing, so the knowledge did not fail to answer it.
+#
+# The strings below are the real ones from production's analytics_events, not
+# invented examples: four genuine gaps that must survive, and the noise that
+# must not.
+# --------------------------------------------------------------------------- #
+
+REAL_QUESTIONS_FROM_PRODUCTION = [
+    "What time do you open on Sunday?",
+    "Can I cancel free of charge?",
+    "what are your opening hours?",
+    "My colour was ruined last week and I want a refund",
+]
+
+SMALL_TALK = [
+    "Hello how are you doing?",
+    "Hi\nBye\nHi",
+    "how are you",
+    "whats up",
+    "aap kaise hain",
+    "kaise ho",
+    "kya haal hai",
+]
+
+
+@pytest.mark.parametrize("text", REAL_QUESTIONS_FROM_PRODUCTION)
+def test_a_real_question_is_still_a_gap(text):
+    assert has_informational_intent(text) is True
+
+
+@pytest.mark.parametrize("text", SMALL_TALK)
+def test_small_talk_is_not_a_gap(text):
+    assert has_informational_intent(text) is False
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # The words added for small talk are common ones, so these are the
+        # cases that prove adding them was safe: each survives on the strength
+        # of its own vocabulary, not on the filler around it.
+        "how much is a facial",
+        "are you open today",
+        "what are your prices",
+        "aap ka rate kya hai",
+        "kya aap laser karte hain",
+        "facial ka price kya hai",
+    ],
+)
+def test_common_words_do_not_swallow_a_real_question(text):
+    assert has_informational_intent(text) is True

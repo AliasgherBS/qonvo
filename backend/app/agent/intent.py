@@ -50,6 +50,20 @@ _PLEASANTRIES = frozenset(
         # Urdu script
         "سلام", "السلام", "علیکم", "اسلام", "وعلیکم", "شکریہ", "مہربانی",
         "جی", "ہاں", "اچھا", "ٹھیک", "خدا", "حافظ", "اللہ", "انشاءاللہ",
+        # Small talk. "Hello how are you doing?" reached the owner's report as
+        # a knowledge gap on 2026-09-10, which is the same failure as "Hi" in a
+        # longer coat: it asks the business nothing, so the knowledge did not
+        # fail to answer it.
+        #
+        # These are common words, and adding them looks riskier than it is: a
+        # message is only discarded when EVERY word is in this set, so a real
+        # question survives on the strength of its own vocabulary. "how much is
+        # a facial" keeps facial, "are you open on Sunday" keeps open and
+        # Sunday, "what are your opening hours" keeps opening and hours.
+        "how", "hows", "are", "is", "am", "doing", "going", "what", "whats",
+        "up", "sup", "wassup", "there", "hope", "today", "everything",
+        "kaise", "kaisay", "kya", "haal", "kesa", "kesi", "ho", "hai", "hain", "aap", "tum",
+        "کیسے", "کیا", "حال", "کیسا",
     }
 )
 
