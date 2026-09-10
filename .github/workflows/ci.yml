@@ -142,6 +142,10 @@ jobs:
       - name: Validate production and staging composition
         run: |
           cp .env.example .env
+          # The dashboard service reads dashboard/.env.local (Auth.js secrets,
+          # which are NOT in the backend .env). It is gitignored like .env, so
+          # validation needs its template in place for the same reason.
+          cp dashboard/.env.local.example dashboard/.env.local
           docker compose config >/dev/null
           echo "✓ production compose valid"
           cp .env .env.staging && cat .env.staging.example >> .env.staging
