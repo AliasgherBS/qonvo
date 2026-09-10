@@ -240,8 +240,14 @@ async def _tell_owner(
     title: str,
     body: str,
     send_gateway: SendGateway | None,
+    email: bool = True,
 ) -> bool:
-    """Notification row + email, in the tenant's own transaction.
+    """Notification row, optional email, in the tenant's own transaction.
+
+    ``email=False`` still writes the dashboard row and still sends the WhatsApp
+    ping. It only withholds the mail. Used for recovery: "your number is back"
+    is good news that has already been delivered by the number working again,
+    and an inbox is the wrong place to learn it.
 
     Best effort: an alert that cannot be delivered must not abort the sweep and
     leave the rest of the fleet unwatched. Returns True when the notification
@@ -266,7 +272,8 @@ async def _tell_owner(
                 # number we are alerting about is the one that is down.
                 send_gateway=send_gateway,
             )
-            await email_owner(db, sess.tenant_id, title, body)
+            if email:
+                await email_owner(db, sess.tenant_id, title, body)
         return True
     except Exception as exc:  # noqa: BLE001 — one tenant's failure is not the fleet's
         logger.bind(session=sess.session_name, tenant_id=str(sess.tenant_id)).warning(
@@ -355,6 +362,11 @@ async def sweep_session_alerts(
                         "answering customers. Nothing else needs doing."
                     ),
                     send_gateway=send_gateway,
+                    # Dashboard notification and WhatsApp ping, but no email.
+                    # Recovery is the one alert whose own subject line says
+                    # nothing needs doing, and every unnecessary mail makes the
+                    # necessary one easier to ignore.
+                    email=False,
                 )
                 stats["recovered"] += 1
                 log.info("session recovered; owner told")

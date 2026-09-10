@@ -56,13 +56,21 @@ def sent(monkeypatch) -> list[tuple[str, str]]:
     transport: the point of these tests is the decision to speak, and stubbing
     lower would drag a database and an SMTP config into a policy test.
     """
-    calls: list[tuple[str, str]] = []
+    class _Calls(list):
+        """A list of (title, body), plus which of them asked for an email."""
 
-    async def fake_tell(sess, *, title, body, send_gateway):  # noqa: ANN001
+        emailed: list[tuple[str, bool]]
+
+    calls = _Calls()
+    emailed: list[tuple[str, bool]] = []
+
+    async def fake_tell(sess, *, title, body, send_gateway, email=True):  # noqa: ANN001
         calls.append((title, body))
+        emailed.append((title, email))
         return True
 
     monkeypatch.setattr(notif, "_tell_owner", fake_tell)
+    calls.emailed = emailed
     return calls
 
 
@@ -337,3 +345,24 @@ def test_the_escalation_notice_is_distinguishable_from_the_first_alert():
     assert SESSION_DOWN_TITLE not in exhausted, (
         "the escalation reuses the first alert's title, so it reads as a duplicate"
     )
+
+
+async def test_recovery_notifies_but_does_not_email(fake_redis, sent):
+    """Only necessary mail. "Your number is back online" is good news the owner
+    already has -- the number is working -- so it stays a dashboard notification
+    and a WhatsApp ping, and does not reach an inbox. Every unnecessary email
+    makes the necessary one easier to ignore."""
+    failed, working = [_session()], [_session(SessionStatus.working)]
+
+    await sweep_session_alerts(fake_redis, now=NOW, sessions=failed)
+    await sweep_session_alerts(
+        fake_redis, now=NOW + dt.timedelta(minutes=4), sessions=failed
+    )
+    await sweep_session_alerts(
+        fake_redis, now=NOW + dt.timedelta(minutes=5), sessions=working
+    )
+
+    emailed = dict(sent.emailed)
+    assert emailed[SESSION_DOWN_TITLE] is True
+    assert emailed[SESSION_BACK_TITLE] is False
+
