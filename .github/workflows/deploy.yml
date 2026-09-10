@@ -1,0 +1,73 @@
+name: Deploy
+
+# Deploys on a release tag, not on a push to main.
+#
+# scripts/release.sh already runs every gate (pytest, ruff, tsc, lint, all the
+# verify:* gates) before it will create a tag, so a tag is by construction a
+# tested tree. Tags also give immutable, versioned deploys: rolling back is
+# re-running this workflow with an older tag, not reverting commits and hoping
+# the rebuild matches.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to deploy (vX.Y.Z). Use this to roll back."
+        required: true
+        type: string
+
+concurrency:
+  # Never let two deploys touch the box at once.
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to production
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Resolve the tag
+        id: tag
+        run: |
+          TAG="${{ inputs.tag || github.ref_name }}"
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a release tag: $TAG" >&2; exit 1; }
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Deploying $TAG"
+
+      - name: Configure SSH
+        env:
+          KEY: ${{ secrets.QONVO_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.QONVO_DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/deploy
+          chmod 600 ~/.ssh/deploy
+          # Pinned host key rather than StrictHostKeyChecking=no: a deploy that
+          # trusts whatever answers is a deploy that can be pointed elsewhere.
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy
+        # The key is a forced-command key: whatever is sent here arrives as
+        # $SSH_ORIGINAL_COMMAND to /opt/qonvo/deploy.sh, which accepts nothing
+        # but a vX.Y.Z tag. It cannot open a shell or run anything else, so a
+        # leak of the secret above does not become server access.
+        run: |
+          ssh -i ~/.ssh/deploy \
+              -o UserKnownHostsFile=~/.ssh/known_hosts \
+              -o StrictHostKeyChecking=yes \
+              -o ConnectTimeout=15 \
+              qonvo@159.195.253.176 "${{ steps.tag.outputs.tag }}"
+
+      - name: Verify the public site is serving the deploy
+        run: |
+          set -e
+          for url in https://qonvo.org/ https://api.qonvo.org/healthz https://api.qonvo.org/readyz; do
+            code=$(curl -so /dev/null -m 20 -w '%{http_code}' "$url")
+            echo "  $url -> $code"
+            [ "$code" = "200" ] || { echo "public check failed for $url" >&2; exit 1; }
+          done
+          curl -fsS -m 20 https://api.qonvo.org/readyz | grep -q '"status":"ok"'
+          echo "  readyz reports ok"
