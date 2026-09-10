@@ -14,10 +14,11 @@ from uuid import UUID
 
 from arq import ArqRedis
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.agent.ingestion import sanitise_extracted_text
 from app.agent.storage import purge_source_files, source_dir
 from app.api.deps import get_arq, get_claims, get_db, require_owner, require_tenant
 from app.api.knowledge_limits import (
@@ -74,9 +75,25 @@ def _cap_entry(v: str | None) -> str | None:
     return v
 
 
+#: H1 (VPS audit, 2026-09-11). A NUL byte reaching Postgres is a 500, and the
+#: same byte reached it twice: first through file ingestion, where it hung a
+#: real 391 KB PDF on "Processing" for ever, and then -- after that path was
+#: sanitised -- straight through this JSON API instead. Fixing the parser was
+#: fixing one door in a room with two.
+#:
+#: So it is applied at the request model, which is the boundary every entry
+#: point crosses. ``sanitise_extracted_text`` is the function the file path
+#: already uses, reused rather than reimplemented, so the two cannot drift.
+def _clean_text(v: str | None) -> str | None:
+    return None if v is None else sanitise_extracted_text(v)
+
+
 class CreateSourceRequest(BaseModel):
     type: SourceTypeIn
-    title: str
+    #: min_length=1 for M2: an empty title returned 201 and rendered a blank,
+    #: unidentifiable row in the sources table. ``content`` had a length rule
+    #: and ``title`` had only "required", which an empty string satisfies.
+    title: str = Field(min_length=1, max_length=255)
     content: str | None = None
     url: str | None = None  # for type="url": the page to fetch + ingest
     # The gap this entry answers, if it was written from the Gaps table
@@ -86,10 +103,11 @@ class CreateSourceRequest(BaseModel):
     answers_gap_id: str | None = None
 
     _cap_content = field_validator("content")(classmethod(lambda cls, v: _cap_entry(v)))
+    _clean = field_validator("title", "content")(classmethod(lambda cls, v: _clean_text(v)))
 
 
 class UpdateSourceRequest(BaseModel):
-    title: str | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=255)
     content: str | None = None
     # Re-run ingestion for a source whose text lives somewhere else (K2). A
     # website's ``content`` column is NULL, so the content-changed path below
@@ -101,6 +119,7 @@ class UpdateSourceRequest(BaseModel):
     refetch: bool = False
 
     _cap_content = field_validator("content")(classmethod(lambda cls, v: _cap_entry(v)))
+    _clean = field_validator("title", "content")(classmethod(lambda cls, v: _clean_text(v)))
 
 
 class SourceResponse(BaseModel):
