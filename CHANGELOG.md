@@ -9,6 +9,8 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-11
+
 ### Fixed
 
 - **A single `PUT /api/config` could erase a tenant's entire AI configuration and
@@ -530,3 +532,4 @@ could be sold.
 [0.11.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.0
 [0.11.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.1
 [0.11.2]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.2
+[0.12.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.12.0
