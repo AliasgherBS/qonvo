@@ -102,7 +102,7 @@ Everything below is now built, tested, and live on `main`:
 | Method | Path | What it does |
 |---|---|---|
 | GET | `/api/knowledge/sources` | List knowledge sources. |
-| POST | `/api/knowledge/sources` | Add a source (text **or URL/website**). |
+| POST | `/api/knowledge/sources` | Add a source. `type` is one of `manual`, `file` or `url` — anything else is a 422, including the `text` and `website` this table used to imply. |
 | GET/PUT/DELETE | `/api/knowledge/sources/{id}` | Read / edit / delete a source. |
 | POST | `/api/knowledge/sources/{id}/upload` | Upload a file to a source. |
 | GET | `/api/knowledge/gaps` | Questions customers asked that the knowledge couldn't answer. |

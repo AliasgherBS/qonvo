@@ -3,10 +3,24 @@
 _Everything that has to change, in the order it has to change, with the traps
 that have already bitten this project marked._
 
-> **Executed on 2026-09-06 (Path A).** `qonvo.org` and `api.qonvo.org` are live
-> through a Cloudflare Tunnel, both Google flows are verified, and ngrok is
-> retired. What follows stays here because it is the same runbook for the VPS
-> move (Path B) and for putting staging on `dev.qonvo.org` — only §2 differs.
+> **Path A executed 2026-09-06. Path B executed 2026-09-10 — this is now history,
+> not a plan.** Production runs on the netcup VPS (`159.195.253.176`) behind Caddy
+> on real A records with Let's Encrypt certificates. The Cloudflare Tunnel was not
+> retired: it now fronts **staging** at `dev.qonvo.org` and `dev-api.qonvo.org`.
+>
+> What actually happened, beyond §2:
+>
+> * The hostnames did not change, so **the Google Cloud console needed no edits
+>   at all** and neither did `AUTH_URL`, `NEXT_PUBLIC_*` or the redirect bases.
+> * `QONVO_FERNET_KEY` was carried across byte-identical, which is the only reason
+>   tenants' Google integrations survived.
+> * Cloudflare proxy had to go **off** (grey cloud) for ACME HTTP-01. The apex
+>   CNAME had to be **converted in place** to an A record, not added alongside.
+> * `www.qonvo.org` did not exist and had to be created, or Caddy would have
+>   requested a certificate for a hostname with no DNS and taken the stack down.
+> * The WhatsApp session could not migrate and was relinked by QR.
+>
+> §3-§9 below remain accurate as the general runbook.
 
 Replace `qonvo.org` below with the domain you actually bought. It appears in
 more places than you would expect, and **four of them are coupled** — change one

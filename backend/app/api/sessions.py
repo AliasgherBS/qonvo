@@ -19,7 +19,7 @@ import secrets
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,9 +33,11 @@ from app.api.deps import (
     require_verified_owner,
 )
 from app.core.config import settings
+from app.core.logging import logger
 from app.core.security import TokenClaims
 from app.models.conversation import Conversation
 from app.models.enums import SessionStatus
+from app.models.tenant import TenantConfig
 from app.models.whatsapp import WhatsAppSession
 from app.services import audit
 from app.waha.client import WahaClient, WahaError
@@ -212,6 +214,36 @@ async def create_session(
     db: AsyncSession = Depends(get_db),
     waha: WahaClient = Depends(get_waha),
 ) -> SessionResponse:
+    # Number entitlement (M6). Creation was unbounded: eight rapid POSTs gave
+    # eight 201s and eleven sessions on one tenant, and the plan catalogue said
+    # nothing about numbers even though multiple numbers is a paid feature on
+    # the price list. Each linked number is also a WAHA session at ~22 MB, which
+    # docs/CAPACITY-AND-SCALING.md identifies as the RAM ceiling of the box, so
+    # this bounds a real resource and not just a billing line.
+    entitlements = (
+        await db.execute(
+            select(TenantConfig.entitlements).where(TenantConfig.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none() or {}
+    allowed = entitlements.get("whatsapp_numbers")
+    if allowed is not None:
+        existing = (
+            await db.execute(
+                select(func.count())
+                .select_from(WhatsAppSession)
+                .where(WhatsAppSession.tenant_id == tenant_id)
+            )
+        ).scalar_one()
+        if existing >= allowed:
+            raise HTTPException(
+                status_code=402,
+                detail=(
+                    f"Your plan includes {allowed} WhatsApp "
+                    f"{'number' if allowed == 1 else 'numbers'}. "
+                    "Upgrade to connect another, or remove one first."
+                ),
+            )
+
     label = body.display_label
     session_name = derive_session_name(label)
 
@@ -359,6 +391,68 @@ async def logout_session(
         target=session_name,
     )
     return {"session_name": session_name, "status": row.status.value}
+
+
+@router.delete("/{session_name}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_session(
+    session_name: str,
+    # Same authority as creating one: this is the row that represents a business
+    # number, and removing it is how a tenant tidies up after a mistake.
+    tenant_id: UUID = Depends(require_verified_owner),
+    claims: TokenClaims = Depends(get_claims),
+    db: AsyncSession = Depends(get_db),
+    waha: WahaClient = Depends(get_waha),
+) -> None:
+    """Log out and remove the row -- but only when nothing is hanging off it.
+
+    There was no removal at all (M6): eight rapid creates gave eight 201s and a
+    page of rows the tenant could never tidy, because ``logout`` and ``restart``
+    were the only controls.
+
+    The reason it refuses rather than cascading is the schema. conversations
+    carry ``ON DELETE CASCADE`` from this table, and messages cascade from
+    conversations, so deleting a session that has ever been used takes the
+    tenant's history with it and returns 204 as though nothing happened. That is
+    the same shape as the config erasure in C1, and one of those is enough.
+
+    So: an unused row (the accidental duplicate this exists for) deletes; a row
+    with history refuses and points at logout, which unlinks the number and
+    keeps the record.
+    """
+    row = await _get_row(db, session_name)
+
+    conversations = (
+        await db.execute(
+            select(func.count()).select_from(Conversation).where(Conversation.session_id == row.id)
+        )
+    ).scalar_one()
+    if conversations:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"This number has {conversations} "
+                f"{'conversation' if conversations == 1 else 'conversations'} "
+                "attached, and deleting it would delete them too. "
+                "Use Log out to unlink the number and keep the history."
+            ),
+        )
+
+    # Best effort: a session WAHA has never heard of (or has already dropped)
+    # must not block the tenant from tidying up the row that describes it.
+    try:
+        await waha.delete_session(session_name)
+    except WahaError as exc:
+        logger.bind(session=session_name).info(f"WAHA had no session to delete: {exc.detail}")
+
+    await audit.record(
+        db,
+        tenant_id=tenant_id,
+        claims=claims,
+        action="whatsapp_session_deleted",
+        target=session_name,
+        meta={"label": row.label},
+    )
+    await db.delete(row)
 
 
 @router.get("/{session_name}/qr")

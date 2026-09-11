@@ -1,0 +1,807 @@
+<title>Qonvo On The VPS</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=Manrope:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  :root{
+    --bg:#F3EFE6; --bg-raised:#FBF9F4; --bg-sunk:#EAE5D9;
+    --fg:#08130E; --fg-muted:#5B6B63; --fg-faint:#8A968F;
+    --rule:#D9D3C5; --rule-strong:#C2BBAA; --accent:#00915A;
+    --crit:#A01B12; --crit-bg:#F6DFDC;
+    --high:#C0392F; --high-bg:#F7E3E0;
+    --med:#A96A0A;  --med-bg:#F7EBD8;
+    --low:#4C6D80;  --low-bg:#E2ECF1;
+    --good:#00915A; --good-bg:#DCF3E7;
+    --measure:68ch;
+    --display:"Bricolage Grotesque","Trebuchet MS",system-ui,sans-serif;
+    --body:"Manrope",-apple-system,"Segoe UI",Roboto,sans-serif;
+    --mono:"JetBrains Mono",ui-monospace,Menlo,monospace;
+  }
+  @media (prefers-color-scheme: dark){:root:not([data-theme="light"]){
+    --bg:#08130E; --bg-raised:#0E1F18; --bg-sunk:#060F0B;
+    --fg:#EFEDE5; --fg-muted:#9DAEA5; --fg-faint:#6C7D75;
+    --rule:#1D3229; --rule-strong:#2C463A; --accent:#00C776;
+    --crit:#FF9186; --crit-bg:#45201C;
+    --high:#FF7A6E; --high-bg:#3A1B18;
+    --med:#F0B45C;  --med-bg:#33270F;
+    --low:#8FC3DD;  --low-bg:#14262E;
+    --good:#4BE0A0; --good-bg:#0F2E22;
+  }}
+  :root[data-theme="dark"]{
+    --bg:#08130E; --bg-raised:#0E1F18; --bg-sunk:#060F0B;
+    --fg:#EFEDE5; --fg-muted:#9DAEA5; --fg-faint:#6C7D75;
+    --rule:#1D3229; --rule-strong:#2C463A; --accent:#00C776;
+    --crit:#FF9186; --crit-bg:#45201C;
+    --high:#FF7A6E; --high-bg:#3A1B18;
+    --med:#F0B45C;  --med-bg:#33270F;
+    --low:#8FC3DD;  --low-bg:#14262E;
+    --good:#4BE0A0; --good-bg:#0F2E22;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--body);font-size:16px;line-height:1.62;-webkit-font-smoothing:antialiased}
+  .shell{max-width:1080px;margin:0 auto;padding:0 24px 120px}
+  .masthead{padding:56px 0 34px;border-bottom:2px solid var(--fg)}
+  .kicker{font-family:var(--mono);font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--fg-faint);margin:0 0 18px}
+  h1{font-family:var(--display);font-weight:800;font-size:clamp(2.4rem,6.2vw,3.9rem);line-height:1;letter-spacing:-.035em;margin:0 0 18px;text-wrap:balance}
+  h1 .em{color:var(--accent)}
+  .standfirst{font-size:clamp(1.02rem,2.1vw,1.2rem);line-height:1.55;color:var(--fg-muted);max-width:58ch;margin:0 0 26px}
+  .score{display:grid;grid-template-columns:repeat(auto-fit,minmax(118px,1fr));gap:1px;background:var(--rule-strong);border:1px solid var(--rule-strong)}
+  .score div{background:var(--bg);padding:13px 15px}
+  .score b{display:block;font-family:var(--display);font-weight:800;font-size:1.8rem;line-height:1.05;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .score span{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--fg-faint)}
+  .score .c b{color:var(--crit)} .score .h b{color:var(--high)} .score .m b{color:var(--med)} .score .g b{color:var(--good)}
+  section{padding-top:60px}
+  .sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:8px;border-bottom:1px solid var(--rule-strong);padding-bottom:10px}
+  .sec-num{font-family:var(--mono);font-size:12px;color:var(--accent);letter-spacing:.1em;flex:none;padding-top:6px}
+  h2{font-family:var(--display);font-weight:700;font-size:clamp(1.55rem,3.2vw,2.05rem);letter-spacing:-.025em;line-height:1.1;margin:0}
+  h3{font-family:var(--display);font-weight:700;font-size:1.18rem;letter-spacing:-.015em;margin:38px 0 6px}
+  h4{font-family:var(--body);font-weight:700;font-size:.8rem;letter-spacing:.1em;text-transform:uppercase;color:var(--fg-faint);margin:30px 0 10px}
+  p{max-width:var(--measure);margin:0 0 15px}
+  .lede{color:var(--fg-muted);max-width:var(--measure);margin:14px 0 8px}
+  ul,ol{max-width:var(--measure);padding-left:1.15em;margin:0 0 15px}
+  li{margin-bottom:7px}
+  a{color:var(--accent);text-underline-offset:2px}
+  code{font-family:var(--mono);font-size:.85em;background:var(--bg-sunk);border:1px solid var(--rule);border-radius:4px;padding:.08em .34em}
+  pre{font-family:var(--mono);font-size:12.5px;line-height:1.55;background:var(--bg-sunk);border:1px solid var(--rule);border-left:3px solid var(--rule-strong);padding:13px 15px;overflow-x:auto;margin:15px 0;white-space:pre-wrap;overflow-wrap:anywhere}
+  pre.ev{border-left-color:var(--high)}
+  .tablewrap{overflow-x:auto;margin:18px 0 8px}
+  table{border-collapse:collapse;width:100%;min-width:600px;font-size:14.5px}
+  th{text-align:left;font-family:var(--body);font-weight:700;font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--fg-faint);border-bottom:1px solid var(--rule-strong);padding:0 14px 8px 0}
+  td{padding:10px 14px 10px 0;border-bottom:1px solid var(--rule);vertical-align:top}
+  td:first-child{font-family:var(--mono);font-size:12.5px;white-space:nowrap;color:var(--fg-faint)}
+  tbody tr:last-child td{border-bottom:none}
+  .tag{display:inline-block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:2px 6px;border-radius:3px;white-space:nowrap}
+  .tag.crit{color:var(--crit);background:var(--crit-bg)}
+  .tag.high{color:var(--high);background:var(--high-bg)}
+  .tag.med{color:var(--med);background:var(--med-bg)}
+  .tag.low{color:var(--low);background:var(--low-bg)}
+  .tag.good{color:var(--good);background:var(--good-bg)}
+  .finding{display:grid;grid-template-columns:96px 1fr;gap:0 20px;padding:18px 0 18px 16px;border-left:3px solid var(--rule-strong);margin:20px 0}
+  .finding.crit{border-left-color:var(--crit)}
+  .finding.high{border-left-color:var(--high)}
+  .finding.med{border-left-color:var(--med)}
+  .finding.low{border-left-color:var(--low)}
+  .finding.good{border-left-color:var(--good)}
+  .f-id{font-family:var(--mono);font-size:12px;color:var(--fg-faint);padding-top:3px}
+  .f-claim{font-family:var(--display);font-weight:700;font-size:1.05rem;letter-spacing:-.012em;line-height:1.3;margin:0 0 8px;max-width:60ch}
+  .f-body p{font-size:15px;margin-bottom:10px}
+  .f-body>*:last-child{margin-bottom:0}
+  .fix{font-size:14.5px;color:var(--fg-muted);border-top:1px dashed var(--rule-strong);padding-top:9px;margin-top:12px;max-width:62ch}
+  .fix b{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--accent);display:block;margin-bottom:3px}
+  @media(max-width:620px){.finding{grid-template-columns:1fr;gap:6px}.f-id{padding-top:0}}
+  .callout{background:var(--bg-raised);border:1px solid var(--rule);border-left:3px solid var(--accent);padding:18px 20px;margin:24px 0;max-width:var(--measure);font-size:15px}
+  .callout.alarm{border-left-color:var(--crit)}
+  .callout p:last-child{margin-bottom:0}
+  .callout .t{font-family:var(--mono);font-size:10.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--accent);display:block;margin-bottom:6px}
+  .callout.alarm .t{color:var(--crit)}
+  .prio{list-style:none;padding:0;margin:20px 0;max-width:none;counter-reset:p}
+  .prio li{display:grid;grid-template-columns:40px 1fr;gap:18px;padding:15px 0;border-bottom:1px solid var(--rule);margin:0}
+  .prio li::before{counter-increment:p;content:counter(p,decimal-leading-zero);font-family:var(--mono);font-size:13px;color:var(--fg-faint);padding-top:2px}
+  .prio h5{font-family:var(--display);font-weight:700;font-size:1rem;margin:0 0 4px;letter-spacing:-.01em}
+  .prio p{font-size:14.5px;color:var(--fg-muted);margin:0}
+  .prio .refs{font-family:var(--mono);font-size:11.5px;color:var(--fg-faint);margin-top:5px}
+  footer{margin-top:74px;padding-top:22px;border-top:2px solid var(--fg);font-size:13.5px;color:var(--fg-faint)}
+  :focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+
+<div class="shell">
+
+<header class="masthead">
+  <p class="kicker">Third review · 11 September 2026 · qonvo.org on 159.195.253.176</p>
+  <h1>Black box, <span class="em">real box.</span></h1>
+  <p class="standfirst">First audit with no server access: the product moved to a VPS, so everything here was found from
+  outside, the way a customer or an attacker would. Visual and UX pass, an API and error-handling battery, then the
+  features. Seventeen findings, and one incident I caused.</p>
+  <div class="score">
+    <div class="c"><b>1</b><span>Critical</span></div>
+    <div class="h"><b>5</b><span>High</span></div>
+    <div class="m"><b>9</b><span>Medium</span></div>
+    <div><b>5</b><span>Low</span></div>
+    <div class="g"><b>33</b><span>Verified working</span></div>
+  </div>
+</header>
+
+<section id="incident">
+  <div class="sec-head"><span class="sec-num">01</span><h2>Incident, first</h2></div>
+
+  <div class="callout alarm">
+    <span class="t">What happened</span>
+    <p>Probing <code>PUT /api/config</code> with <code>{"field": null}</code>, expecting a rejection. It applied. In
+    about one second the live tenant lost <code>business_name</code>, <code>persona</code>, <code>tone</code>,
+    <code>custom_instructions</code> (1,821 characters of grounding rules) and <code>payment_details</code> — while the
+    rep was switched on and answering customers.</p>
+    <p>Restored from values captured in an earlier session, verified field by field. Exposure was roughly forty seconds.
+    Any customer who wrote in that window got a reply from a rep with no business name, no persona and no rules.</p>
+  </div>
+
+  <p>My mistake was assuming a rejection. The reason it is finding <strong>C1</strong> rather than a footnote is that
+  nothing in the system resisted, warned, recorded what was lost, or offered a way back — and the same request is one
+  serialiser default away from arriving by accident.</p>
+</section>
+
+<section id="findings">
+  <div class="sec-head"><span class="sec-num">02</span><h2>Backend, API and error handling</h2></div>
+
+  <p class="lede">A battery of roughly sixty requests: authentication edge cases, malformed and hostile input, unicode,
+  payload size, HTTP semantics, pagination bounds, CORS, cross-tenant access, concurrency and rate limits. Most of it
+  came back correct. What did not is below.</p>
+
+  <div class="finding crit">
+    <div class="f-id">C1<br><span class="tag crit">Critical</span></div>
+    <div class="f-body">
+      <p class="f-claim">One PUT erases a tenant's entire AI configuration, returns 200, and leaves no way back.</p>
+      <p>Nine fields, three different behaviours for the same operation:</p>
+      <pre class="ev">{"persona":null}              -> 200  applied, field erased
+{"tone":null}                 -> 200  applied, field erased
+{"custom_instructions":null}  -> 200  applied, field erased
+{"business_name":null}        -> 200  applied, field erased
+{"payment_details":null}      -> 200  applied, field erased
+{"reply_language":null}       -> 200  applied
+{"voice_reply_mode":null}     -> 200  applied
+{"primary_language":null}     -> 500  Internal Server Error
+{"timezone":null}             -> 500  Internal Server Error</pre>
+      <p>Three things make this worse than a validation gap.</p>
+      <p><strong>Null is what "unset" looks like on the wire.</strong> Most JSON serialisers, most form libraries and
+      most typed clients emit <code>null</code> for an absent optional. A partner integration, a future mobile client
+      or a retry of a partially-filled form erases the business's rules and is told it succeeded.</p>
+      <p><strong>Unknown fields are accepted silently.</strong> <code>{"totally_unknown_field":"x"}</code> returns
+      <code>200</code> with the config body. So a misspelled field name reports success and changes nothing, while a
+      correct one reports success and destroys everything. The caller cannot distinguish them.</p>
+      <p><strong>The audit log records it and cannot help.</strong> All five writes appear, correctly attributed and
+      timestamped — as <code>config_updated</code>, with no field list and no before-and-after. You can see that
+      something erased the tenant's brain and you cannot see what, or restore it.</p>
+      <p class="fix"><b>Fix</b>Reject <code>null</code> on a partial update, or require an explicit sentinel to clear a
+      field. Set <code>extra="forbid"</code> so a typo is a 422. Handle the two crashers. Record changed field names in
+      the audit row. And give the tenant's configuration a history with restore — it is the most valuable thing in the
+      account and it is the only thing with no undo.</p>
+    </div>
+  </div>
+
+  <div class="finding high">
+    <div class="f-id">H1<br><span class="tag high">High</span></div>
+    <div class="f-body">
+      <p class="f-claim">The NUL-byte bug is not fixed. It moved from a silent crash to a 500.</p>
+      <pre class="ev">POST /api/knowledge/sources
+{"type":"manual","title":"QA nul","content":"before\x00after"}
+-> 500 Internal Server Error</pre>
+      <p>Last round this arrived as a worker crash that left a PDF stuck on "Processing" forever. The same unsanitised
+      byte now reaches the database through the API boundary instead. Nothing strips <code>\x00</code> anywhere on the
+      path, so any text containing one — and PDF extraction produces them routinely — still fails, just louder.</p>
+      <p class="fix"><b>Fix</b>Strip control characters at the model validator, once, so every entry point inherits it.</p>
+    </div>
+  </div>
+
+  <div class="finding high">
+    <div class="f-id">H2<br><span class="tag high">High</span></div>
+    <div class="f-body">
+      <p class="f-claim">A double-click on "Send invite" breaks the seat entitlement.</p>
+      <p>Two identical invitations fired concurrently. Both returned <code>201</code>. The plan allows two seats:</p>
+      <pre class="ev">seats: used 3 of 2 | state: over | remaining: 0
+third invite -> 402 "No seats left on your plan."</pre>
+      <p>The check is read-then-write with no lock and no unique constraint, so the window between counting and
+      inserting admits an extra seat. The gate then correctly refuses the next one, which caps the damage at one seat
+      per race — but on a fifteen-seat plan an impatient user can repeat it, and this is exactly the shape a double
+      submit takes.</p>
+      <p class="fix"><b>Fix</b>A unique index on (tenant, email, pending) and the count inside the transaction.</p>
+    </div>
+  </div>
+
+  <div class="finding med">
+    <div class="f-id">M1<br><span class="tag med">Medium</span></div>
+    <div class="f-body">
+      <p class="f-claim">An 8 MB request body is fully read and parsed before being rejected.</p>
+      <p>The 50,000-character cap is enforced by a field validator, which runs after the body is buffered and
+      deserialised. The rejection is correct; the work done to reach it is not bounded. There is no request-size limit
+      at the proxy or the app.</p>
+      <p class="fix"><b>Fix</b>A body-size limit in Caddy, well above any legitimate request and well below what makes
+      memory interesting.</p>
+    </div>
+  </div>
+
+  <div class="finding med">
+    <div class="f-id">M2<br><span class="tag med">Medium</span></div>
+    <div class="f-body">
+      <p class="f-claim">A knowledge source can be created with an empty title.</p>
+      <p><code>{"type":"manual","title":"","content":"x"}</code> returns <code>201</code>. <code>content</code> has a
+      length rule and <code>title</code> has only "required", so an empty string passes and the sources table renders a
+      blank row that cannot be identified.</p>
+    </div>
+  </div>
+
+  <div class="finding low">
+    <div class="f-id">L1<br><span class="tag low">Low</span></div>
+    <div class="f-body">
+      <p class="f-claim">Three small perimeter details.</p>
+      <p><code>server: uvicorn</code> on every API response names the software and rough version class for free.
+      A <code>429</code> carries no <code>Retry-After</code>, so a well-behaved client has to guess. And the public
+      landing page is served <code>cache-control: private, no-cache, no-store</code> while setting two auth cookies for
+      anonymous visitors — the marketing page cannot be cached by anything, and it is the page that most wants to be.</p>
+    </div>
+  </div>
+
+  <h4>What the battery confirmed is correct</h4>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Probe</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td>no / malformed / empty bearer</td><td><code>401</code> in all three shapes</td></tr>
+      <tr><td>wrong scheme, token in query string</td><td><code>401</code> — no fallback to query auth</td></tr>
+      <tr><td>signature stripped, <code>alg=none</code> forgery</td><td><code>401</code> — algorithms pinned</td></tr>
+      <tr><td>admin route with an owner token</td><td><code>403 qonvo_admin required</code></td></tr>
+      <tr><td>another tenant's session status and QR</td><td><code>404 session not found</code> — not even existence leaks</td></tr>
+      <tr><td><code>X-Tenant-Id</code> override header</td><td>ignored; own tenant returned</td></tr>
+      <tr><td>truncated JSON, wrong content-type, wrong types</td><td><code>422</code> with a located, readable message</td></tr>
+      <tr><td>invalid UUID in path</td><td><code>422</code>, not a 500</td></tr>
+      <tr><td>valid UUID, no such row</td><td><code>404 conversation not found</code></td></tr>
+      <tr><td>wrong method</td><td><code>405</code> with an <code>Allow</code> header</td></tr>
+      <tr><td>limit −1 / 0 / 999999 / "abc", offset −5</td><td><code>422</code>; ceiling enforced at 200</td></tr>
+      <tr><td>50k and 8 MB content</td><td><code>422</code> naming the limit and the actual size</td></tr>
+      <tr><td>emoji, Arabic script, CJK</td><td><code>201</code>, stored and rendered intact</td></tr>
+      <tr><td>stored <code>&lt;script&gt;</code> and <code>onerror</code></td><td>escaped on render; no script node, no alert</td></tr>
+      <tr><td>SQL-shaped content</td><td>stored as data; parameterisation holds</td></tr>
+      <tr><td>CORS preflight from a foreign origin</td><td><code>400</code>, no <code>allow-origin</code> header</td></tr>
+      <tr><td>11 failed logins</td><td><code>429</code> with a clear message</td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="visual">
+  <div class="sec-head"><span class="sec-num">03</span><h2>Visual and UX</h2></div>
+
+  <p class="lede">The interface has moved a long way. Grouped navigation, a real design system with enforced tokens,
+  honest empty states, and copy that reads like a person wrote it for a salon owner rather than for a developer. Two
+  things are wrong, one of them badly.</p>
+
+  <div class="finding high">
+    <div class="f-id">H3<br><span class="tag high">High</span></div>
+    <div class="f-body">
+      <p class="f-claim">Three pages scroll sideways on a phone, and the header controls scroll off with them.</p>
+      <p>At a 390-pixel viewport:</p>
+      <pre class="ev">/knowledge  document width 922px   (2.4x the screen)
+/billing    document width 514px
+/analytics  document width 436px
+/inbox      document width 390px   correct</pre>
+      <p>On Knowledge the rep on/off switch, the notification bell and the avatar are all off-screen to the right, the
+      drop zone text is cut mid-word, and every usage meter runs past the edge. The page is unusable without panning.</p>
+      <p>The cause is one thing in three places. The tables <em>do</em> sit in <code>overflow-x: auto</code> wrappers —
+      that part is right. But the flex column above them (<code>flex flex-1 flex-col</code> → <code>main</code>) has no
+      <code>min-w-0</code>, so under flexbox's <code>min-width: auto</code> the scroll container is never constrained to
+      the viewport and simply grows to its content. The wrapper is correct and inert.</p>
+      <pre class="ev">table  min-width: 760px, actual 888px
+parent overflow-x: auto  but itself 888px wide
+grandparent overflow: hidden at 890px, inside an unbounded flex column</pre>
+      <p>This is the same family as the inbox height bug from the first review: a container that cannot do its job
+      because an ancestor never gave it a size.</p>
+      <p class="fix"><b>Fix</b><code>min-w-0</code> on the flex column and on <code>main</code>. One change, three
+      pages, and it inoculates every future table.</p>
+    </div>
+  </div>
+
+  <div class="finding high">
+    <div class="f-id">H4<br><span class="tag high">High</span></div>
+    <div class="f-body">
+      <p class="f-claim">Two people editing the same settings silently overwrite each other.</p>
+      <p>Two simultaneous <code>PUT /api/config</code> with different values:</p>
+      <pre class="ev">tone before: "Warm, Concise, Direct"
+PUT {"tone":"RACE-AAA"}  -> 200
+PUT {"tone":"RACE-BBB"}  -> 200      (both accepted)
+tone after : "RACE-BBB"             last write wins, silently</pre>
+      <p>There is no <code>ETag</code>, no <code>If-Match</code> and no version column, so the API cannot tell a fresh
+      edit from one made against a stale copy. An owner and a staff member both on Behavior, or one person with the page
+      open in two tabs, and one of them loses their work with a success message.</p>
+      <p>It is the same soft spot as <strong>C1</strong>: this endpoint accepts whatever it is handed and reports
+      success. Configuration is the tenant's most valuable asset and it has neither concurrency control nor history.</p>
+      <p class="fix"><b>Fix</b>Return a version with the config and require it on write, rejecting a stale one with a
+      <code>409</code>. The same version makes an undo possible.</p>
+    </div>
+  </div>
+
+  <div class="finding good">
+    <div class="f-id">R1<br><span class="tag good">Retraction</span></div>
+    <div class="f-body">
+      <p class="f-claim">I reported notifications as broken. They are not. They are one of the better parts of the
+      product.</p>
+      <p>My first measurement read a <code>read_at</code> field that does not exist — the field is <code>read</code> —
+      so every row looked unread and the badge looked stuck. Measured correctly:</p>
+      <pre class="ev">before opening the panel : 4 unread, 2 of them stale
+header badge            : 2          matches unread-and-not-stale exactly
+after opening the panel : 0 unread   the panel marks them read
+POST /notifications/{id}/read -> 200, row flips to read: true</pre>
+      <p>The badge is not a raw unread count: it deliberately excludes notices the system has since invalidated. And the
+      invalidation is the part worth calling out, because it is the fix recommended in the previous review, implemented
+      more thoroughly than asked. The two stale voice notices are struck through in the panel and carry their own
+      explanation:</p>
+      <pre>"No longer applies. Voice was re-measured after this was sent: your rep
+ has used 3 of 5 voice minutes this month (172 of 300 seconds), so voice
+ replies were never paused and have kept working."</pre>
+      <p>A product that goes back and corrects something it told you, in the place it told you, is rare. I was wrong
+      about this one.</p>
+    </div>
+  </div>
+
+  <h3>What is working, as a piece of product design</h3>
+
+  <div class="finding good">
+    <div class="f-id">G1<br><span class="tag good">Excellent</span></div>
+    <div class="f-body">
+      <p class="f-claim">"Improve with AI" is the best thing in the product.</p>
+      <p>It states what it looks for <em>before</em> you press it — rules that fight your settings, rules that switch
+      off a connected tool, promises made on your behalf, vague duplicates you pay for on every reply. It says plainly
+      that it costs one call to your own provider and only runs on press. It renders a side-by-side diff, explains each
+      change with a reason, shows the resulting character count, and needs two deliberate actions to apply.</p>
+      <p>Run against the live instructions it found, unprompted, the exact three defects diagnosed by hand in the
+      previous review: the diary lines that contradict a connected Google Calendar, the language rules that duplicate
+      and override the Reply language setting, and the "a representative will call within a few hours" promise. A
+      one-off fix became a feature that keeps finding the problem.</p>
+    </div>
+  </div>
+
+  <div class="finding good">
+    <div class="f-id">G2<br><span class="tag good">Good</span></div>
+    <div class="f-body">
+      <p class="f-claim">The interface now explains itself where it used to just work.</p>
+      <p>Skills marks a capability whose own instructions contradict it, quotes the offending line, links to the fix,
+      and adds "this is a keyword check, not a reading of your instructions, so it can be wrong" — a product admitting
+      the limits of its own inference. The Devices card says why there is no device list rather than showing an empty
+      one. Billing explains that the usage reset date and the renewal date are different things and why. The knowledge
+      caps say what happens when each one fills. Almost none of this existed two reviews ago.</p>
+    </div>
+  </div>
+
+  <h4>Smaller UX observations</h4>
+  <ul>
+    <li><strong>Analytics contradicts itself at a glance.</strong> "NEEDS HUMAN NOW 0" sits beside "OPEN HANDOFFS 1".
+    Both are true and they read as a bug.</li>
+    <li><strong>Greetings still dominate knowledge gaps.</strong> "Hi ×2", "Hello how are you doing?" and "Hi Bye Hi"
+    are three of the top five, under a prominent "Answer these in Knowledge" call to action. The product is inviting
+    the owner to write knowledge articles about the word hello.</li>
+    <li><strong>The inbox empty state is 640 pixels of dashed box.</strong> Opening the most recent conversation by
+    default would be more useful than asking the reader to pick one.</li>
+    <li><strong>Both inbox panes have identical weight</strong> — same fill, border and radius — so the transcript,
+    which is the object of the screen, reads as equal to the list.</li>
+    <li><strong>"Link another number" floats outside its card</strong> with no button affordance, reading as unstyled
+    text.</li>
+    <li><strong>Casing drifts in the admin tables</strong>: status chips are lowercase (<code>active</code>) beside
+    capitalised plans (<code>Trial</code>, <code>Starter</code>).</li>
+  </ul>
+</section>
+
+<section id="functional">
+  <div class="sec-head"><span class="sec-num">04</span><h2>Features and the ops console</h2></div>
+
+  <div class="finding med">
+    <div class="f-id">M3<br><span class="tag med">Medium</span></div>
+    <div class="f-body">
+      <p class="f-claim">System Health forgets everything on every deploy.</p>
+      <pre class="ev">MESSAGES PROCESSED 5 · REPLIES SENT 3 · AVG TURN LATENCY 4.88s
+Provider errors 0 · Job failures 0 · Webhook 401s 0 · Skill invocations: none</pre>
+      <p>Those are process-lifetime counters, and the VPS migration restarted everything, so the page reports a system
+      that has barely run. Two days ago the same page showed six provider errors and two job failures — the two dropped
+      customer messages from the last review. That history is gone, and now that deploys are automated on every release
+      tag it will be gone regularly. A page called System Health that cannot show yesterday is a page you cannot
+      investigate with.</p>
+      <p class="fix"><b>Fix</b>Label them as since-restart and show the restart time, then point the real questions at
+      the Prometheus series that already exists behind them.</p>
+    </div>
+  </div>
+
+  <div class="finding med">
+    <div class="f-id">M4<br><span class="tag med">Medium</span></div>
+    <div class="f-body">
+      <p class="f-claim">Admin two-factor shipped, and the admin account has not enrolled.</p>
+      <p>The feature is built and enrolls by QR. The account that can impersonate any owner, delete any tenant and read
+      the whole fleet signed in today with a password alone, from the public internet, with no prompt. A control nobody
+      turned on is not a control.</p>
+      <p class="fix"><b>Fix</b>Enrol now, then require it for the <code>qonvo_admin</code> role rather than offering
+      it.</p>
+    </div>
+  </div>
+
+  <div class="finding med">
+    <div class="f-id">M5<br><span class="tag med">Medium</span></div>
+    <div class="f-body">
+      <p class="f-claim">A customer's number has been down for three days, and the alerting that exists does not reach
+      you.</p>
+      <p>Fleet Health has shown <code>Husain bh Ezzy — UNREACHABLE (stored: FAILED)</code> since the first review. The
+      good news is that session alerts now exist: this tenant's own notification list contains "Your WhatsApp number
+      stopped replying" and "Your WhatsApp number is back online". So the owner is told, in the app.</p>
+      <p>What is missing is the operator's half. Nothing emails, nothing pages, and the admin console has no
+      notification surface of its own — you learn about a dead customer by choosing to look. Three days is the
+      measurement.</p>
+      <p class="fix"><b>Fix</b>Send the owner an email as well as an in-app notice, and give the console a digest of
+      anything unreachable for more than an hour.</p>
+    </div>
+  </div>
+
+  <div class="finding low">
+    <div class="f-id">L2<br><span class="tag low">Low</span></div>
+    <div class="f-body">
+      <p class="f-claim">The documented knowledge source type no longer exists.</p>
+      <p><code>docs/FEATURES.md</code> describes <code>type: "text"</code> and <code>type: "url"</code> mapping onto
+      <code>website</code>. The API now accepts only <code>manual</code>, <code>file</code>, <code>url</code>, and a
+      <code>text</code> request 422s. Harmless internally, and it is the first thing an integrator would hit.</p>
+    </div>
+  </div>
+
+  <h3>The ops console, rebuilt</h3>
+
+  <p>Almost every finding from the previous review has landed, and the result is a genuinely operable console rather
+  than a set of tables.</p>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Was</th><th>Now</th></tr></thead>
+    <tbody>
+      <tr><td>A1</td><td>Fleet shows only the control that fits the state — <em>Start</em> on the failed session, <em>Restart</em> on the working one. Logout is gone from the row. Sorted worst first</td></tr>
+      <tr><td>A2</td><td>A full audit reader with seven filters, relative and absolute timestamps, actor with role, and coverage of owners' own actions, not just the console's</td></tr>
+      <tr><td>A3</td><td>Counters live in a collapsed "Platform totals" disclosure instead of leading, so they cannot go stale in front of you</td></tr>
+      <tr><td>A4</td><td>Plan, trial and impersonation controls are in the interface</td></tr>
+      <tr><td>A5</td><td>Search by business or owner email, a status filter, a sort indicator and paging on both tenants and fleet</td></tr>
+      <tr><td>A7</td><td>Dates read <code>8 Sept 2026</code></td></tr>
+      <tr><td>new</td><td>An environment banner: <em>Production · api.qonvo.org · Actions here are irreversible and attributed to you</em></td></tr>
+      <tr><td>new</td><td>Exceptions first: "1 number is not answering" and "2 of 3 businesses have no working number", each linking to the screen that fixes it. That second line is the activation funnel, which was the one number I asked for</td></tr>
+      <tr><td>new</td><td>Fleet distinguishes the live probe from the stored state (<code>UNREACHABLE / stored: FAILED</code>)</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <h4>Still missing from the console</h4>
+  <ul>
+    <li><strong>Per-tenant conversation access.</strong> "What did the bot say to my customer" still has no answer short
+    of impersonation.</li>
+    <li><strong>Per-tenant billing.</strong> Subscription state, invoices and failed payments are invisible on the
+    operator side.</li>
+    <li><strong>Error detail.</strong> Provider errors and job failures are counts. Which tenant, which conversation and
+    what the error was still live only in container logs — and now those logs are on a box you have to SSH into.</li>
+  </ul>
+</section>
+
+<section id="verified">
+  <div class="sec-head"><span class="sec-num">05</span><h2>Verified fixed since the last review</h2></div>
+
+  <p class="lede">Checked by using the product from outside, not by reading the diff.</p>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Ref</th><th>What changed</th></tr></thead>
+    <tbody>
+      <tr><td>infra</td><td>Only 22, 80 and 443 reachable. Postgres, Redis, WAHA, MinIO, Prometheus and Grafana all closed from outside</td></tr>
+      <tr><td>infra</td><td>TLS 1.3, Let's Encrypt, HTTP/3 advertised, HSTS two years with subdomains</td></tr>
+      <tr><td>infra</td><td>Nonce-based CSP on the dashboard, <code>default-src 'none'</code> on the API, COOP and CORP set</td></tr>
+      <tr><td>0.11.2</td><td><code>dev.qonvo.org</code> answers <code>x-robots-tag: noindex, nofollow</code></td></tr>
+      <tr><td>E1</td><td>The prompt no longer manufactures callbacks, and "Improve with AI" removes them from an owner's own instructions</td></tr>
+      <tr><td>E4</td><td>An instruction that contradicts a connected integration is surfaced on Skills with the line quoted</td></tr>
+      <tr><td>F8</td><td><code>last_ingested</code> is written — sources read "just now" instead of "Never"</td></tr>
+      <tr><td>F10</td><td>The analytics chart plots empty days, so a gap looks like a gap</td></tr>
+      <tr><td>V5-V7</td><td>Account has a name field, a 12-character minimum, two-factor enrolment, sign out everywhere, a real support address and a stated deletion path</td></tr>
+      <tr><td>X8</td><td>Owner actions are audited, not only admin ones</td></tr>
+      <tr><td>A1-A7</td><td>The ops console, as above</td></tr>
+      <tr><td>new</td><td>Session down and recovery notifications reach the owner</td></tr>
+      <tr><td>new</td><td>Email verification is enforced; this account reads <code>email_verified: true</code></td></tr>
+    </tbody>
+  </table>
+  </div>
+</section>
+
+<section id="order">
+  <div class="sec-head"><span class="sec-num">06</span><h2>Fix order</h2></div>
+
+  <ol class="prio">
+    <li><div><h5>Make the config API refuse to destroy things</h5>
+      <p>Reject <code>null</code>, forbid unknown fields, handle the two crashers, record changed fields in the audit
+      row. Then give configuration a history with restore.</p><p class="refs">C1</p></div></li>
+    <li><div><h5>Strip NUL bytes once, at the model</h5>
+      <p>Two reviews, two symptoms, one unhandled byte.</p><p class="refs">H1</p></div></li>
+    <li><div><h5>Add <code>min-w-0</code> to the app shell's flex column</h5>
+      <p>One line. Fixes Knowledge, Billing and Analytics on every phone, and stops the next table doing it again.</p>
+      <p class="refs">H3</p></div></li>
+    <li><div><h5>Enrol the admin account in two-factor</h5>
+      <p>The feature exists. The account that can impersonate every customer is a password away from the internet.</p>
+      <p class="refs">M4</p></div></li>
+    <li><div><h5>Put a version on the config, and reject stale writes</h5>
+      <p>Stops two people overwriting each other, and the same version is what makes an undo possible for C1.</p>
+      <p class="refs">H4 · C1</p></div></li>
+    <li><div><h5>Make the rep switch and the invite button safe to press twice</h5>
+      <p>A losing activation write leaves the rep off while the screen says on, which is a silent outage. A losing
+      invite write breaks the seat cap. Same shape, two places.</p>
+      <p class="refs">H5 · H2</p></div></li>
+    <li><div><h5>Show the server's error in the add-website dialog</h5>
+      <p>The message is already written and already correct. The dialog throws it away and shows nothing.</p>
+      <p class="refs">M7</p></div></li>
+    <li><div><h5>Close the invite race</h5>
+      <p>A unique index and the count inside the transaction.</p><p class="refs">H2</p></div></li>
+    <li><div><h5>Email the owner when their number dies, and digest it to the console</h5>
+      <p>Three days is how long the current arrangement takes to notice.</p><p class="refs">M5</p></div></li>
+    <li><div><h5>Label the health counters, and bound the request body</h5>
+      <p>Since-restart is fine if it says so. An 8 MB body should not be parsed to be refused.</p>
+      <p class="refs">M3 · M1</p></div></li>
+    <li><div><h5>Stop logging greetings as knowledge gaps</h5>
+      <p>Three of the top five, under a call to action telling the owner to write articles about them.</p></div></li>
+  </ol>
+</section>
+
+<section id="e2e">
+  <div class="sec-head"><span class="sec-num">07</span><h2>End to end, both environments</h2></div>
+
+  <p class="lede">Staging runs locally, so the destructive half went there: signup, verification, the authorization
+  matrix, the pipeline gates and a signed webhook straight into the ingress. Production took the reversible half. Four
+  more defects, and a long list of things that turned out to work properly.</p>
+
+  <h3>New defects</h3>
+
+  <div class="finding high">
+    <div class="f-id">H5<br><span class="tag high">High</span></div>
+    <div class="f-body">
+      <p class="f-claim">A double-tap on the rep switch can leave the rep off while the screen says it is on.</p>
+      <pre class="ev">PUT /api/activation {"rep_active": false}   -> 200
+PUT /api/activation {"rep_active": true}    -> 200   (fired together)
+GET /api/activation                         -> rep_active: false</pre>
+      <p>Same last-write-wins as the config endpoint, but the consequence is worse: the losing write is the one the
+      interface believes it made, so the toggle reads <em>Rep on</em> while the rep is off and every customer message
+      goes unanswered. Nothing reconciles the two, and the failure is invisible until somebody notices the silence.</p>
+      <p class="fix"><b>Fix</b>Disable the control while a change is in flight, and have the response drive the
+      displayed state rather than the optimistic value.</p>
+    </div>
+  </div>
+
+  <div class="finding med">
+    <div class="f-id">M6<br><span class="tag med">Medium</span></div>
+    <div class="f-body">
+      <p class="f-claim">WhatsApp sessions can be created without limit and cannot be deleted at all.</p>
+      <p>Eight rapid creates, eight <code>201</code>s, eleven sessions on one tenant. Then:</p>
+      <pre class="ev">DELETE /api/sessions/{name}  -> 404   (the route does not exist)
+openapi.json session routes  : GET,POST /api/sessions
+                               POST .../logout, .../restart
+                               GET  .../qr, .../status</pre>
+      <p>There is <code>logout</code> and <code>restart</code>, and no removal. The plan entitlements name messages,
+      voice, seats, sources, characters and bytes, and say nothing about numbers, so nothing bounds this. Creation only
+      writes a row rather than provisioning an engine immediately, which keeps it out of the critical band, but the
+      WhatsApp page will accumulate rows a tenant can never tidy — and multiple numbers is on your own price list as a
+      paid feature.</p>
+      <p class="fix"><b>Fix</b>An entitlement for numbers, and a delete that logs out and removes the row.</p>
+    </div>
+  </div>
+
+  <div class="finding med">
+    <div class="f-id">M7<br><span class="tag med">Medium</span></div>
+    <div class="f-body">
+      <p class="f-claim">The add-website dialog throws away a good error and shows nothing.</p>
+      <p>Entering a private address is correctly refused by the API, with a message written for a human:</p>
+      <pre class="ev">POST /api/knowledge/sources {"type":"url","url":"http://169.254.169.254/..."}
+-> 400 {"detail":"that address points inside a private network,
+         so it cannot be reached"}</pre>
+      <p>In the interface the dialog simply stays open. No message, no inline error, no toast. The owner presses "Add
+      website", nothing happens, and the reason the server took the trouble to explain is discarded.</p>
+      <p class="fix"><b>Fix</b>Render <code>detail</code> in the dialog. The hard half is already done.</p>
+    </div>
+  </div>
+
+  <div class="finding med">
+    <div class="f-id">M8<br><span class="tag med">Medium</span></div>
+    <div class="f-body">
+      <p class="f-claim"><code>seed_dev.py</code> prints a password it did not set.</p>
+      <p>The script creates the dev owner and admin only when they are missing, then unconditionally prints
+      <code>OWNER_PASSWORD=dev-password-123</code>. On an existing user it reports a credential that does not work —
+      which is exactly how it was found, by not being able to log in with it. <code>CLAUDE.md</code> documents
+      re-running it as the recovery route for a locked-out admin, and that route does nothing.</p>
+      <p class="fix"><b>Fix</b>Reset the hash on an existing user, or print what actually happened. Then correct the
+      runbook.</p>
+    </div>
+  </div>
+
+  <div class="finding low">
+    <div class="f-id">L3<br><span class="tag low">Low</span></div>
+    <div class="f-body">
+      <p class="f-claim">Three contract details.</p>
+      <p><code>POST /api/billing/change-plan</code> answers <code>200 {"ok": false, "reason": "no_subscription"}</code>.
+      A client checking the status code believes the plan changed. Same for <code>resume</code>.</p>
+      <p><code>POST /api/billing/cancel</code> requires a body and rejects an empty call with
+      <code>422 {"loc": ["body"], "msg": "Field required"}</code>, which does not say which field.</p>
+      <p><strong>Staff can read <code>GET /api/billing</code></strong> — plan, status, entitlements, provider and
+      period end — while <code>/api/billing/payments</code> correctly answers <code>403</code>. One boundary, two
+      answers.</p>
+      <p><code>last_ingested</code> is written for new ingests but was never backfilled, so the two long-standing
+      sources still read <em>Never</em> while a fresh one reads <em>just now</em>.</p>
+    </div>
+  </div>
+
+  <h3>What the end-to-end run proved works</h3>
+
+  <div class="finding good">
+    <div class="f-id">G3<br><span class="tag good">Notable</span></div>
+    <div class="f-body">
+      <p class="f-claim">Email verification gates exactly the right thing.</p>
+      <pre>signup                          -> 201
+weak password                   -> 400 {"code":"weak_password",
+                                        "reasons":["Use at least 12 characters."]}
+duplicate email                 -> 409 an account with this email already exists
+
+as an UNVERIFIED owner:
+  GET /api/me, /api/config, /api/onboarding   -> 200   explore freely
+  POST /api/knowledge/sources                 -> 201   prepare freely
+  POST /api/sessions  (connect a number)      -> 403   email_unverified
+                                                       "Confirm your email address
+                                                        before connecting a number"
+verification token, second use  -> 400 invalid, already used, or expired</pre>
+      <p>A new tenant can explore and prepare, and cannot point a live WhatsApp number at the world until the address is
+      proved. That is the design the security review argued for, implemented without costing the trial anything.</p>
+    </div>
+  </div>
+
+  <div class="finding good">
+    <div class="f-id">G4<br><span class="tag good">Notable</span></div>
+    <div class="f-body">
+      <p class="f-claim">The staff role now means something. Nineteen of twenty probes correct.</p>
+      <pre>WRITE config / payment_details   403 owner role required
+invite a teammate                403
+cancel subscription              403
+change plan                      403
+open billing portal              403
+export all tenant data           403
+create a WhatsApp session        403
+disconnect Google                403
+toggle the rep on or off         403
+admin routes                     403
+read inbox / knowledge / config / analytics / team   200  (correct)
+add knowledge                    201                       (correct)</pre>
+      <p>The critical finding from the security review — a receptionist able to rewrite the bank details the rep reads
+      out to customers — is closed. The single exception is the billing summary noted in L3.</p>
+    </div>
+  </div>
+
+  <div class="finding good">
+    <div class="f-id">G5<br><span class="tag good">Notable</span></div>
+    <div class="f-body">
+      <p class="f-claim">The ingress and its gates behave under a signed webhook.</p>
+      <pre>no signature / wrong signature   -> 401 HMAC verification failed
+
+rep paused, one inbound          -> stored (59 -> 60 messages)
+                                    outbound in the next 30s: 0
+                                    gate counter: rep_inactive 1
+
+25 messages in one burst         -> 20 stored, 5 dropped
+                                    gate counter: rate_limited 5</pre>
+      <p>Paused means received, visible and unanswered, which is what the specification asks for. The per-conversation
+      limiter drops exactly the documented overflow and the webhook still acknowledges every delivery, which is the
+      right thing to tell WhatsApp.</p>
+    </div>
+  </div>
+
+  <div class="finding good">
+    <div class="f-id">G6<br><span class="tag good">Notable</span></div>
+    <div class="f-body">
+      <p class="f-claim">Two earlier criticals are genuinely closed, and the URL guard is written for humans.</p>
+      <p>The 391 KB PDF that hung on "Processing" for the whole of the second review now ingests: <strong>ready, 8,740
+      characters, 4 passages</strong>. Note the nuance — the sanitising landed on the file path, not on the model, which
+      is why the same byte still produces a <code>500</code> through JSON (<strong>H1</strong>).</p>
+      <pre>http://169.254.169.254/latest/meta-data/  -> 400 that address points inside
+                                                 a private network, so it
+                                                 cannot be reached
+http://127.0.0.1:8000/metrics             -> 400 same
+file:///etc/passwd                        -> 400 only http and https addresses
+                                                 can be added as a website
+https://example.com                       -> 201</pre>
+      <p>Also confirmed on production: takeover and release move a conversation through
+      <code>paused_by_owner</code> and back to <code>bot_active</code>; both Google integrations test green; the
+      analytics range genuinely filters (1, 2, 3, 7 and 30 days return 6, 18, 28, 70 and 70 messages); the invoice
+      record carries number, amount, currency, status and description; inbox search and the three filters work;
+      password reset is single-use; and changing a password revokes the live token with
+      <code>invalid token: revoked</code>.</p>
+    </div>
+  </div>
+</section>
+
+<section id="coverage">
+  <div class="sec-head"><span class="sec-num">08</span><h2>How much was actually exercised</h2></div>
+
+  <p class="lede">Asked directly whether every button and flow was tested, the honest answer is no, and the seat-cap
+  race is the reason the question is a good one: it was found because that one endpoint was probed for it. Nowhere else
+  had been.</p>
+
+  <p>Counting every interactive control rendered inside <code>main</code> on the eleven owner pages:</p>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Page</th><th>Buttons</th><th>Links</th><th>Fields</th><th>Selects</th><th>Total</th></tr></thead>
+    <tbody>
+      <tr><td>business</td><td>11</td><td>0</td><td>17</td><td>1</td><td>29</td></tr>
+      <tr><td>behavior</td><td>10</td><td>0</td><td>1</td><td>4</td><td>15</td></tr>
+      <tr><td>knowledge</td><td>10</td><td>0</td><td>1</td><td>0</td><td>11</td></tr>
+      <tr><td>integrations</td><td>9</td><td>1</td><td>0</td><td>1</td><td>11</td></tr>
+      <tr><td>account</td><td>4</td><td>2</td><td>4</td><td>0</td><td>10</td></tr>
+      <tr><td>inbox</td><td>7</td><td>0</td><td>1</td><td>0</td><td>8</td></tr>
+      <tr><td>billing</td><td>6</td><td>1</td><td>1</td><td>0</td><td>8</td></tr>
+      <tr><td>analytics</td><td>3</td><td>1</td><td>0</td><td>0</td><td>4</td></tr>
+      <tr><td>team</td><td>2</td><td>0</td><td>1</td><td>1</td><td>4</td></tr>
+      <tr><td>skills</td><td>0</td><td>3</td><td>0</td><td>0</td><td>3</td></tr>
+      <tr><td>whatsapp</td><td>3</td><td>0</td><td>0</td><td>0</td><td>3</td></tr>
+      <tr><td><strong>total</strong></td><td colspan="4"></td><td><strong>106</strong></td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Roughly thirty of those 106 were actually pressed, plus the admin console. The rest were rendered, measured and
+  read, which catches layout and copy problems but not behaviour.</p>
+
+  <h4>Where the same probe was and was not run</h4>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Write path</th><th>Raced?</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td>team invitations</td><td>yes</td><td><span class="tag high">seat cap bypassed</span> 3 of 2</td></tr>
+      <tr><td>config update</td><td>yes</td><td><span class="tag high">lost update</span> last write wins</td></tr>
+      <tr><td>knowledge source delete</td><td>yes</td><td><span class="tag good">correct</span> 204 then 404</td></tr>
+      <tr><td>notification mark read</td><td>yes</td><td><span class="tag good">correct</span> idempotent</td></tr>
+      <tr><td>knowledge source create against the 50-source cap</td><td>no</td><td>needs a tenant near its limit — staging</td></tr>
+      <tr><td>knowledge chars against the 2M cap</td><td>no</td><td>same</td></tr>
+      <tr><td>plan change, cancel, resume</td><td>no</td><td>real money on a live subscription</td></tr>
+      <tr><td>activation toggle</td><td>no</td><td>would silence a live number mid-probe</td></tr>
+      <tr><td>integration connect and disconnect</td><td>no</td><td>would break a working Google grant</td></tr>
+      <tr><td>message quota and voice allowance gates</td><td>no</td><td>needs inbound traffic to race against</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Two of the four paths that were raced were defective. That is not a sample you can extrapolate from safely, and it
+  is the argument for running the remaining six on staging rather than assuming them sound.</p>
+</section>
+
+<section id="next">
+  <div class="sec-head"><span class="sec-num">09</span><h2>Not covered, and what it needs</h2></div>
+
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>Area</th><th>Blocked on</th></tr></thead>
+    <tbody>
+      <tr><td>Destructive and lifecycle paths</td><td>Staging. The console is live at <code>dev.qonvo.org</code> but there is no account; credentials are to be pulled from the staging database</td></tr>
+      <tr><td>Signup, verification, password reset</td><td>Same. Each creates or mutates an account, so it belongs off production</td></tr>
+      <tr><td>Checkout, upgrade, downgrade, cancel</td><td>A real payment or the Polar sandbox</td></tr>
+      <tr><td>Manual reply from the inbox</td><td>Permission — it sends a real WhatsApp message</td></tr>
+      <tr><td>Staff-role authorization</td><td>A staff login, to check the fixes from outside rather than from the code</td></tr>
+      <tr><td>Session recovery</td><td>Stopping and re-linking a number you are willing to rescan</td></tr>
+      <tr><td>Load and concurrency</td><td>Measured once in 0.11.2 by the team. Nothing here re-tests it, and the invite race suggests the write paths deserve their own look</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <div class="callout">
+    <span class="t">The theme, third time</span>
+    <p>The first review found missing features. The second found things that fail without telling anyone. This one
+    found something narrower and more useful: <strong>the product is now good at explaining itself and still bad at
+    protecting itself.</strong> It will tell an owner why a skill is disabled, what a meter means, which instruction
+    contradicts which integration — and it will let one malformed request erase the configuration behind all of it and
+    answer 200. The interface has grown a conscience faster than the API has grown a guard rail.</p>
+  </div>
+</section>
+
+<footer>
+  <p>Run on 11 September 2026 against qonvo.org and api.qonvo.org on 159.195.253.176, signed in as the owner of tenant
+  <code>test01</code> and as <code>admin@qonvo.dev</code>. No server access; every finding is reproducible from outside.
+  Roughly sixty API probes, eleven pages captured at three widths in both themes. Test artefacts removed: four knowledge
+  sources deleted, two invitations revoked, one AI suggestion discarded unapplied. The configuration erased during
+  probing was restored and verified field by field.</p>
+</footer>
+
+</div>
