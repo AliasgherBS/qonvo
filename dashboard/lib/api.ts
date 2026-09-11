@@ -806,6 +806,7 @@ function configFromDays(
 }
 
 interface TenantConfigDto {
+  version?: number;
   /**
    * The tenant's timezone, IANA name. Governs opening hours and bookings both.
    *
@@ -837,6 +838,12 @@ interface TenantConfigDto {
 export type VoiceReplyMode = "match" | "always" | "never";
 
 export interface TenantConfig {
+  /**
+   * The version this copy was read at (audit H4). Sent back on every write so
+   * the API can refuse one made against a stale copy with a 409, instead of
+   * silently discarding whoever saved first.
+   */
+  version: number;
   persona: string;
   businessName: string;
   primaryLanguage: string;
@@ -862,6 +869,7 @@ export interface TenantConfig {
 function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
   const bh = dto.business_hours ?? {};
   return {
+    version: dto.version ?? 1,
     persona: dto.persona ?? "",
     businessName: dto.business_name ?? "",
     primaryLanguage: dto.primary_language ?? "",
@@ -886,6 +894,7 @@ function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
 
 function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
   return {
+    version: cfg.version,
     persona: cfg.persona,
     business_name: cfg.businessName,
     primary_language: cfg.primaryLanguage,

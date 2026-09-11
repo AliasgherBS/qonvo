@@ -37,6 +37,7 @@ from fastapi import HTTPException
 def _stored(**overrides) -> SimpleNamespace:
     """A config row as it sits in the database."""
     row = SimpleNamespace(
+        version=1,
         persona="friendly",
         business_name="Glow Salon",
         primary_language="en",
