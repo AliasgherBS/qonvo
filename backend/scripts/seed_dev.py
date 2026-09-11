@@ -28,6 +28,7 @@ from sqlalchemy import select
 SLUG = sys.argv[1] if len(sys.argv) > 1 else "dev"
 DEV_OWNER_EMAIL = f"owner@{SLUG}.dev"
 DEV_OWNER_PASSWORD = "dev-password-123"
+DEV_ADMIN_PASSWORD = "dev-admin-123"
 
 
 async def main() -> None:
@@ -60,6 +61,20 @@ async def main() -> None:
             await db.flush()
 
             db.add(TenantUser(tenant_id=tenant_id, user_id=user.id, role=UserRole.owner))
+        else:
+            # Reset, rather than skip (M6 in the VPS audit). The script printed
+            # OWNER_PASSWORD unconditionally while only setting it on creation,
+            # so on an existing user it advertised a credential that did not
+            # work -- which is exactly how the bug was found, by not being able
+            # to log in with it. CLAUDE.md also documented re-running this as
+            # the recovery route for a locked-out account, and that route did
+            # nothing at all.
+            #
+            # Resetting is the honest reading of what this script is for: it
+            # exists to hand a developer working credentials.
+            user.hashed_password = hash_password(DEV_OWNER_PASSWORD)
+            user.is_active = True
+            user.email_verified = True
 
         # Qonvo staff superadmin (cross-tenant). Not tied to this tenant —
         # the impersonation flow (§9) is how they see any given tenant.
@@ -70,11 +85,17 @@ async def main() -> None:
             db.add(
                 User(
                     email="admin@qonvo.dev",
-                    hashed_password=hash_password("dev-admin-123"),
+                    hashed_password=hash_password(DEV_ADMIN_PASSWORD),
                     full_name="Qonvo Admin",
                     is_qonvo_admin=True,
                 )
             )
+        else:
+            admin.hashed_password = hash_password(DEV_ADMIN_PASSWORD)
+            admin.is_active = True
+            admin.email_verified = True
+            # Deliberately NOT clearing totp: a second factor someone enrolled
+            # is not something a seed script should quietly remove.
 
     # Minted through create_access_token, not beside it. Two hand-rolled
     # copies of that payload have drifted from it already: this script missed
@@ -96,7 +117,11 @@ async def main() -> None:
     print(f"TENANT_ID={tenant_id}")
     print(f"OWNER_EMAIL={DEV_OWNER_EMAIL}")
     print(f"OWNER_PASSWORD={DEV_OWNER_PASSWORD}")
+    print("ADMIN_EMAIL=admin@qonvo.dev")
+    print(f"ADMIN_PASSWORD={DEV_ADMIN_PASSWORD}")
     print(f"JWT={token}")
+    print("# Both passwords are reset on every run, so these always work.")
+    print("# Any enrolled second factor is left alone.")
 
 
 if __name__ == "__main__":
