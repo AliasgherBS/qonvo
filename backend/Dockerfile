@@ -25,4 +25,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 EXPOSE 8000
 
 # Default: API server. Compose overrides `command` for worker/scheduler.
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --no-server-header: uvicorn otherwise names itself and its version class on
+# every response (audit L1), which hands a scanner the CVE list for free.
+# It has to be a server flag -- uvicorn writes that header after application
+# middleware runs, so setting it in middleware only produces two of them.
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-server-header"]
