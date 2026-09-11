@@ -9,6 +9,77 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A single `PUT /api/config` could erase a tenant's entire AI configuration and
+  return 200.** `{"persona": null}` reached `setattr(row, "persona", None)`,
+  because `exclude_unset` means an explicit null is *sent* rather than absent. A
+  live tenant lost its business name, persona, tone, payment details and 1,821
+  characters of grounding rules that way, while the rep was answering customers.
+  Two of the columns are NOT NULL, so the same request crashed with a 500 there
+  instead — the same bug wearing a different face. Null is now refused on
+  content, and still clears the three fields where absence is a state someone
+  deliberately chooses (`billing_email`, `llm_provider`, `llm_model`). Send `""`
+  to blank a text field. Unknown field names are a 422 rather than a 200 with an
+  unchanged body, so a typo can no longer report success.
+
+- **The NUL byte, found twice, fixed once.** `0x00` is legal in a Python string
+  and illegal in a Postgres text column, so it survives every layer until the
+  INSERT. It first appeared as a worker crash that hung a real 391 KB PDF on
+  "Processing"; that fix landed on the file path, and the byte then arrived
+  through the JSON API instead, as a 500. Sanitising now happens at the request
+  model, which is the boundary every entry point crosses, reusing the function
+  the file path already uses so the two cannot drift. Arabic, CJK and emoji are
+  untouched.
+
+- **Three pages scrolled sideways on a phone, taking the header controls with
+  them.** `/knowledge` rendered 922px wide at a 390px viewport with the rep
+  switch, the bell and the avatar off-screen. The tables were already wrapped in
+  `overflow-x: auto`; those wrappers were correct and completely inert, because a
+  scroll container can only scroll once an ancestor has bounded it. One `min-w-0`
+  on the shell's flex column fixes Knowledge, Billing and Analytics, and
+  inoculates every future table.
+
+- **Small talk is no longer logged as a knowledge gap.** "Hello how are you
+  doing?" led the owner's report under a tile telling them to write a knowledge
+  article about it. Genuine gaps — opening hours, cancellation policy, a refund
+  complaint — were always logged correctly; only small talk was getting through.
+
+- **The "your number is back online" email is gone.** It is the one alert whose
+  own body says nothing needs doing, and the owner already has the news by the
+  more direct route of their number working again. It remains a dashboard
+  notification and a WhatsApp ping. The outage alert still emails, and still
+  fires once per outage rather than once per poll.
+
+- **A knowledge source can no longer be created with an empty title**, which
+  returned 201 and rendered a blank row nobody could identify.
+
+- **`seed_dev.py` printed a password it had not set.** It created accounts only
+  when missing, then reported `OWNER_PASSWORD` unconditionally, so on an existing
+  user it advertised a credential that did not work — and the runbook documented
+  re-running it as the recovery route for a locked-out account. It now resets both
+  accounts, prints the admin pair too, and leaves any enrolled second factor alone.
+
+### Added
+
+- **WhatsApp numbers are bounded by plan**: one on Trial, Starter and Growth, two
+  on Scale. Creation was unbounded, and each number is a WAHA session at roughly
+  22 MB, which is the RAM ceiling of the box.
+
+- **A session can finally be removed** — but only when nothing hangs off it.
+  `conversations` cascade from `whatsapp_sessions` and `messages` from
+  `conversations`, so deleting a used session would take the tenant's history with
+  it and return 204 as though nothing happened. An unused row deletes; one with
+  history returns 409 naming the conversation count and pointing at Log out.
+
+### Changed
+
+- **The interactive API docs are off in production** and work properly
+  everywhere else. `/docs` returned 200 and rendered an empty page, because
+  Swagger loads its assets from a CDN and the blanket `default-src 'none'` blocked
+  them — so production advertised an explorer that did not work. `/openapi.json`
+  goes too, since it is the part that enumerates the surface.
+
 ## [0.11.2] - 2026-09-10
 
 ### Added
