@@ -19,6 +19,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_claims, get_db, get_system_db, require_owner, require_tenant
@@ -198,7 +199,23 @@ async def create_invitation(
         expires_at=dt.datetime.now(dt.UTC) + dt.timedelta(days=INVITE_TTL_DAYS),
     )
     db.add(invite)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError as exc:
+        # uq_team_invitation_pending_email (migration 0016). The seat count above
+        # is a read followed by a write, and a second identical request can pass
+        # the same count before either inserts -- which is how a double-click on
+        # "Send invite" put three people on a two-seat plan. No care in this
+        # handler closes a window that exists because the check and the write are
+        # separate statements; only a constraint the database evaluates at write
+        # time does.
+        #
+        # 409 rather than 402: the plan is not the problem, the duplicate is.
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An invitation for that email is already pending.",
+        ) from exc
 
     business = (
         await db.execute(select(Tenant.name).where(Tenant.id == tenant_id))
