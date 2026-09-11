@@ -38,3 +38,19 @@
 2.1) knowledge gaps can be resolved by providing option to answer those question then and there so they are added as info into the knowledge so it can be referenced next time
 
 3) 
+
+3) 2FA backup codes for the admin account. Deferred deliberately on 2026-09-11, not
+forgotten. Today the only recovery from a lost authenticator is SSH into the VPS and
+`UPDATE users SET totp_enabled = false, totp_secret = NULL WHERE email = 'admin@qonvo.org'`
+-- /auth/totp/disable itself requires a valid code, so the product has no way back in.
+Interim mitigation: keep the TOTP secret in a password manager, so a lost phone is a
+re-scan rather than a lockout.
+When built: 8 single-use codes, randomly generated, shown once at enrolment, stored
+hashed like passwords. NOT a memorable value -- a backup code bypasses 2FA entirely on
+the account that can impersonate every customer, so anything guessable (a birth date,
+a phone number) makes the second factor decorative.
+
+4) The admin account is admin@qonvo.org as of 2026-09-11 (was admin@qonvo.dev).
+seed_dev.py still creates admin@qonvo.dev, which is correct: that is the dev/staging
+identity, and production's is not seeded.
+
