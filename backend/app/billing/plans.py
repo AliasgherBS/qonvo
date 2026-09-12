@@ -33,10 +33,11 @@ class Plan:
 #: ``monthly_message_quota`` is the headline number and the per-reply cost.
 #:
 #: ``monthly_voice_minutes`` is the expensive one. Voice is 54-74% of
-#: per-tenant AI cost, and one allowance covers both directions: speech-to-text
-#: is roughly 30x cheaper than text-to-speech, so the outbound leg dominates
-#: whatever a customer sends, and two numbers would be more accurate and much
-#: harder to explain.
+#: per-tenant AI cost, and the allowance meters only the outbound leg -- what
+#: the rep speaks. Speech-to-text is roughly 30x cheaper than text-to-speech,
+#: so metering inbound too spent the allowance on the half that costs almost
+#: nothing, and let a customer's long voice notes exhaust a budget the business
+#: never chose to spend. Transcription is unlimited.
 #:
 #: ``knowledge_chars`` is deliberately generous. Retrieval means only the
 #: relevant chunks ever reach a prompt, so a large corpus costs storage and a
