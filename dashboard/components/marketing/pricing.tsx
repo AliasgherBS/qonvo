@@ -40,7 +40,6 @@ type Tier = {
   cadence: string;
   pitch: string;
   lines: { value: string; detail: string }[];
-  cta: string;
   featured?: boolean;
 };
 
@@ -56,7 +55,6 @@ const TIERS: Tier[] = [
       { value: "Two people on the inbox", detail: "owner plus one" },
       { value: "One WhatsApp number", detail: "your business line, answered" },
     ],
-    cta: "Start free trial",
   },
   {
     name: "Growth",
@@ -69,7 +67,6 @@ const TIERS: Tier[] = [
       { value: "Five people on the inbox", detail: "your whole front desk" },
       { value: "Three times the knowledge", detail: "150 documents, more detail" },
     ],
-    cta: "Start free trial",
     featured: true,
   },
   {
@@ -83,7 +80,6 @@ const TIERS: Tier[] = [
       { value: "Fifteen people on the inbox", detail: "across branches" },
       { value: "Two WhatsApp numbers", detail: "run two lines from one account" },
     ],
-    cta: "Talk to us",
   },
 ];
 
@@ -162,6 +158,15 @@ export function Pricing() {
                   ))}
                 </ul>
 
+                {/* One label on all three cards, and not a per-tier string.
+                    They all go to the same place, so a tier that said
+                    something else -- Scale said "Talk to us" -- was promising
+                    a conversation and delivering a signup form.
+
+                    "Sign up" rather than "Start free trial": the trial is
+                    real and stated plainly below, but a button offering a
+                    trial under a card that says $20 a month reads as a
+                    different offer to the one priced above it. */}
                 <Link
                   href="/signup"
                   className={`${buttonClasses({
@@ -169,7 +174,7 @@ export function Pricing() {
                     variant: tier.featured ? "primary" : "outline",
                   })} mt-7 w-full justify-center`}
                 >
-                  {tier.cta}
+                  Sign up
                 </Link>
               </div>
             </Reveal>
@@ -192,8 +197,11 @@ export function Pricing() {
               <p className="font-bold">{trialHeadline}</p>
 
               <div className="mt-5 flex flex-wrap items-center gap-3">
+                {/* The line directly above this already says the days are
+                    free and no card is needed, so the button repeating it
+                    said the offer twice and the action not at all. */}
                 <Link href="/signup" className={buttonClasses({ size: "lg" })}>
-                  Start free trial
+                  Sign up
                 </Link>
                 <a
                   href={CONTACT.whatsappHref}

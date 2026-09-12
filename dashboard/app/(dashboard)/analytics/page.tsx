@@ -312,7 +312,7 @@ function withEmptyDays(daily: AnalyticsSummary["daily"]): AnalyticsSummary["dail
   const filled: AnalyticsSummary["daily"] = [];
   for (let i = 0; i < span; i += 1) {
     const day = new Date(first + i * 86_400_000).toISOString().slice(0, 10);
-    filled.push(known.get(day) ?? { day, messagesIn: 0, messagesOut: 0, cost: 0 });
+    filled.push(known.get(day) ?? { day, messagesIn: 0, messagesOut: 0 });
   }
   return filled;
 }

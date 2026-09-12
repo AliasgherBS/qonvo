@@ -7,9 +7,17 @@ to have on the analytics page. Internally the same number is vital, so it stays
 in the ops console.
 
 Nothing enforced that split, which is why it was possible in the first place.
-These are the tests that would have caught it: the figure must not be rendered
-to an owner, must still be rendered to an admin, and must still be returned by
-the API, because the decision was "stop showing it", not "stop measuring it".
+These are the tests that would have caught it: the figure must not reach an
+owner, must still be rendered to an admin, and must still be measured, because
+the decision was "stop showing it", not "stop measuring it".
+
+**Amended 2026-09-12.** That first pass only removed the tile. The API kept
+returning ``cost`` on the deliberate grounds that this endpoint is the tenant's
+own usage data rather than a secret -- which left the number one devtools panel
+away from the customer it was being kept from. Hiding a figure in the client is
+not hiding it. The rule is now "stop sending it", and the assertion below is
+inverted from what it used to be: it holds the endpoint to withholding the key
+rather than to returning it.
 
 The dashboard files are read rather than rendered. There is no JS test runner in
 this repo, and a grep of the source is enough for the question being asked --
@@ -41,6 +49,14 @@ def _code_only(source: str) -> str:
     )
 
 
+def _python_code_only(source: str) -> str:
+    """The same idea for the API module, and needed for the same reason: the
+    comment explaining why there is no cost key says the words "cost" key."""
+    return "\n".join(
+        line for line in source.splitlines() if not line.strip().startswith("#")
+    )
+
+
 def test_the_owner_page_does_not_render_the_cost():
     code = _code_only(OWNER_PAGE.read_text())
 
@@ -61,14 +77,22 @@ def test_the_admin_console_still_shows_it():
     assert "Cost" in code  # the column header
 
 
-def test_the_api_still_returns_it():
-    """Deliberate: this endpoint is the tenant's own usage data rather than a
-    secret, and totals is documented as an open dictionary of numbers, so
-    deleting a key would break clients for nothing. The fix for "the owner
-    should not see this" is not to show it."""
-    source = ANALYTICS_API.read_text()
+def test_the_api_does_not_return_it():
+    """The half of the fix that was missing.
 
-    assert '"cost": round(cost, 4)' in source
+    Only the tile was removed, so ``/api/analytics/summary`` went on serving
+    ``totals.cost`` and a ``cost`` on every day in the series. A tenant who
+    opened the network tab -- or anyone writing against the API, which is the
+    same JSON -- could read our unit cost on their own account. The figure is
+    withheld where it is produced now, not where it is displayed.
+
+    Asserted against the source rather than a live response for the reason in
+    the module docstring. Comments are stripped first, because the comment
+    recording this decision names the key it is about.
+    """
+    code = _python_code_only(ANALYTICS_API.read_text())
+
+    assert '"cost"' not in code, "a cost key is back in the analytics response"
 
 
 def test_cost_is_still_recorded_and_priced():

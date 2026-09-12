@@ -1,4 +1,4 @@
-"""Owner analytics — volume, cost, outcomes (DESIGN.md §9 analytics, §13).
+"""Owner analytics — volume, voice, outcomes (DESIGN.md §9 analytics, §13).
 
 A single ``GET /api/analytics/summary`` aggregates the data the pipeline already
 records (usage counters, conversations, handoffs, leads, bookings, orders,
@@ -66,7 +66,7 @@ async def summary(
     start_at = _midnight(start)
     prev_start_at = _midnight(prev_start)
 
-    # --- Usage: totals + a per-day series for the volume/cost chart ---
+    # --- Usage: totals + a per-day series for the volume chart ---
     usage_rows = (
         (
             await db.execute(
@@ -93,7 +93,7 @@ async def summary(
             # the half the allowance meters.
             "voice_seconds_in": r.voice_seconds_in or 0,
             "voice_seconds_out": r.voice_seconds or 0,
-            "cost": float(r.cost or 0),
+            # No "cost" key here, for the reason given against totals below.
             "tokens": r.tokens,
         }
         for r in current_rows
@@ -103,7 +103,6 @@ async def summary(
     voice_seconds_in = sum(r.voice_seconds_in or 0 for r in current_rows)
     voice_seconds_out = sum(r.voice_seconds or 0 for r in current_rows)
     tokens = sum(r.tokens for r in current_rows)
-    cost = float(sum(r.cost or 0 for r in current_rows))
     prev_messages_in = sum(r.messages_in for r in previous_rows)
     prev_messages_out = sum(r.messages_out for r in previous_rows)
 
@@ -239,18 +238,22 @@ async def summary(
             "messages_out": messages_out,
             "messages": messages_in + messages_out,
             "tokens": tokens,
-            # Still returned, deliberately no longer rendered to the owner
-            # (teardown Y3). This is our cost of goods, and printing it to the
-            # cent for somebody paying a monthly fee invites exactly one
-            # question, so the dashboard dropped the tile. It stays in the
-            # response because this endpoint is the tenant's own usage data
-            # rather than a secret, and because removing a key from a totals
-            # map that clients treat as an open dictionary of numbers is a
-            # breakage with nothing to gain: the fix for "the owner should not
-            # see this" is not to show it. The ops console reads
-            # ``usage_counters`` directly, so /admin/usage is unaffected either
-            # way.
-            "cost": round(cost, 4),
+            # No "cost" key, in totals or in the daily rows above. This is
+            # our cost of goods.
+            #
+            # Teardown Y3 removed the tile that rendered it and deliberately
+            # left the key in place, on the grounds that this endpoint is the
+            # tenant's own usage data rather than a secret and that dropping a
+            # key from an open dictionary of numbers breaks clients for
+            # nothing. That was half a fix. The page stopped printing the
+            # figure; the response did not stop carrying it, so a customer
+            # could read our margin on their own account out of devtools. Not
+            # showing something is not the same as not sending it.
+            #
+            # Still measured and still priced -- ``usage_counters.cost`` and
+            # ``compute_cost`` are what invoicing runs on, and /admin/usage
+            # reads the table directly, so the figure is intact everywhere it
+            # is ours to look at.
             "conversations": conversations,
             "leads": leads,
             "bookings": bookings,

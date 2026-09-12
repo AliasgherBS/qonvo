@@ -1428,16 +1428,17 @@ export const billing = {
 interface AnalyticsSummaryDto {
   range_days: number;
   totals: Record<string, number>;
-  daily: { day: string; messages_in: number; messages_out: number; cost: number; tokens: number }[];
+  daily: { day: string; messages_in: number; messages_out: number; tokens: number }[];
   conversation_states: Record<string, number>;
   top_gaps: { question: string; count: number }[];
 }
 
+// No cost here. The endpoint stopped sending it: it is our cost of goods,
+// and a typed field would have kept reading `undefined` as a number.
 export interface AnalyticsDailyPoint {
   day: string;
   messagesIn: number;
   messagesOut: number;
-  cost: number;
 }
 
 export interface AnalyticsSummary {
@@ -1458,7 +1459,6 @@ export const analytics = {
           day: d.day,
           messagesIn: d.messages_in,
           messagesOut: d.messages_out,
-          cost: d.cost,
         })),
         conversationStates: dto.conversation_states,
         topGaps: dto.top_gaps,

@@ -54,3 +54,17 @@ a phone number) makes the second factor decorative.
 seed_dev.py still creates admin@qonvo.dev, which is correct: that is the dev/staging
 identity, and production's is not seeded.
 
+
+5) Annual and half-yearly pricing. Deferred deliberately on 2026-09-12 with the plan
+written up in docs/ANNUAL-AND-HALF-YEARLY-BILLING.md -- prerequisites, sandbox checklist,
+discount ladder and the arithmetic behind it.
+The one thing that must not be done in the meantime: do NOT add a second Polar product
+for an existing plan to QONVO_BILLING_PRICE_MAP. _price_id_for() returns the FIRST price
+mapping to a plan key, so an annual Growth product could make a customer clicking "$20 a
+month" pay $204 a year, silently and with nothing in the logs. The cadence-aware lookup
+in §3.3 of that doc is the blocking prerequisite.
+Verified while writing it: Polar can express half-yearly (recurring_interval "month" with
+recurring_interval_count 6), entitlements and quota accounting need no change at all
+(quotas reset on the calendar month, not the billing period), and proration_behavior
+"next_period" is how a cadence switch avoids an unquotable charge -- Polar has no
+proration preview route.
