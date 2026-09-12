@@ -1082,9 +1082,16 @@ async def _run_pipeline_inner(
         inbound_had_voice, voice_seconds = await _transcribe_voice_fragments(
             fragments, tenant_config, waha, bound
         )
-        # Held separately: voice_seconds later accumulates the synthesized reply
-        # too, but STT is only billed for what the customer actually sent.
+        # Held separately, and no longer added to the metered total.
+        #
+        # The allowance used to bound both directions. It now bounds only what
+        # we GENERATE, because that is where the money is: speaking a minute
+        # costs $0.0135-$0.027 against $0.003 to transcribe one, so metering the
+        # cheap half was spending the owner's allowance on the wrong thing.
+        # Transcription is unlimited and its cost is small and self-limiting --
+        # a customer can only send so many voice notes.
         inbound_voice_seconds = voice_seconds
+        voice_seconds = 0
         await _persist_inbound(db, tenant_uuid, conversation, fragments)
 
     # --- Phase 2: gates, retrieval, the model, the reply -------------------- #

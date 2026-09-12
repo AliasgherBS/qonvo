@@ -57,7 +57,7 @@ PLANS: dict[str, Plan] = {
             "whatsapp_numbers": 1,
             "knowledge_sources": 50,
             "knowledge_chars": 2_000_000,
-            "knowledge_upload_bytes": 50 * 1024 * 1024,
+            "knowledge_upload_bytes": 20 * 1024 * 1024,
         },
     ),
     "starter": Plan(
@@ -65,7 +65,7 @@ PLANS: dict[str, Plan] = {
         name="Starter",
         entitlements={
             "monthly_message_quota": 1_000,
-            "monthly_voice_minutes": 5,
+            "monthly_voice_minutes": 60,
             "seats": 2,
             "whatsapp_numbers": 1,
             "knowledge_sources": 50,
@@ -78,7 +78,7 @@ PLANS: dict[str, Plan] = {
         name="Growth",
         entitlements={
             "monthly_message_quota": 5_000,
-            "monthly_voice_minutes": 20,
+            "monthly_voice_minutes": 180,
             "seats": 5,
             "whatsapp_numbers": 1,
             "knowledge_sources": 150,
@@ -91,7 +91,7 @@ PLANS: dict[str, Plan] = {
         name="Scale",
         entitlements={
             "monthly_message_quota": 20_000,
-            "monthly_voice_minutes": 100,
+            "monthly_voice_minutes": 480,
             "seats": 15,
             "whatsapp_numbers": 2,
             "knowledge_sources": 400,
