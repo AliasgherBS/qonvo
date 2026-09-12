@@ -1,15 +1,14 @@
 "use client";
 
-import { BarChart3 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 
+import { DayChart } from "@/components/analytics/day-chart";
 import { HeroStat, SmallStat } from "@/components/analytics/stats";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { EmptyState } from "@/components/ui/empty-state";
 import { Skeleton } from "@/components/ui/skeleton";
-import { analytics, type AnalyticsSummary } from "@/lib/api";
+import { analytics, type AnalyticsDailyPoint, type AnalyticsSummary } from "@/lib/api";
 import { useApi, useAuthToken } from "@/lib/use-api";
 import { cn } from "@/lib/utils";
 
@@ -75,7 +74,27 @@ export default function AnalyticsPage() {
   );
 }
 
+/**
+ * The two questions the page answers, as a switch rather than as two charts.
+ *
+ * An owner asked "how long is a typical voice note" and nothing here could
+ * answer it, while the same figures for text sat one card away. Voice and text
+ * ask the same shape of question -- how many in, how many out, how long is one
+ * -- of numbers that cannot share an axis: a chart mixing message counts and
+ * seconds would have a y-axis measuring nothing.
+ *
+ * So the view swaps the numbers and the series, and the chart is the same
+ * component reading different accessors.
+ */
+const VIEWS = [
+  { key: "messages", label: "Messages" },
+  { key: "voice", label: "Voice" },
+] as const;
+
+type ViewKey = (typeof VIEWS)[number]["key"];
+
 function AnalyticsContent({ data }: { data: AnalyticsSummary }) {
+  const [view, setView] = useState<ViewKey>("messages");
   const t = data.totals;
   const days = data.rangeDays;
   const leads = t.leads ?? 0;
@@ -89,13 +108,70 @@ function AnalyticsContent({ data }: { data: AnalyticsSummary }) {
   // printed to the cent in front of somebody paying a monthly fee, and the
   // only question it invites is a margin conversation. The figure is still
   // recorded, still billed against, and still shown where it is operationally
-  // useful: /admin/usage, which has a Cost column per tenant per month.
+  // useful: /admin/usage, which has a Cost column per tenant per month. The
+  // endpoint no longer sends it either, so there is nothing here to hide.
   const smallStats: { label: string; value: string }[] = [
     { label: "Messages received", value: (t.messages_in ?? 0).toLocaleString() },
     { label: "Conversations", value: (t.conversations ?? 0).toLocaleString() },
     { label: "Needs human now", value: (t.needs_human ?? 0).toLocaleString() },
     { label: "Open handoffs", value: (t.handoffs_open ?? 0).toLocaleString() },
   ];
+
+  const detail =
+    view === "voice"
+      ? {
+          series: {
+            valueIn: (d: AnalyticsDailyPoint) => d.voiceSecondsIn,
+            valueOut: (d: AnalyticsDailyPoint) => d.voiceSecondsOut,
+            labelIn: "Listened to",
+            labelOut: "Spoken back",
+            format: formatSeconds,
+            emptyTitle: "No voice yet",
+            emptyBody:
+              "Your rep answers voice notes with voice notes. This charts once a customer sends one.",
+          },
+          figures: [
+            {
+              label: "Voice notes received",
+              value: data.voice.inbound.count.toLocaleString(),
+            },
+            {
+              label: "Voice replies sent",
+              value: data.voice.outbound.count.toLocaleString(),
+            },
+            {
+              label: "Average note received",
+              value: formatSeconds(data.voice.inbound.avgSeconds),
+            },
+            {
+              label: "Average reply spoken",
+              value: formatSeconds(data.voice.outbound.avgSeconds),
+            },
+          ],
+        }
+      : {
+          series: {
+            valueIn: (d: AnalyticsDailyPoint) => d.messagesIn,
+            valueOut: (d: AnalyticsDailyPoint) => d.messagesOut,
+            labelIn: "Received",
+            labelOut: "Replies sent",
+            format: (n: number) => n.toLocaleString(),
+            emptyTitle: "No activity yet",
+            emptyBody: "Message volume will chart here as conversations come in.",
+          },
+          figures: [
+            { label: "Received", value: (t.messages_in ?? 0).toLocaleString() },
+            { label: "Replies sent", value: (t.messages_out ?? 0).toLocaleString() },
+            {
+              label: "Average question",
+              value: formatChars(data.shape.inboundTextAvgChars),
+            },
+            {
+              label: "Average reply",
+              value: formatChars(data.shape.outboundTextAvgChars),
+            },
+          ],
+        };
 
   return (
     <div className="space-y-6">
@@ -128,8 +204,41 @@ function AnalyticsContent({ data }: { data: AnalyticsSummary }) {
 
       <Card>
         <CardContent className="pt-5">
-          <p className="text-sm font-bold">Daily message volume</p>
-          <VolumeChart daily={data.daily} />
+          {/* The switcher sits on the card it governs rather than on the page,
+              so it is unambiguous which numbers it changes. Everything above
+              is true in both views. */}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm font-bold">Day by day</p>
+            <div className="flex gap-1" role="group" aria-label="Activity view">
+              {VIEWS.map((v) => (
+                <button
+                  key={v.key}
+                  type="button"
+                  onClick={() => setView(v.key)}
+                  aria-pressed={view === v.key}
+                  className={cn(
+                    "rounded-full px-3.5 py-1.5 text-xs font-bold transition-colors",
+                    view === v.key
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-surface-muted hover:bg-border",
+                  )}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            {detail.figures.map((f) => (
+              <div key={f.label}>
+                <p className="text-xs font-semibold text-muted-foreground">{f.label}</p>
+                <p className="mt-0.5 text-xl font-extrabold tabular-nums">{f.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <DayChart daily={data.daily} series={detail.series} />
         </CardContent>
       </Card>
 
@@ -164,168 +273,24 @@ function AnalyticsContent({ data }: { data: AnalyticsSummary }) {
 }
 
 /**
- * Message volume by day (teardown Y1).
+ * Seconds as people say them. "45s", "2m 30s", "3m".
  *
- * This drew nothing. The data was there and the markup was almost right: every
- * column carried a real percentage height and a working tooltip, and every one
- * measured zero pixels. The row was `h-40 items-end`, and `align-items:
- * flex-end` sizes each column to its content rather than stretching it to the
- * row, so the columns had no definite height and the percentages resolved
- * against zero. The empty state never fired either, because the data was not
- * empty -- the chart simply painted nothing, on the one page whose entire job
- * is to say whether the product is working.
- *
- * `items-stretch` plus `h-full` on the columns is the fix. The axis and the
- * dates are here because the teardown's second point stands: two bars across
- * eleven hundred pixels with no scale says very little even once it paints.
- *
- * Stacked in and out rather than one total, since both numbers are already in
- * the response and "we answered" is the interesting half.
- *
- * Days with no traffic are filled in before anything is drawn (finding F10).
- * The endpoint returns only days that have a usage row, so a gap arrived as
- * three evenly spaced bars labelled 5 Sep, 6 Sep, 8 Sep: a quiet day rendered
- * as continuity, and the axis lied about time. Zero-height columns are the
- * honest shape, and they are also the interesting one, because a run of empty
- * days next to a busy one is the thing an owner needs to see.
+ * Not decimal minutes: a voice note is a few seconds long, and "0.75 min" is a
+ * worse answer to "how long is a typical voice note" than the question
+ * deserves. The trailing seconds are dropped at a whole minute because "3m 0s"
+ * reads as a measurement and "3m" reads as a duration.
  */
-function VolumeChart({ daily: sparse }: { daily: AnalyticsSummary["daily"] }) {
-  const daily = withEmptyDays(sparse);
-
-  if (daily.length === 0) {
-    return (
-      <div className="mt-3">
-        <EmptyState
-          icon={<BarChart3 className="h-5 w-5" />}
-          title="No activity yet"
-          description="Message volume will chart here as conversations come in."
-        />
-      </div>
-    );
-  }
-
-  const max = Math.max(1, ...daily.map((d) => d.messagesIn + d.messagesOut));
-
-  // At most seven date labels, whatever the range. Thirty of them across the
-  // card overlap into a grey smear, which is a different way of saying
-  // nothing.
-  const stride = Math.max(1, Math.ceil(daily.length / 7));
-  const showLabel = (i: number) => i === daily.length - 1 || i % stride === 0;
-
-  return (
-    <div className="mt-4 flex gap-2">
-      {/* The scale. Without it a tall bar means "the most there has been",
-          which is not a quantity. */}
-      <div className="flex h-40 w-9 shrink-0 flex-col justify-between pb-px text-right text-[10px] font-semibold tabular-nums text-muted-foreground">
-        <span>{max}</span>
-        <span>{Math.round(max / 2)}</span>
-        <span>0</span>
-      </div>
-
-      <div className="min-w-0 flex-1 overflow-x-auto">
-        {/* items-stretch, not items-end: the columns must take the row's
-            height so their children have something to be a percentage of. */}
-        {/* justify-between, because the columns are capped at 56px: with a
-            week of data and a wide card, flex-1 leaves all the slack on the
-            right and the bars bunch against a full-width baseline. Spreading
-            them puts the last bar at today's end of the axis, where it
-            belongs. */}
-        <div className="flex h-40 items-stretch justify-between gap-1 border-b border-border">
-          {daily.map((d) => {
-            const total = d.messagesIn + d.messagesOut;
-            // A day with traffic always shows a sliver. Rounding a real 0.4%
-            // to nothing reads as a day the product was off.
-            const pct = total > 0 ? Math.max((total / max) * 100, 2) : 0;
-            const outShare = total > 0 ? (d.messagesOut / total) * 100 : 0;
-            return (
-              <div
-                key={d.day}
-                className="flex h-full min-w-[6px] max-w-[56px] flex-1 flex-col justify-end"
-                title={`${d.day}: ${total} messages (${d.messagesIn} in, ${d.messagesOut} out)`}
-              >
-                <div
-                  className="flex w-full flex-col-reverse overflow-hidden rounded-t"
-                  style={{ height: `${pct}%` }}
-                >
-                  <div className="w-full bg-primary/40" style={{ height: `${100 - outShare}%` }} />
-                  <div className="w-full bg-primary" style={{ height: `${outShare}%` }} />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="flex justify-between gap-1 pt-1.5">
-          {daily.map((d, i) => (
-            <div
-              key={d.day}
-              className="min-w-[6px] max-w-[56px] flex-1 text-center text-[10px] tabular-nums text-muted-foreground"
-            >
-              {showLabel(i) ? shortDay(d.day) : "\u00A0"}
-            </div>
-          ))}
-        </div>
-
-        <div className="flex items-center gap-4 pt-2 text-[11px] text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-sm bg-primary" />
-            Replies sent
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="h-2 w-2 rounded-sm bg-primary/40" />
-            Messages received
-          </span>
-        </div>
-      </div>
-    </div>
-  );
+function formatSeconds(seconds: number): string {
+  const whole = Math.max(0, Math.round(seconds));
+  if (whole < 60) return `${whole}s`;
+  const minutes = Math.floor(whole / 60);
+  const rest = whole % 60;
+  return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
 }
 
-/**
- * One entry per calendar day between the first and last day present.
- *
- * Bounded by the data rather than by the selected range on purpose: the
- * response says how many days were asked for but not which day the window ends
- * on, and inventing that boundary from the browser's clock would put a day that
- * has not happened yet in UTC on the end of the axis. That is a different way
- * to be wrong about time, and this fix is about not being wrong about time.
- *
- * Guarded on both ends: an unparseable day, or a span wider than any real
- * range, returns the input untouched. A chart that paints something imperfect
- * beats one that stops painting, which is the failure this chart already had
- * once.
- */
-const MAX_FILLED_DAYS = 400;
-
-function withEmptyDays(daily: AnalyticsSummary["daily"]): AnalyticsSummary["daily"] {
-  if (daily.length < 2) return daily;
-
-  const ordered = [...daily].sort((a, b) => a.day.localeCompare(b.day));
-  const first = Date.parse(`${ordered[0].day}T00:00:00Z`);
-  const last = Date.parse(`${ordered[ordered.length - 1].day}T00:00:00Z`);
-  if (Number.isNaN(first) || Number.isNaN(last)) return daily;
-
-  const span = Math.round((last - first) / 86_400_000) + 1;
-  if (span <= ordered.length || span > MAX_FILLED_DAYS) return ordered;
-
-  const known = new Map(ordered.map((d) => [d.day, d]));
-  const filled: AnalyticsSummary["daily"] = [];
-  for (let i = 0; i < span; i += 1) {
-    const day = new Date(first + i * 86_400_000).toISOString().slice(0, 10);
-    filled.push(known.get(day) ?? { day, messagesIn: 0, messagesOut: 0 });
-  }
-  return filled;
-}
-
-/** "2026-09-05" as "5 Sep". Falls back to the raw string if it will not parse. */
-function shortDay(day: string): string {
-  const parsed = new Date(`${day}T00:00:00Z`);
-  if (Number.isNaN(parsed.getTime())) return day;
-  return parsed.toLocaleDateString(undefined, {
-    day: "numeric",
-    month: "short",
-    timeZone: "UTC",
-  });
+/** Characters, with the unit, because a bare number here means nothing. */
+function formatChars(chars: number): string {
+  return `${Math.round(chars).toLocaleString()} chars`;
 }
 
 function AnalyticsSkeleton() {

@@ -1425,10 +1425,29 @@ export const billing = {
 // Analytics (§9 analytics dashboard, §13 metering)
 // ---------------------------------------------------------------------------
 
+interface AnalyticsVoiceSideDto {
+  count: number;
+  seconds: number;
+  avg_seconds: number;
+}
+
 interface AnalyticsSummaryDto {
   range_days: number;
   totals: Record<string, number>;
-  daily: { day: string; messages_in: number; messages_out: number; tokens: number }[];
+  daily: {
+    day: string;
+    messages_in: number;
+    messages_out: number;
+    voice_seconds_in: number;
+    voice_seconds_out: number;
+    tokens: number;
+  }[];
+  voice: { inbound: AnalyticsVoiceSideDto; outbound: AnalyticsVoiceSideDto };
+  // Keyed direction -> message type -> figures. Both levels are open, because
+  // a tenant that has never received a voice note has no "voice" key at all
+  // rather than a zero: the backend builds this by grouping rows that exist.
+  // Every read below therefore goes through a default.
+  message_shape: Record<string, Record<string, { count: number; avg_chars: number }>>;
   conversation_states: Record<string, number>;
   top_gaps: { question: string; count: number }[];
 }
@@ -1439,14 +1458,47 @@ export interface AnalyticsDailyPoint {
   day: string;
   messagesIn: number;
   messagesOut: number;
+  voiceSecondsIn: number;
+  voiceSecondsOut: number;
+}
+
+export interface AnalyticsVoiceSide {
+  count: number;
+  seconds: number;
+  avgSeconds: number;
+}
+
+/** Average characters per message, by direction. Zero when there are none. */
+export interface AnalyticsMessageShape {
+  inboundTextAvgChars: number;
+  outboundTextAvgChars: number;
 }
 
 export interface AnalyticsSummary {
   rangeDays: number;
   totals: Record<string, number>;
   daily: AnalyticsDailyPoint[];
+  voice: { inbound: AnalyticsVoiceSide; outbound: AnalyticsVoiceSide };
+  shape: AnalyticsMessageShape;
   conversationStates: Record<string, number>;
   topGaps: { question: string; count: number }[];
+}
+
+/** A direction/type cell, or zeroes. Absent is the common case, not an error. */
+function shapeCell(
+  shape: AnalyticsSummaryDto["message_shape"],
+  direction: string,
+  type: string,
+): { count: number; avg_chars: number } {
+  return shape?.[direction]?.[type] ?? { count: 0, avg_chars: 0 };
+}
+
+function voiceSide(dto: AnalyticsVoiceSideDto | undefined): AnalyticsVoiceSide {
+  return {
+    count: dto?.count ?? 0,
+    seconds: dto?.seconds ?? 0,
+    avgSeconds: dto?.avg_seconds ?? 0,
+  };
 }
 
 export const analytics = {
@@ -1459,7 +1511,21 @@ export const analytics = {
           day: d.day,
           messagesIn: d.messages_in,
           messagesOut: d.messages_out,
+          voiceSecondsIn: d.voice_seconds_in ?? 0,
+          voiceSecondsOut: d.voice_seconds_out ?? 0,
         })),
+        voice: {
+          inbound: voiceSide(dto.voice?.inbound),
+          outbound: voiceSide(dto.voice?.outbound),
+        },
+        // Text only. Averaging text and voice together would report the
+        // average length of a thing nobody sends: a typed question and a
+        // transcribed voice note are different objects, and the voice side is
+        // already measured in seconds where it means something.
+        shape: {
+          inboundTextAvgChars: shapeCell(dto.message_shape, "inbound", "text").avg_chars,
+          outboundTextAvgChars: shapeCell(dto.message_shape, "outbound", "text").avg_chars,
+        },
         conversationStates: dto.conversation_states,
         topGaps: dto.top_gaps,
       }),
