@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Answered } from "@/components/marketing/answered";
 import { Capabilities } from "@/components/marketing/capabilities";
 import { ClosingCta } from "@/components/marketing/closing-cta";
+import { Contact } from "@/components/marketing/contact";
 import { CostOfWaiting } from "@/components/marketing/cost-of-waiting";
 import { Faq } from "@/components/marketing/faq";
 import { Hero } from "@/components/marketing/hero";
@@ -47,6 +48,7 @@ export default function HomePage() {
         <HowItWorks />
         <Pricing />
         <Faq />
+        <Contact />
         <ClosingCta />
       </MarketingShell>
     </div>
