@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, require_tenant
 from app.api.knowledge import answered_gaps_subquery
 from app.models.business import Booking, Handoff, Lead, Order
-from app.models.conversation import Conversation
+from app.models.conversation import Conversation, Message
 from app.models.enums import HandoffStatus
 from app.models.ops import AnalyticsEvent, UsageCounter
 
@@ -88,6 +88,11 @@ async def summary(
             "day": r.day.isoformat(),
             "messages_in": r.messages_in,
             "messages_out": r.messages_out,
+            # Split, because they answer different questions: one is what
+            # customers sent us, the other is what the rep spoke back and is
+            # the half the allowance meters.
+            "voice_seconds_in": r.voice_seconds_in or 0,
+            "voice_seconds_out": r.voice_seconds or 0,
             "cost": float(r.cost or 0),
             "tokens": r.tokens,
         }
@@ -95,6 +100,8 @@ async def summary(
     ]
     messages_in = sum(r.messages_in for r in current_rows)
     messages_out = sum(r.messages_out for r in current_rows)
+    voice_seconds_in = sum(r.voice_seconds_in or 0 for r in current_rows)
+    voice_seconds_out = sum(r.voice_seconds or 0 for r in current_rows)
     tokens = sum(r.tokens for r in current_rows)
     cost = float(sum(r.cost or 0 for r in current_rows))
     prev_messages_in = sum(r.messages_in for r in previous_rows)
@@ -142,6 +149,49 @@ async def summary(
     prev_bookings = await _count(Booking, prev_start_at, start_at)
     prev_orders = await _count(Order, prev_start_at, start_at)
 
+    # --- What a message actually looks like (analytics value framing) ---
+    # An owner asked "how long is a typical voice note" and nothing could answer
+    # it. Counts come from `messages` rather than usage_counters because the
+    # answer is an average, and an average cannot be summed out of daily rows.
+    #
+    # length() over coalesce(body, transcript): a voice message stores its words
+    # in `transcript`, so measuring `body` alone reports every voice note as
+    # zero characters.
+    shape_rows = (
+        await db.execute(
+            select(
+                Message.direction,
+                Message.type,
+                func.count().label("n"),
+                func.avg(func.length(func.coalesce(Message.body, Message.transcript))).label(
+                    "avg_chars"
+                ),
+            )
+            .select_from(Message)
+            .join(Conversation, Message.conversation_id == Conversation.id)
+            .where(Conversation.tenant_id == tenant_id, Message.created_at >= start_at)
+            .group_by(Message.direction, Message.type)
+        )
+    ).all()
+
+    shape: dict[str, dict] = {}
+    for row in shape_rows:
+        bucket = shape.setdefault(str(row.direction), {})
+        bucket[str(row.type)] = {
+            "count": int(row.n),
+            "avg_chars": round(float(row.avg_chars or 0)),
+        }
+
+    def _voice(direction: str, seconds: int) -> dict:
+        n = (shape.get(direction, {}).get("voice") or {}).get("count", 0)
+        return {
+            "count": n,
+            "seconds": seconds,
+            # Rounded to a whole second: a voice note measured to two decimals
+            # implies a precision the duration probe does not have.
+            "avg_seconds": round(seconds / n) if n else 0,
+        }
+
     # --- Top unanswered questions (same aggregation as /knowledge/gaps) ---
     question = AnalyticsEvent.data["question"].astext
     answered = answered_gaps_subquery(tenant_id)
@@ -170,6 +220,14 @@ async def summary(
 
     return {
         "range_days": days,
+        # Voice, and the shape of a message. Kept out of `totals` because these
+        # are descriptive rather than counters, and `totals` is paired key-for-key
+        # with the previous window.
+        "voice": {
+            "inbound": _voice("inbound", voice_seconds_in),
+            "outbound": _voice("outbound", voice_seconds_out),
+        },
+        "message_shape": shape,
         "period_start": start.isoformat(),
         "previous_period_start": prev_start.isoformat(),
         # One flat map of figures. The previous window's are the same keys under

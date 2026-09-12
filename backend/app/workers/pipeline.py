@@ -924,6 +924,7 @@ async def record_billed_usage(
     tokens: int,
     cost: float,
     voice_seconds: int = 0,
+    voice_seconds_in: int = 0,
 ) -> None:
     """Commit a usage row in its own transaction, right after the model answers.
 
@@ -947,6 +948,7 @@ async def record_billed_usage(
                 tokens=tokens,
                 cost=cost,
                 voice_seconds=voice_seconds,
+                voice_seconds_in=voice_seconds_in,
             )
     except Exception as exc:  # noqa: BLE001 — accounting must never break a reply
         logger.bind(tenant_id=str(tenant_id)).warning(f"could not record usage: {exc}")
@@ -961,6 +963,7 @@ async def _bump_usage(
     tokens: int,
     cost: float,
     voice_seconds: int = 0,
+    voice_seconds_in: int = 0,
 ) -> None:
     today = date.today()
     row = (
@@ -980,6 +983,7 @@ async def _bump_usage(
     row.tokens = (row.tokens or 0) + tokens
     row.cost = float(row.cost or 0) + cost
     row.voice_seconds = (row.voice_seconds or 0) + voice_seconds
+    row.voice_seconds_in = (row.voice_seconds_in or 0) + voice_seconds_in
 
 
 async def _messages_this_month(db: AsyncSession, tenant_id: uuid.UUID) -> int:
@@ -1191,6 +1195,7 @@ async def _run_pipeline_inner(
                 tokens=0,
                 cost=0.0,
                 voice_seconds=voice_seconds,
+                voice_seconds_in=inbound_voice_seconds,
             )
             await _send(bound, send_gateway, session, chat_id, QUOTA_EXCEEDED_REPLY, pacing)
             return PipelineResult(reply_text=QUOTA_EXCEEDED_REPLY, meta={"gate": "quota_exceeded"})
@@ -1240,6 +1245,7 @@ async def _run_pipeline_inner(
                     tokens=0,
                     cost=0.0,
                     voice_seconds=voice_seconds,
+                    voice_seconds_in=inbound_voice_seconds,
                 )
                 await _send(bound, send_gateway, session, chat_id, reply, pacing)
                 return PipelineResult(reply_text=reply, meta={"gate": "business_hours"})
@@ -1268,6 +1274,7 @@ async def _run_pipeline_inner(
                 tokens=0,
                 cost=0.0,
                 voice_seconds=voice_seconds,
+                voice_seconds_in=inbound_voice_seconds,
             )
             await _send(bound, send_gateway, session, chat_id, CATCH_UP_REPLY, pacing)
             return PipelineResult(reply_text=CATCH_UP_REPLY, meta={"catch_up": True})
@@ -1316,6 +1323,7 @@ async def _run_pipeline_inner(
                 tokens=0,
                 cost=0.0,
                 voice_seconds=voice_seconds,
+                voice_seconds_in=inbound_voice_seconds,
             )
             await _send(bound, send_gateway, session, chat_id, reply, pacing)
             return PipelineResult(reply_text=reply, meta={"gate": "reminder_optout"})
@@ -1567,6 +1575,7 @@ async def _run_pipeline_inner(
             tokens=total_tokens,
             cost=cost + audio_cost,
             voice_seconds=voice_seconds,
+            voice_seconds_in=inbound_voice_seconds,
         )
         # Cross-process metrics (Prometheus): success-path spend + throughput.
         if cost:
