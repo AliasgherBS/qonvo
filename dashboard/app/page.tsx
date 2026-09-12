@@ -7,10 +7,9 @@ import { CostOfWaiting } from "@/components/marketing/cost-of-waiting";
 import { Faq } from "@/components/marketing/faq";
 import { Hero } from "@/components/marketing/hero";
 import { HowItWorks } from "@/components/marketing/how-it-works";
-import { Languages } from "@/components/marketing/languages";
 import { Pricing } from "@/components/marketing/pricing";
 import { StructuredData } from "@/components/marketing/structured-data";
-import { Voice } from "@/components/marketing/voice";
+import { VoiceSampler } from "@/components/marketing/voice-sampler";
 import { MarketingShell } from "@/components/marketing-shell";
 import { SITE } from "@/lib/site";
 
@@ -44,8 +43,7 @@ export default function HomePage() {
         <CostOfWaiting />
         <Answered />
         <Capabilities />
-        <Voice />
-        <Languages />
+        <VoiceSampler />
         <HowItWorks />
         <Pricing />
         <Faq />
