@@ -6,8 +6,18 @@
 # so sharing one .next directory would mean whichever built last wins and the
 # other silently serves the wrong API URL and the wrong environment badge.
 #
-#   ./run-dashboard-staging.sh          serve an existing build
-#   ./run-dashboard-staging.sh --build  rebuild first, then serve
+#   ./run-dashboard-staging.sh             serve an existing build
+#   ./run-dashboard-staging.sh --build     rebuild first, then serve
+#   ./run-dashboard-staging.sh --build-only rebuild and stop
+#
+# Use --build-only from a terminal. Staging is served by the systemd user unit
+# qonvo-dashboard-staging, and --build execs the server when it finishes, so
+# running it by hand starts a SECOND server competing for port 3012. That has
+# happened twice; the loser keeps serving whichever build it started with, so
+# the symptom is a change that will not appear no matter how often you rebuild.
+# The pair to use is:
+#
+#   ./run-dashboard-staging.sh --build-only && systemctl --user restart qonvo-dashboard-staging
 set -euo pipefail
 
 cd ~/qonvo/dashboard
@@ -21,7 +31,8 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
-if [[ "${1:-}" == "--build" ]]; then
+MODE="${1:-}"
+if [[ "$MODE" == "--build" || "$MODE" == "--build-only" ]]; then
   # NEXT_DIST_DIR is read by next.config.ts; the env file supplies the
   # NEXT_PUBLIC_* values that get baked into this build.
   # shellcheck disable=SC2046
@@ -32,6 +43,11 @@ if [[ "${1:-}" == "--build" ]]; then
   mkdir -p .next-staging/standalone/.next-staging
   cp -r public .next-staging/standalone/
   cp -r .next-staging/static .next-staging/standalone/.next-staging/
+
+  if [[ "$MODE" == "--build-only" ]]; then
+    echo "Staging build ready. Now: systemctl --user restart qonvo-dashboard-staging"
+    exit 0
+  fi
 fi
 
 if [[ ! -f .next-staging/standalone/server.js ]]; then
