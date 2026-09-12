@@ -1,24 +1,34 @@
 #!/bin/bash
-# Staging dashboard — host node process on 3012, pointed at the staging API.
+# Serve the staging dashboard: host node process on 3012, pointed at the
+# staging API. This is what qonvo-dashboard-staging.service runs.
 #
-# Builds into .next-staging (via a distinct distDir) so a staging build and a
-# production build can coexist: they bake NEXT_PUBLIC_* values in at build time,
-# so sharing one .next directory would mean whichever built last wins and the
-# other silently serves the wrong API URL and the wrong environment badge.
+# It SERVES. It does not build. Building lives in scripts/staging-build.sh and
+# happens automatically through scripts/staging-sync.sh, run by
+# qonvo-staging-sync.timer.
 #
-#   ./run-dashboard-staging.sh             serve an existing build
-#   ./run-dashboard-staging.sh --build     rebuild first, then serve
-#   ./run-dashboard-staging.sh --build-only rebuild and stop
+# That split is deliberate and it is load-bearing. This script used to take
+# --build and then exec the server, so running it by hand while the systemd
+# unit was up started a second server competing for port 3012. Whichever lost
+# kept serving whatever build it had started with, and the symptom was a change
+# that would not appear no matter how many times you rebuilt.
 #
-# Use --build-only from a terminal. Staging is served by the systemd user unit
-# qonvo-dashboard-staging, and --build execs the server when it finishes, so
-# running it by hand starts a SECOND server competing for port 3012. That has
-# happened twice; the loser keeps serving whichever build it started with, so
-# the symptom is a change that will not appear no matter how often you rebuild.
-# The pair to use is:
+#   ./run-dashboard-staging.sh          serve (what systemd runs)
+#   ./run-dashboard-staging.sh --build  build, then restart the service
 #
-#   ./run-dashboard-staging.sh --build-only && systemctl --user restart qonvo-dashboard-staging
+# --build is kept because it is in muscle memory and in the docs, but it no
+# longer serves anything itself: it builds, restarts the unit, and exits.
 set -euo pipefail
+
+if [[ "${1:-}" == "--build" || "${1:-}" == "--build-only" ]]; then
+  ~/qonvo/scripts/staging-build.sh
+  systemctl --user restart qonvo-dashboard-staging
+  # Record it, so the sync timer does not immediately rebuild what was just
+  # built by hand.
+  mkdir -p ~/.cache/qonvo-staging
+  ~/qonvo/scripts/staging-sync.sh --fingerprint-only 2>/dev/null || true
+  echo "Staging rebuilt and restarted."
+  exit 0
+fi
 
 cd ~/qonvo/dashboard
 export NVM_DIR="$HOME/.nvm"
@@ -27,40 +37,21 @@ export NVM_DIR="$HOME/.nvm"
 
 ENV_FILE=".env.staging.local"
 if [[ ! -f "$ENV_FILE" ]]; then
-  echo "Missing dashboard/$ENV_FILE — copy $ENV_FILE.example and fill it in." >&2
+  echo "Missing dashboard/$ENV_FILE - copy $ENV_FILE.example and fill it in." >&2
   exit 1
-fi
-
-MODE="${1:-}"
-if [[ "$MODE" == "--build" || "$MODE" == "--build-only" ]]; then
-  # NEXT_DIST_DIR is read by next.config.ts; the env file supplies the
-  # NEXT_PUBLIC_* values that get baked into this build.
-  # shellcheck disable=SC2046
-  env $(grep -v '^#' "$ENV_FILE" | xargs) NEXT_DIST_DIR=.next-staging npm run build
-  # Standalone needs static assets and public/ copied in beside it. Removing
-  # them first is required: stale chunks cause ChunkLoadError in the browser.
-  rm -rf .next-staging/standalone/.next-staging/static .next-staging/standalone/public
-  mkdir -p .next-staging/standalone/.next-staging
-  cp -r public .next-staging/standalone/
-  cp -r .next-staging/static .next-staging/standalone/.next-staging/
-
-  if [[ "$MODE" == "--build-only" ]]; then
-    echo "Staging build ready. Now: systemctl --user restart qonvo-dashboard-staging"
-    exit 0
-  fi
 fi
 
 if [[ ! -f .next-staging/standalone/server.js ]]; then
-  echo "No staging build yet — run: ./run-dashboard-staging.sh --build" >&2
+  echo "No staging build yet - run: ./scripts/staging-build.sh" >&2
   exit 1
 fi
 
-# NEXT_DIST_DIR is needed at *serve* time as well as at build time. next.config.ts
-# reads it to set distDir, and the standalone server resolves /_next/static
-# against that -- so without it the server looks in .next/static, finds nothing,
-# and answers 400 to every chunk. The page renders its HTML and then loads no
-# JavaScript at all, which looks like a broken build rather than a missing
-# variable. Found by pointing a browser at it.
+# NEXT_DIST_DIR is needed at *serve* time as well as at build time.
+# next.config.ts reads it to set distDir, and the standalone server resolves
+# /_next/static against that -- so without it the server looks in .next/static,
+# finds nothing, and answers 400 to every chunk. The page renders its HTML and
+# then loads no JavaScript at all, which looks like a broken build rather than
+# a missing variable. Found by pointing a browser at it.
 # shellcheck disable=SC2046
 exec env $(grep -v '^#' "$ENV_FILE" | xargs) \
   NEXT_DIST_DIR=.next-staging \

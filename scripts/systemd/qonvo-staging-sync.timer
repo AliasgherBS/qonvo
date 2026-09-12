@@ -1,0 +1,14 @@
+[Unit]
+Description=Check every minute whether staging needs rebuilding
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=1min
+# The check itself is one find and a hash. The build only runs when the sources
+# actually changed AND have stopped changing, so a minute here means "staging
+# is current within about two minutes of you saving", not "build every minute".
+AccuracySec=15s
+Unit=qonvo-staging-sync.service
+
+[Install]
+WantedBy=timers.target
