@@ -1,0 +1,12 @@
+[Unit]
+Description=Rebuild the Qonvo staging dashboard if its sources changed
+After=network-online.target
+
+[Service]
+Type=oneshot
+# A login shell, because the build sources nvm.
+ExecStart=/bin/bash -lc '%h/qonvo/scripts/staging-sync.sh'
+# A build is CPU-heavy and staging is never urgent, so it yields to anything
+# the person at the keyboard is doing.
+Nice=10
+IOSchedulingClass=idle
