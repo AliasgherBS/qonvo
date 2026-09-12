@@ -85,6 +85,88 @@ different, dearer one, which would change this line materially.
 
 ---
 
+## 3a. Voice, if only generation is metered
+
+**What the code does today:** a "voice minute" is inbound audio **plus** the
+synthesized reply. [`pipeline.py:1490`](../backend/app/workers/pipeline.py) adds
+the reply's duration on top of the transcribed inbound. So the allowance
+currently bounds both directions.
+
+**Metering only TTS** is a better design, because TTS is 7-50x the price of STT
+per minute, and it is a small change: stop adding `inbound_voice_seconds` to the
+metered total and let STT run free. Everything below assumes that change.
+
+### Per generated minute (~900 characters of speech)
+
+| Provider / model | $ per generated min | Speaks Urdu |
+|---|---:|---|
+| openai `tts-1` | **$0.0135** | no |
+| groq `orpheus-v1-english` | $0.0198 | no |
+| openai `tts-1-hd` | $0.0270 | no |
+| groq `orpheus-v1-arabic-saudi` | $0.0360 | no |
+| elevenlabs `eleven_flash_v2_5` | $0.0450 | yes |
+| elevenlabs `eleven_multilingual_v2` | $0.0900 | yes |
+| **uplift** Starter ($5 / 100 min) | $0.0500 | **yes** |
+| **uplift** Pro ($50 / 1,500 min) | $0.0333 | **yes** |
+| **uplift** Growth ($300 / 12,000 min) | $0.0250 | **yes** |
+
+`tts-1` is cheaper than what production runs today, and switching to it would
+cut the voice line by a third with no other change.
+
+### Uplift is a subscription, not a rate
+
+This is the part that changes the decision. The others bill per character used;
+Uplift bills a fixed amount for a bundle. That makes it a **step function**, and
+cost per tenant depends entirely on how many tenants share the bundle.
+
+| Tenants (Scale, 100 min each, 100% used) | Minutes | Uplift plan | $/tenant |
+|---:|---:|---|---:|
+| 3 | 300 | Pro $50 | **$16.67** |
+| 5 | 500 | Pro $50 | $10.00 |
+| 10 | 1,000 | Pro $50 | $5.00 |
+| 15 | 1,500 | Pro $50 | $3.33 |
+| 50 | 5,000 | Growth $300 | $6.00 |
+
+For context, **everything else about a Scale tenant costs $21.20/month at full
+use**. At three tenants, Uplift alone would add $16.67 each and nearly double
+it. The bundle is only cheap once it is full.
+
+### When Uplift is worth it
+
+Purely on price, against the cheapest pay-as-you-go option:
+
+| Uplift plan | Beats `tts-1` above |
+|---|---:|
+| Starter $5 | 370 generated min/month |
+| Pro $50 | 3,704 min/month |
+| Growth $300 | 22,222 min/month |
+
+**But price is not the reason to buy it.** `tts-1` and `orpheus-v1-english` do
+not speak Urdu, and ElevenLabs multilingual does at $0.09/min - nearly four
+times Uplift Growth. For a Pakistani market that is the whole argument, and the
+per-minute comparison against English-only models is beside the point.
+
+The sensible sequence is: stay on pay-as-you-go while voice volume is small,
+move to Uplift Starter at $5 the moment Urdu voice ships, and only step up when
+the bundle is actually being consumed.
+
+### The cost of unmetering STT
+
+Removing the cap on transcription means it scales with customer behaviour
+rather than with anything sold. It is cheap but unbounded:
+
+| Model | $/min | 1,000 inbound min |
+|---|---:|---:|
+| groq `whisper-large-v3-turbo` | $0.00067 | $0.67 |
+| groq `whisper-large-v3` | $0.00185 | $1.85 | 
+| openai `gpt-4o-mini-transcribe` | $0.00300 | $3.00 |
+| openai `whisper-1` | $0.00600 | $6.00 |
+
+Even ten thousand inbound minutes on the turbo model is under seven dollars, so
+the exposure is small. Worth switching to `whisper-large-v3-turbo` if STT is
+going to be free: it is a third the price of what runs today, and its output
+feeds a language model that will paraphrase it anyway.
+
 ## 4. What a tenant occupies on the box
 
 Measured figures from [CAPACITY-AND-SCALING.md](CAPACITY-AND-SCALING.md).
