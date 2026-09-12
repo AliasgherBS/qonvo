@@ -5,18 +5,28 @@ could set ``voice_reply_mode`` to ``always`` and multiply their bill. An
 unlimited-voice tenant on the largest plan costs about $54 a month against $30
 of revenue, which is a loss that grows with success.
 
-**One allowance covers both directions.** Speech-to-text is roughly thirty
-times cheaper than text-to-speech, so the outbound leg dominates whatever a
-customer sends. Two counters would be more accurate and much harder to explain,
-and "voice minutes" already means voice handled either way.
+**The allowance meters only what we SPEAK.** It used to cover both legs, on
+the reasoning that "voice minutes" means voice handled either way. That was
+the wrong trade: speaking a minute costs $0.0135-$0.027 and transcribing one
+costs about $0.003, so metering the cheap leg spent the owner's allowance on
+the half that barely costs anything, and a customer sending long voice notes
+could exhaust an allowance the business never chose to use.
+
+Transcription is unlimited now. Its cost is small and self-limiting -- a
+customer can only send so many voice notes -- and leaving it uncapped means the
+allowance measures a decision the owner makes (reply in voice) rather than one
+their customer makes.
+
+``usage_counters.voice_seconds`` is the metered figure and holds outbound only.
+The inbound duration is still recorded, in ``voice_seconds_in``, because it is
+worth showing on the analytics page; nothing gates on it.
 
 **Seconds are stored; minutes are shown.** ``usage_counters.voice_seconds``
-already exists and already normalises both legs into one unit, so this diverges
-from the spec's suggestion of metering in characters. Characters would have
-meant a migration, a second unit for the inbound leg, and a lossy conversion in
-between. Seconds convert to minutes exactly. What the spec was actually
-protecting against, minutes reaching the database, still holds: nothing below
-stores a minute.
+already exists, so this diverges from the spec's suggestion of metering in
+characters: that would have meant a migration and a lossy conversion, where
+seconds convert to minutes exactly. What the spec was actually protecting
+against, minutes reaching the database, still holds: nothing below stores a
+minute.
 
 **Running out degrades, it does not fail.** The rep keeps answering, by text.
 A silent bot is the failure mode this codebase has already been burned by three
