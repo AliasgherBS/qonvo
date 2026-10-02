@@ -37,6 +37,7 @@ from app.api.deps import get_system_db, get_waha
 from app.core.config import settings
 from app.core.logging import logger
 from app.core.redis import get_redis
+from app.models.enums import SessionStatus
 from app.models.whatsapp import WhatsAppSession
 from app.waha.client import WahaClient
 
@@ -121,18 +122,26 @@ async def _whatsapp_working(db: AsyncSession) -> str:
         ).scalar_one()
         if not total:
             return "skipped: no sessions provisioned"
+        # Compare against the enum member, not a lowercased string. `status` is
+        # a Postgres enum (`session_status`), and there is no
+        # `lower(session_status)`, so the tidy-looking case-insensitive version
+        # of this raises ProgrammingError -- which is exactly how it reached
+        # production on 2026-10-03, reported by this very probe.
         working = (
             await db.execute(
                 select(func.count())
                 .select_from(WhatsAppSession)
-                .where(func.lower(WhatsAppSession.status) == "working")
+                .where(WhatsAppSession.status == SessionStatus.working)
             )
         ).scalar_one()
         if working:
             return f"ok: {working} of {total} working"
         return f"fail: 0 of {total} sessions working"
     except Exception as exc:  # noqa: BLE001
-        return f"fail: {type(exc).__name__}"
+        # Name the cause, not just the class. "fail: ProgrammingError" told an
+        # operator that something was wrong and nothing about what.
+        logger.warning(f"whatsapp readiness check failed: {exc}")
+        return f"fail: {type(exc).__name__}: {str(exc)[:120]}"
 
 
 @router.get("/readyz/deep")
