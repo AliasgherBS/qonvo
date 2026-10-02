@@ -14,7 +14,8 @@ runs code.
 
 Python 3.12 + FastAPI + arq (async workers) · Next.js 15 + Auth.js + Tailwind 4 · Postgres 16 +
 pgvector · Redis 7 · MinIO · Caddy · **WAHA** for WhatsApp
-(`devlikeapro/waha:latest-2026.6.2` — engine-prefixed tag; latest-* = WEBJS build).
+(`devlikeapro/waha:latest-2026.7.2` on production, with
+`QONVO_WAHA_DEFAULT_ENGINE=NOWEB` set deliberately — do not infer the engine from the tag).
 Everything runs as one Docker Compose stack on a single VPS, built multi-tenant from day one.
 
 **AI providers are config-driven, not hard-coded.** One OpenAI-compatible adapter covers OpenAI,
@@ -195,7 +196,7 @@ Qonvo/
 | What | Where | Login |
 |---|---|---|
 | Production dashboard | https://qonvo.org | real accounts |
-| Staging dashboard | https://dev.qonvo.org | `admin@qonvo.dev` — password in `~/qonvo-migration/staging-admin-password.txt` |
+| Staging dashboard | https://dev.qonvo.org | `admin@qonvo.dev` / `admin@qonvo.dev` seeded by `seed_dev.py`; the password file this row used to name does not exist |
 | Local dashboard | http://localhost:3012 (staging build) | same as staging |
 | WAHA Swagger (local) | http://localhost:3001 | `X-Api-Key` from `.env` |
 | Postgres (local dev) | `localhost:5433` | `qonvo_app` / `qonvo` per `.env` |
@@ -282,7 +283,9 @@ it implies: [`docs/CAPACITY-AND-SCALING.md`](docs/CAPACITY-AND-SCALING.md).
   silently. This is also why the VPS migration carried the key across byte-identical.
 - Production SSH is **key-only**, root login is `prohibit-password`, and the `qonvo` user
   has **no sudo at all**. netcup's VNC console in SCP is the break-glass path.
-- Still open: no rate limiting on auth endpoints, backups local-only.
+- Still open: backups are local-only. (Auth rate limiting was **closed on 2026-09-08**:
+  `app/core/throttle.py`, login 10 per 15 minutes, signup and reset 5 per hour. This line
+  claimed otherwise until 2026-10-03.)
 
 ## Infrastructure gotchas (hard-won, 2026-09-10)
 

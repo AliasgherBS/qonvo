@@ -1,0 +1,20 @@
+{
+  "name": "qonvo-e2e",
+  "private": true,
+  "description": "Browser-driven UI regression suite. Deliberately its own package so the dashboard build never carries Playwright.",
+  "scripts": {
+    "test": "playwright test",
+    "billing": "playwright test --grep @billing",
+    "auth": "playwright test --grep @auth",
+    "knowledge": "playwright test --grep @knowledge",
+    "inbox": "playwright test --grep @inbox",
+    "settings": "playwright test --grep @settings",
+    "team": "playwright test --grep @team",
+    "analytics": "playwright test --grep @analytics",
+    "smoke": "playwright test --grep @smoke",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0"
+  }
+}

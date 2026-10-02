@@ -18,6 +18,14 @@ engine: AsyncEngine = create_async_engine(
     echo=settings.debug,
     pool_pre_ping=True,
     future=True,
+    # Sized explicitly (CAPACITY-AND-SCALING.md P2). SQLAlchemy's defaults gave
+    # every process 5+10, which across api, worker and scheduler is 90 possible
+    # connections against max_connections=100 -- and the failure mode when it
+    # tips over is a burst of TooManyConnections, not a slowdown.
+    pool_size=settings.db_pool_size,
+    max_overflow=settings.db_max_overflow,
+    pool_recycle=settings.db_pool_recycle_seconds,
+    pool_timeout=settings.db_pool_timeout_seconds,
 )
 
 async_session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
@@ -35,6 +43,13 @@ system_engine: AsyncEngine = (
         echo=settings.debug,
         pool_pre_ping=True,
         future=True,
+        # Deliberately small: this engine serves a handful of trusted
+        # cross-tenant lookups, so it must never be the reason the box runs out
+        # of connections for ordinary requests.
+        pool_size=settings.db_system_pool_size,
+        max_overflow=settings.db_system_max_overflow,
+        pool_recycle=settings.db_pool_recycle_seconds,
+        pool_timeout=settings.db_pool_timeout_seconds,
     )
     if settings.system_database_url
     else engine

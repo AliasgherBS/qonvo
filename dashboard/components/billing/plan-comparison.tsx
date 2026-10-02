@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CONTACT } from "@/lib/contact";
-import type { PlanInfo, TenantUsage } from "@/lib/api";
+import { formatPlanPrice, type PlanInfo, type TenantUsage } from "@/lib/api";
 
 /**
  * What else the owner could be on, with the four allowances that differ
@@ -150,7 +150,21 @@ export function PlanComparison({
                   }`}
                 >
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <p className="text-base font-bold">{plan.name}</p>
+                    {/* The price belongs beside the name, not on the gateway's
+                        page. An owner used to read four allowances, press this
+                        button, and meet the cost for the first time on a
+                        checkout they had already committed to. */}
+                    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
+                      <p className="text-base font-bold">{plan.name}</p>
+                      {formatPlanPrice(plan.price) ? (
+                        <p className="text-sm text-muted-foreground">
+                          <span className="font-semibold text-foreground">
+                            {formatPlanPrice(plan.price)}
+                          </span>
+                          {plan.price?.interval ? ` a ${plan.price.interval}` : null}
+                        </p>
+                      ) : null}
+                    </div>
                     <Button
                       variant={isCurrent ? "outline" : "primary"}
                       disabled={isCurrent || pending !== null}

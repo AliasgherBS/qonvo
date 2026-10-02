@@ -1,0 +1,133 @@
+# Browser-driven UI tests, deliberately NOT on every push.
+#
+# CI minutes are real, and a full UI suite on every commit is how a suite stops
+# being run at all. Two ways in instead:
+#
+#   1. A pull request that touches a module runs THAT module only. A billing PR
+#      runs the billing specs and nothing else.
+#   2. workflow_dispatch, to run any module (or everything) on demand.
+#
+# The target is staging, which lives behind a tunnel on a workstation. If it is
+# unreachable the job says so loudly and succeeds, because a developer's laptop
+# being off must not block an unrelated pull request.
+name: UI tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      module:
+        description: Which suite to run
+        required: true
+        default: smoke
+        type: choice
+        options: [smoke, billing, responsive, all]
+      base:
+        description: Target base URL (defaults to staging)
+        required: false
+        type: string
+  pull_request:
+    branches: [dev]
+
+concurrency:
+  group: ui-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  select:
+    name: Which suites does this change need?
+    runs-on: ubuntu-latest
+    outputs:
+      grep: ${{ steps.pick.outputs.grep }}
+      label: ${{ steps.pick.outputs.label }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - id: pick
+        name: Map changed files onto module tags
+        env:
+          EVENT: ${{ github.event_name }}
+          CHOICE: ${{ inputs.module }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            case "$CHOICE" in
+              all) echo "grep=." >> "$GITHUB_OUTPUT" ;;
+              *)   echo "grep=@$CHOICE" >> "$GITHUB_OUTPUT" ;;
+            esac
+            echo "label=$CHOICE (requested)" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          base="${{ github.event.pull_request.base.sha }}"
+          head="${{ github.event.pull_request.head.sha }}"
+          changed=$(git diff --name-only "$base" "$head" || true)
+          echo "changed files:"; echo "$changed" | sed 's/^/  /'
+
+          tags=""
+          add() { case "$tags" in *"$1"*) ;; *) tags="${tags:+$tags|}$1" ;; esac; }
+
+          # A module is "touched" when its own code moves. The suite is tagged
+          # the same way, so the mapping is one line per module.
+          echo "$changed" | grep -qE 'billing|plans\.py|polar' && add '@billing' || true
+          echo "$changed" | grep -qE 'dashboard/components/(layout|nav)|middleware\.ts' && add '@smoke' || true
+          echo "$changed" | grep -qE 'dashboard/app/\(dashboard\)|globals\.css|tailwind' && add '@responsive' || true
+          # A change to the suite itself, or to the shared API client, earns a
+          # full run: both can break every module at once.
+          echo "$changed" | grep -qE '^e2e/|dashboard/lib/api\.ts' && tags="." || true
+
+          if [ -z "$tags" ]; then
+            echo "grep=" >> "$GITHUB_OUTPUT"
+            echo "label=nothing to run" >> "$GITHUB_OUTPUT"
+          else
+            echo "grep=$tags" >> "$GITHUB_OUTPUT"
+            echo "label=$tags" >> "$GITHUB_OUTPUT"
+          fi
+
+  ui:
+    name: Run ${{ needs.select.outputs.label }}
+    needs: select
+    if: needs.select.outputs.grep != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm, cache-dependency-path: e2e/package-lock.json }
+
+      - name: Is the target reachable?
+        id: reach
+        env:
+          BASE: ${{ inputs.base || vars.QONVO_E2E_BASE || 'https://dev.qonvo.org' }}
+        run: |
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          if curl -sSf -m 20 -o /dev/null "$BASE"; then
+            echo "up=1" >> "$GITHUB_OUTPUT"
+          else
+            echo "up=0" >> "$GITHUB_OUTPUT"
+            echo "::warning title=UI tests skipped::$BASE is unreachable, so no UI test ran for this change."
+          fi
+
+      - if: steps.reach.outputs.up == '1'
+        working-directory: e2e
+        run: npm ci
+
+      - if: steps.reach.outputs.up == '1'
+        working-directory: e2e
+        run: npx playwright install --with-deps chromium
+
+      - if: steps.reach.outputs.up == '1'
+        working-directory: e2e
+        env:
+          QONVO_E2E_BASE: ${{ steps.reach.outputs.base }}
+          QONVO_E2E_API: ${{ vars.QONVO_E2E_API || 'https://dev-api.qonvo.org' }}
+          QONVO_E2E_OWNER_EMAIL: ${{ secrets.QONVO_E2E_OWNER_EMAIL }}
+          QONVO_E2E_OWNER_PASSWORD: ${{ secrets.QONVO_E2E_OWNER_PASSWORD }}
+        run: npx playwright test --grep "${{ needs.select.outputs.grep }}"
+
+      - if: always() && steps.reach.outputs.up == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: e2e/playwright-report/
+          retention-days: 7

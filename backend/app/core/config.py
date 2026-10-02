@@ -103,6 +103,39 @@ class Settings(BaseSettings):
     conversation_lock_retry_delay_seconds: float = 2.0
     job_max_retries: int = 3
 
+    # --- Concurrency and pools (CAPACITY-AND-SCALING.md P1, P2) --------------- #
+    #
+    # P1: arq's own default for ``max_jobs`` is 10, and WorkerSettings never set
+    # it. Grepping for ``max_jobs`` returned nothing, so the natural conclusion
+    # was that no limit existed -- the throughput ceiling of this product was a
+    # number in a dependency's source. The default stays 10 so nothing shifts
+    # under anyone; the value of naming it is that it is now visible.
+    #
+    # Raising it without raising the pools below converts a throughput win into
+    # an outage, which is why P2 comes first in the document and in this block.
+    worker_max_jobs: int = 10
+
+    # P2: both engines were created with SQLAlchemy's defaults (pool_size=5,
+    # max_overflow=10). api + worker + scheduler is 90 potential connections
+    # against max_connections=100, and one extra worker replica takes it past
+    # the limit -- surfacing as a burst of TooManyConnections rather than as a
+    # graceful slowdown. Sized per process, because the three have very
+    # different shapes: the API is many short requests, the worker is a few long
+    # ones, the scheduler is nearly idle.
+    db_pool_size: int = 5
+    db_max_overflow: int = 10
+    #: The BYPASSRLS engine is used only on trusted cross-tenant paths (webhook
+    #: tenant resolution, fleet scans), so it needs far fewer connections than
+    #: the app engine and should never be the reason the box runs out.
+    db_system_pool_size: int = 2
+    db_system_max_overflow: int = 3
+    #: Recycle before a connection is old enough for the server or a proxy to
+    #: have dropped it underneath us.
+    db_pool_recycle_seconds: int = 1800
+    #: Fail fast rather than queueing for ever when the pool is exhausted; a
+    #: request that waits 30s has already lost the user.
+    db_pool_timeout_seconds: int = 10
+
     # --- Send gateway pacing (DESIGN.md §5.6) ---
     send_min_delay_seconds: float = 3.0
     send_max_delay_seconds: float = 8.0
