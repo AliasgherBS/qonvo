@@ -413,3 +413,9 @@ class WorkerSettings:
     on_shutdown = on_shutdown
     max_tries = settings.job_max_retries
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
+    #: The throughput ceiling, named (CAPACITY-AND-SCALING.md P1). arq defaults
+    #: this to 10 and nothing here used to set it, so the limit was invisible:
+    #: grepping the codebase for it found nothing and the reasonable conclusion
+    #: was that there was no limit at all. Still 10, so this change moves no
+    #: behaviour; it only makes the number something you can find and tune.
+    max_jobs = settings.worker_max_jobs
