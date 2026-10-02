@@ -304,3 +304,72 @@ def test_the_api_leaves_a_missing_url_alone():
     from app.api.knowledge import _checked_url
 
     assert _checked_url(None) is None
+
+
+# --- a compressed page must survive the hop through fetch_public_url -------- #
+#
+# Found on production, 3 October 2026: "add a website" failed for every URL
+# tried, with
+#
+#     httpx.DecodingError: Error -3 while decompressing data: incorrect header
+#     check
+#
+# `aiter_bytes()` yields bytes httpx has ALREADY decompressed, but the response
+# we rebuilt carried the original headers -- still announcing
+# `content-encoding: gzip`. httpx then decompressed the decompressed body and
+# failed. Since practically every host compresses, the feature was broken for
+# practically every website.
+
+
+def _rebuilt(headers: dict, body: bytes) -> httpx.Response:
+    """Exactly what fetch_public_url does when it hands the response back."""
+    kept = httpx.Headers(
+        [
+            (name, value)
+            for name, value in httpx.Headers(headers).multi_items()
+            if name.lower() not in ("content-encoding", "content-length")
+        ]
+    )
+    return httpx.Response(
+        status_code=200,
+        headers=kept,
+        content=body,
+        request=httpx.Request("GET", "https://example.test"),
+    )
+
+
+def test_an_already_decoded_body_is_not_decoded_twice():
+    page = b"<html><body><h1>Hours</h1><p>We open at nine.</p></body></html>"
+    response = _rebuilt(
+        {"content-type": "text/html; charset=utf-8",
+         "content-encoding": "gzip",
+         "content-length": "999"},
+        page,
+    )
+    assert "We open at nine" in response.text
+
+
+@pytest.mark.parametrize("encoding", ["gzip", "br", "deflate", "zstd"])
+def test_every_encoding_a_host_might_use_survives(encoding):
+    response = _rebuilt({"content-encoding": encoding}, b"<p>plain text</p>")
+    assert "plain text" in response.text
+
+
+def test_carrying_the_encoding_header_over_is_what_broke_it():
+    """The failing case, pinned, so the header stripping cannot be tidied away."""
+    with pytest.raises(httpx.DecodingError):
+        httpx.Response(
+            status_code=200,
+            headers={"content-encoding": "gzip"},
+            content=b"<p>already decompressed</p>",
+            request=httpx.Request("GET", "https://example.test"),
+        )
+
+
+def test_the_headers_that_still_describe_the_body_are_kept():
+    response = _rebuilt(
+        {"content-type": "text/html; charset=utf-8", "content-encoding": "gzip"},
+        b"<p>hi</p>",
+    )
+    assert response.headers["content-type"] == "text/html; charset=utf-8"
+    assert "content-encoding" not in response.headers

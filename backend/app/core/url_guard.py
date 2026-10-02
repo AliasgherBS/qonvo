@@ -190,11 +190,26 @@ async def fetch_public_url(
                             "that page is too large to read as knowledge "
                             f"(limit {MAX_RESPONSE_BYTES // (1024 * 1024)} MB)"
                         )
-                # Hand back a response the caller can read `.text` from, with
-                # the encoding httpx worked out from the headers preserved.
+                # Hand back a response the caller can read `.text` from.
+                #
+                # `aiter_bytes()` yields bytes httpx has ALREADY decompressed,
+                # so the content-encoding header that came with the response no
+                # longer describes the body we are holding. Carrying it over
+                # made httpx decompress a second time on `.text`, which fails
+                # as `DecodingError: incorrect header check` -- and since
+                # practically every host compresses, "add a website" failed for
+                # practically every website. Content-length goes for the same
+                # reason: it describes the compressed body, not this one.
+                headers = httpx.Headers(
+                    [
+                        (name, value)
+                        for name, value in resp.headers.multi_items()
+                        if name.lower() not in ("content-encoding", "content-length")
+                    ]
+                )
                 return httpx.Response(
                     status_code=resp.status_code,
-                    headers=resp.headers,
+                    headers=headers,
                     content=bytes(body),
                     request=resp.request,
                 )
