@@ -120,6 +120,7 @@ was left stuck. Production is now the only stack answering that number. The
 
 | | What | Where |
 |---|---|---|
+| C9 | `/readyz/deep`'s own query was invalid SQL, found by the probe itself | #81 |
 | F2 | The plan picker names a price, read from the provider rather than copied into `plans.py` | #76 |
 | F3 | `change-plan`, `cancel` and `resume` answer 409 or 502 instead of 200 | #76 |
 | F4 | The trial banner links to the plans it used to send people past | #76 |
@@ -436,3 +437,52 @@ its pre-audit value of 2.
 Observed in passing: the dashboard returns **502 for a few seconds during every deploy**
 while its container swaps. The Deploy workflow's own health check passed, so nothing
 rolled back, but there is no zero-downtime swap on the dashboard.
+
+
+---
+
+## 9. Where it ended
+
+Production went from **v0.12.0** (three weeks stale) to **v0.14.1** across this
+session, in four releases, with every change through a pull request and CI.
+
+### Verified on production after shipping
+
+| Check | Result |
+|---|---|
+| URL knowledge ingestion, on the two URLs that failed before | both `ready` |
+| `/readyz/deep` | `{"llm":"ok","whatsapp":"ok: 1 of 2 working"}` |
+| `/readyz` (the deployment gate) | unchanged, `ok` throughout |
+| Conversation state after unlinking the laptop | all five `bot_active` |
+
+**`1 of 2 working` is worth acting on.** The fleet has two WhatsApp sessions and
+one is not connected. That is the new probe doing exactly what it was built for
+on its first day, and it is the kind of thing the old `/readyz` would have
+reported as `ok`.
+
+### [F] C9 - the probe reported itself
+
+`/readyz/deep` shipped in v0.14.0 with `lower(session_status)` in its query,
+which Postgres has no function for, so the check raised `ProgrammingError` on
+every call. It was caught within minutes **by the probe itself**, `/readyz`
+stayed green, and the deploy did not roll back -- the separation between the two
+routes earning itself on day one. Fixed in v0.14.1.
+
+### What still needs you
+
+| | Why it is yours |
+|---|---|
+| **The three Polar product descriptions** | Product metadata in the Polar dashboard. No deploy. Scale still describes Growth. |
+| **The real WhatsApp retest** | Deferred to last by agreement, now unblocked: the laptop is unlinked and production is the sole responder. |
+| **Delete "Zephyr Clinic QA"** | A real tenant created on production for this audit. Hard-delete it from Admin. |
+| **`QONVO_MINIO_ACCESS_KEY`** | Secret rotation on production. |
+| **Backups are local-only** | An infrastructure decision, not a code change. |
+| **One number is not connected** | `1 of 2` fleet sessions working. |
+
+### Still untested
+
+Skills that act (booking, order, lead capture), Google Calendar and Sheets,
+takeover from the inbox UI, accepting a team invite as a staff user, file upload
+ingestion, the admin console, completing a card payment, and session recovery.
+The UI suite now exists to grow into these; today it covers billing, navigation
+and phone width.
