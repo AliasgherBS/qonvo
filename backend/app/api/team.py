@@ -406,6 +406,19 @@ async def accept_invitation(
                 detail={"code": "weak_password", "reasons": exc.reasons},
             ) from exc
         user.hashed_password = hash_password(body.password)
+        # Apply the name they just typed. This branch activates an account that
+        # existed without a password, which is account CREATION from the
+        # invitee's side: the form asks for a name, validates it, and used to
+        # throw it away, leaving whatever name the row already carried. A
+        # staff member accepted an invitation as "Ali2" and appeared on the
+        # team as somebody else entirely.
+        #
+        # Only when they supplied one, and only onto an empty name or an
+        # account being activated -- accepting an invitation is not a licence
+        # to rename an established user.
+        typed = (body.full_name or "").strip()
+        if typed:
+            user.full_name = typed
 
     # Add membership if not already present (idempotent accept).
     membership = (
