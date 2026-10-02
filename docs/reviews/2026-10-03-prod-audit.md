@@ -486,3 +486,82 @@ takeover from the inbox UI, accepting a team invite as a staff user, file upload
 ingestion, the admin console, completing a card payment, and session recovery.
 The UI suite now exists to grow into these; today it covers billing, navigation
 and phone width.
+
+
+---
+
+## 10. Final sweep - everything reachable without a person
+
+Run after the fixes shipped, against production on v0.14.1.
+
+### [G] File ingestion works for every type the parser claims
+
+Never tested before this. Four fixtures were built and first proved against the
+project's own parsers, then uploaded to production:
+
+| File | Result |
+|---|---|
+| `hours.txt` | `ready` |
+| `services.csv` | `ready` |
+| `policies.pdf` | `ready` |
+| `policies.docx` | `ready` |
+| A 25 MB upload on a 20 MB plan | `413`, refused |
+
+That closes the class of the 2026-09-05 `FileNotFoundError`, where the API and
+worker did not share a volume and every upload hung on "Processing".
+
+### [G] Analytics is internally consistent
+
+| Check | Result |
+|---|---|
+| Ranges genuinely filter | 1 day: 2 · 2 days: 2 · 7 days: 2 · 30 days: 74 |
+| A wider range never returns fewer | holds |
+| **The daily series sums to the headline total** | **74 = 74, exactly** |
+| Every section the page reads is present | 6 of 6 |
+| Outbound voice seconds recorded | 172s across 2 replies, 86s average |
+
+The series summing exactly to the total is the useful one: it means the chart
+and the tiles cannot disagree.
+
+### [G] Gaps, notifications, onboarding, conversation states
+
+- Gaps carry `question`, `count` and `last_asked`, and **no small talk has been
+  logged since the v0.12.0 fix** - one gap recorded since 11 September, and it
+  is a real question.
+- Notifications read; five recorded, none unread.
+- The onboarding checklist derives from real data rather than a static list.
+- All five conversations report `bot_active`, confirming the release in section 8
+  held.
+
+### [G] Debounce - resolved, and it passes
+
+Left unproven in section 0 for want of the configured window. It is
+`debounce_window_seconds = 5.0`, which settles it:
+
+```
+20:37:56  Hi                  -+
+20:37:56  Are you open         |  within 5s  ->  ONE reply
+20:38:02  I need an appointment   6s later, outside the window -> its own reply
+```
+
+Two replies to three messages is **correct**. The window collapsed the pair and
+the third message was a new turn.
+
+### [?] C4 - inbound voice duration, and why it has never been observed
+
+`record_billed_usage` is called, in its own docstring's words, "right after the
+model answers". On a paused conversation no model call happens, so nothing is
+recorded. Today's voice note arrived on exactly that path, and the other five
+predate migration `0019_voice_seconds_in`.
+
+**So the column has never once been written on an unpaused conversation since it
+existed.** The code reads correctly and is called from four separate paths; it
+has simply never had the chance. One voice note on the retest settles it, and it
+matters because generated voice is the metered quantity.
+
+### Artefacts
+
+All removed. Zephyr Clinic QA is back to zero knowledge sources, test01 to its
+original two. The production session cookie committed during this session was
+revoked and verified dead - the bearer answers `invalid token: revoked` and the
+cookie bounces to login.
