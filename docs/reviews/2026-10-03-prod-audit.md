@@ -98,6 +98,104 @@ plan meters.
 
 ---
 
+## 8. Second pass - what was fixed, and what the fixing found
+
+Everything in sections 1 to 7 was a first pass. This section is the work that
+followed, in the order it was done.
+
+### Resolved: P0, the number served by two stacks
+
+The local WAHA session was stopped, and the conversation it had parked was
+released:
+
+```
+POST /api/conversations/{id}/release  ->  200 {"state": "bot_active"}
+```
+
+All five conversations on the tenant are `bot_active`, so no real customer chat
+was left stuck. Production is now the only stack answering that number. The
+**real WhatsApp retest is still outstanding** and is the last thing to do.
+
+### Shipped
+
+| | What | Where |
+|---|---|---|
+| F2 | The plan picker names a price, read from the provider rather than copied into `plans.py` | #76 |
+| F3 | `change-plan`, `cancel` and `resume` answer 409 or 502 instead of 200 | #76 |
+| F4 | The trial banner links to the plans it used to send people past | #76 |
+| P2 | Database pools sized explicitly per process, instead of 90 possible connections against a limit of 100 | #78 |
+| P1 | `max_jobs` named rather than inherited from arq's source | #78 |
+| P4 | `/readyz/deep`, which asks whether the product can actually answer | #78 |
+| - | A UI regression suite, per module, not on every push | #77 |
+| C7 | Adding a website failed for almost every website | #79 |
+
+On **F2**, the price is read from Polar rather than added to `plans.py`, whose
+own docstring says prices deliberately do not live there. The audit proved the
+point: the Polar products still describe 20 voice minutes on a plan that grants
+180. A third copy would have recreated F1 facing the other way.
+
+On **P4**, the deep checks are a separate route on purpose. The deploy workflow
+greps `/readyz` for `"status":"ok"` and rolls back when it does not find it, so
+a tenant mid-rescan must not be able to fail a release.
+
+### [F] C7 - High. Adding a website failed for almost every website
+
+Found by testing the areas the first pass never touched. Every URL tried came
+back `error`:
+
+```
+httpx.DecodingError: Error -3 while decompressing data: incorrect header check
+  url_guard.py:195 in fetch_public_url
+```
+
+`aiter_bytes()` yields bytes httpx has **already** decompressed, and the
+response rebuilt around them carried the original headers, still announcing
+`content-encoding: gzip`. httpx then decompressed the decompressed body.
+
+Compression is the default on essentially every host, so one of the three ways
+a tenant teaches their rep anything -- and the one on the onboarding checklist
+-- was broken for essentially every website. It failed quietly: the row sat at
+`error` with no reason an owner could act on.
+
+### The untouched half, swept
+
+Against a tenant created for the purpose, so no live tenant was written to.
+
+| [G] | Verified |
+|---|---|
+| Pasted knowledge ingests to `ready`, and the worker picks it up | pass |
+| Knowledge usage counts against the plan and reports every meter | pass |
+| Behavior config saves and reads back, then restores | pass |
+| A stale config version is refused with `409` and a human message | pass |
+| All eight skills are listed with their gating | pass |
+| Team reads; an invitation is created and revoked | pass |
+| Re-inviting the same address **replaces** the pending invite rather than adding one | pass |
+| Tenant data exports | pass |
+| `/api/admin/*` refuses a plain owner with `403`, three for three | pass |
+
+### Three more findings I checked and withdrew
+
+Checking first is now the habit, after section 4.
+
+| Withdrawn | Why |
+|---|---|
+| "Duplicate invitations are not refused" | Two 201s, but never two *pending*. Re-inviting replaces. H2 holds. |
+| "A stale version is not refused" | I sent 5,000 characters of instructions, so it died on the 2,000 cap before the version was ever checked. |
+| "Staging is serving no JavaScript" | It was mid-rebuild, serving the HTML fallback for old chunk URLs. Same class as the deploy 502. |
+
+### [F] C8 - Medium. Staging can serve a new frontend against a stale backend
+
+The first run of the new UI suite failed on cost leakage against staging, and
+the cause was staging itself: its **dashboard rebuilds automatically and its
+API, worker and scheduler containers do not**. Staging's API container was three
+days old and still shipped `cost`, fixed in v0.13.0 and live on production.
+
+A staging environment that silently mixes versions will keep producing findings
+that are about staging rather than about the code. It is now in the suite's
+README, and `./qonvo-staging.sh up` is the fix.
+
+---
+
 ## 1. The billing findings, worst first
 
 ### [F] F1 — Critical. The Scale checkout page describes the Growth plan

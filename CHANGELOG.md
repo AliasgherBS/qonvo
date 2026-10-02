@@ -9,6 +9,74 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+### Added
+
+- **The plan picker names a price.** `GET /api/billing/plans` returned `key`, `name`
+  and `entitlements` and nothing else, so `/billing` physically could not show a cost.
+  An owner read four allowances, pressed Choose, and met the figure for the first time
+  on a checkout page they had already committed to. The price is read **from the payment
+  provider**, not added to `plans.py` -- that file says in its own docstring that prices
+  deliberately do not live there, and the 3 October audit proved why: the Polar products
+  still promise 20 voice minutes on a plan that grants 180, and the $60 Scale product
+  carries Growth's description verbatim. A third copy here would have recreated the same
+  bug facing the other way. A plan the provider cannot price renders without a figure
+  rather than as free, and a provider outage leaves the page renderable.
+
+- **`/readyz/deep`, a readiness probe that can tell healthy from dead.** On 2026-09-09 a
+  firewall rule blocked all outbound TCP: WAHA could not reach WhatsApp, the LLM was
+  unreachable, the bot was silent -- and `/readyz` reported everything ok throughout,
+  because `waha: ok` only ever meant the API could reach the WAHA *container*. The new
+  route adds the two things whose absence means no reply can be produced: the LLM
+  endpoint is reachable, and some number is actually `WORKING`. Cached for 30 seconds
+  with a 5 second timeout, and deliberately a connection check rather than a completion,
+  because a readiness probe that spends money every thirty seconds is one nobody can
+  leave running. It is a separate route because the deploy workflow greps `/readyz` for
+  `"status":"ok"` and rolls back when it does not find it, so a tenant mid-rescan must
+  not be able to fail a release.
+
+- **A browser-driven UI regression suite** (`e2e/`), the first in this repository. CI ran
+  typecheck, lint, a brand gate and a build, which proves the app compiles and never that
+  a button works. It runs **per module rather than on every push**: a pull request that
+  touches billing runs the billing specs and nothing else, and `workflow_dispatch` runs
+  any module on demand. Every assertion is a bug that actually reached production.
+
+### Fixed
+
+- **Adding a website failed for almost every website.** `fetch_url_text` returned
+  `httpx.DecodingError: Error -3 while decompressing data: incorrect header check` for
+  every URL tried. `aiter_bytes()` yields bytes httpx has **already** decompressed, and
+  the response rebuilt around them carried the original headers, still announcing
+  `content-encoding: gzip`, so httpx decompressed the decompressed body. Compression is
+  the default on essentially every host, so one of the three ways a tenant teaches their
+  rep anything -- and the one on the onboarding checklist -- was broken for essentially
+  every site. It failed quietly, too: the row sat at `error` with no reason an owner
+  could act on.
+
+- **A failed billing call no longer answers 200.** `change-plan`, `cancel` and `resume`
+  all returned `200 {"ok": false}`, so a client checking the status code believed the
+  plan had changed. Reported as L3 on 11 September. The body keeps its shape; only the
+  status moves, to **409** when there is no subscription to act on and **502** when the
+  provider is unreachable.
+
+- **The trial banner stops sending owners to a human.** It read "Contact your Qonvo rep
+  to go paid" while `/billing` offered working self-serve checkout three clicks away.
+
+### Changed
+
+- **Database pools are sized explicitly, per process.** Both engines used SQLAlchemy's
+  defaults, which across api, worker and scheduler is 90 possible connections against
+  `max_connections=100` -- and one extra worker replica takes it past the limit,
+  surfacing as a burst of `TooManyConnections` rather than a graceful slowdown. The
+  BYPASSRLS engine is kept deliberately small, since it serves a handful of trusted
+  cross-tenant lookups and must never be why ordinary requests cannot get a connection.
+
+- **The worker's concurrency ceiling has a name.** arq defaults `max_jobs` to 10 and
+  `WorkerSettings` never set it, so grepping the codebase for it returned nothing and the
+  reasonable conclusion was that no limit existed: the throughput ceiling of this product
+  was a number in a dependency's source. It is still 10, so nothing moves; the point is
+  that it can now be found and tuned.
+
+
 ## [0.13.0] - 2026-10-03
 
 ### Added
