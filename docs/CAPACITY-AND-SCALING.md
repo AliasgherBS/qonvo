@@ -61,7 +61,7 @@ single tenant at ~11–20 replies/min, and `daily_cap` at 500/day.
 
 ## 2. The work, in priority order
 
-### P1 — the 10-slot concurrency limit is invisible
+### P1 — the 10-slot concurrency limit is invisible — **FIXED 2026-10-03**
 
 The single thing between the current config and 3× throughput — and it is
 **not hard-coded, it is unset**. `WorkerSettings`
@@ -81,7 +81,7 @@ becomes *visible* as that it becomes tunable.
 **Do not raise it without P2.** More slots means more concurrent database
 sessions, and the pool maths below is already tight.
 
-### P2 — Postgres runs out of connections before it runs out of CPU
+### P2 — Postgres runs out of connections before it runs out of CPU — **FIXED 2026-10-03**
 
 [`session.py:16`](../backend/app/db/session.py) creates **two** engines with
 SQLAlchemy defaults (`pool_size=5`, `max_overflow=10` each). api + worker +
@@ -98,7 +98,7 @@ Default **128 MB**, while a single RAG query touches a measured **125 MB**. Ever
 concurrent query is fighting for the whole buffer pool. At 8 GB:
 `shared_buffers=2GB`, `effective_cache_size=5GB`.
 
-### P4 — Health checks report green during a total outage
+### P4 — Health checks report green during a total outage — **FIXED 2026-10-03**
 
 **Found live on 2026-09-09**, not in the load test. With all outbound TCP
 blocked at the network firewall — WAHA unable to reach WhatsApp, the LLM
@@ -192,3 +192,17 @@ picked up in any order.
 P2 (pools)  →  P1 (max_jobs)  →  P4 (real health checks)  →  P3 (shared_buffers)
 P5 · P6 · P7 · P8 · P9 — independent
 ```
+
+**P2, P1 and P4 landed on 2026-10-03.** Pools and `max_jobs` are now explicit
+and env-driven, with every default left where it was: the value of that change
+is that the ceiling became visible, not that it moved. Raising
+`QONVO_WORKER_MAX_JOBS` is now a one-line change that no longer needs a reading
+of arq's source first.
+
+P4 landed as a **separate route**, `/readyz/deep`, rather than as more checks on
+`/readyz`. The deploy workflow greps `/readyz` for `"status":"ok"` and rolls
+back when it does not find it, so a tenant whose number is mid-rescan must not
+be able to fail a release. Point uptime monitoring at `/readyz/deep` and leave
+the deployment gate on `/readyz`.
+
+`P3` (`shared_buffers`) is next and is pure Postgres configuration.

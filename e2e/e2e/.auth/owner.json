@@ -1,0 +1,35 @@
+{
+  "cookies": [
+    {
+      "name": "__Host-authjs.csrf-token",
+      "value": "8ab42b7f96d7678d2d1dc50c5aa75826bf13c27ac915201a21b8d85d7f2647db%7Ccec3cb9a9109fbecbf06fdad0f6c65f6f079ffcde6022f703e1525cab42159af",
+      "domain": "dev.qonvo.org",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "__Secure-authjs.callback-url",
+      "value": "https%3A%2F%2Fdev.qonvo.org%2Finbox",
+      "domain": "dev.qonvo.org",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "__Secure-authjs.session-token",
+      "value": "eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2Q0JDLUhTNTEyIiwia2lkIjoiOXotVTFuSU5BMmgyWVdvYVppOHEzVWtwRGJQNkljaDNKNlV4MFBudGFXdlJxLU81R3Z4czJ3VXZubzAtUERmODJkZUkwb1o5U3BxRDl6bUItZnhNNUEifQ..vWWIMidV2BDr9KnJiMjX6g.UlL3LPFlKae7WbyJDu7o7tdqxi1t0c6SoZpVayGHoRGKL5BtxkZVJ7QQ5Lp5TVjIF1fzXUIkhhmMN21-fuDA0jwZ4m_HQqv_Qve8A1M8vnufeRmFF8cCSuHkcQ8x_TxqC3QfqqEKqjH2w8xYpQByQ9Lgm96Qj7HDgZ0KkUqFHqNSVwHZy48r0GkBZc8vbOMJ6uUeXqw2vsacNuq1IhletAyAf9Y0nMaTJqIfahKs_BiKYIb5wnvDcxs5HX1QkC-Xu98m4zgvAHpM1mr1SOi5CV4Qwb_y5JMBqqaSySnYP5D_Xu1XQnRZkJoi_2EW8niq1xBWLCBt45yz0Xdu9yjUYcodBPgrwh4kKecJCekFoQxk7igVFihr10Y-53e7LHkuTgi5sXgJn2Q1BeQDUfxLaur_U3THF8fMBO5QqyCEVtznkMuj0xfmH1lhcuWjdQT7f3Gp3cEgVS-O1o6m5PlDyUR66eVs6dGsq4oWWdeV5X1ve9FKw7mloImXTrex4MLwNR62a1S5Cnekf_Xl-UsKbOXnLropSvsl_2fkvtaob1QzBAKVVxfwjrxxL_ad-PWVhXhKV6S-ApiRqSlbioNOW66QYgBQurE-nHWcsEQCw45R2xeGeJG7T3KGcnoPT1Rl_3jhNm0vupNvI98Xvw90KXSGIhEijrq9g0APr-3OzPm3nxhkisCVKse0TPRSROskElDTKxCvwznSCWMq0hEY40f82saOKQUztLHswluYA4EImlZAmMT2uVPFFPg-koVuYBKHs1XUGeXim4KqqrfLieRQvd-tzI3pVc7kwL4iUN9TxrYguJPCzlTjUR9wtggW-YBfwbTwtPYqNeL_c8BubBllDSuwNmUqM7Xe7EX7T8rBW6uzxPF-YVNOXAAZiaswLAmPdU9tvk6Z7X0_Aqy1UOma-ve-X_ryA6m63J2o-lxphk-ahCz4ypcHoKxSIp8biTOmrEbpubkAdvIgU567cI3rMu6g2oS1ZsjqT4abmpXaK7tMWZhfJGM6kh-O2pKrge7kYES9BVktMFf3aTyGMfNafqn6qH1_Pvz9S4MKpsE.We9Pp4ei3DDa4uI3x97NfP1OpwXmZx98omogbe40jHA",
+      "domain": "dev.qonvo.org",
+      "path": "/",
+      "expires": 1791063129.586787,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": []
+}
