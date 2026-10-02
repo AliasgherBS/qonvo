@@ -9,6 +9,114 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+### Added
+
+- **Voice and message shape in analytics.** `GET /api/analytics/summary` now reports
+  inbound and outbound voice (count, total seconds, average seconds) and
+  `message_shape` (count and average length per direction per type), plus
+  `voice_seconds_in` / `voice_seconds_out` on every point of the daily series. An owner
+  can finally answer "how long is a typical voice note" and "how long is a typical
+  reply", which is the shape of the thing they are selling. Inbound audio duration gets
+  its own column, because `voice_seconds` counts generated audio only and reusing it
+  would report the rep's own speech back as the customer's.
+
+- **Messages and voice as two views of one chart.** The two ask the same question of
+  numbers that cannot share an axis, so the view swaps the series and the chart reads
+  different accessors. Columns are buttons, so the figures are reachable by keyboard and
+  on touch, and the whole column is the target -- a zero day has no bar to aim at and
+  "nothing happened here" is worth being able to check.
+
+- **Three priced tiers on the landing page.** $10 Starter, $20 Growth, $60 Scale, with
+  Growth marked as where most businesses start. Every allowance is stated twice: as the
+  thing an owner is buying, and as the number the meter counts. Conversions are
+  deliberately conservative (a conversation taken as ten messages, both directions
+  counted).
+
+- **A language sampler on the landing page.** Pick a language, hear the same booking
+  exchange spoken in it -- five clips of real product output. Replaces a voice sample
+  that only ever demonstrated English sitting next to a claim about every language. The
+  transcripts are the strings that were sent to the synthesiser, not translations made
+  afterwards.
+
+- **Contact as its own landing section, and in the header.** It existed only as a
+  footnote under the pricing cards, which read as "how to ask about pricing" rather than
+  "how to reach us". Placed after the FAQ, where somebody with an unanswered question is
+  actually standing.
+
+### Changed
+
+- **Voice allowances meter generated audio only, and are much larger.** The allowance
+  used to bound transcription plus synthesis, which spent the owner's allowance on the
+  cheap half -- transcribing a minute costs $0.003, speaking one costs $0.0135 to
+  $0.027, so a customer sending voice notes could exhaust an allowance a business bought
+  for its replies. Transcription is now unlimited. With the meaning fixed the numbers
+  were far too small, so they move from 5/20/100 to **5 / 60 / 180 / 480** generated
+  minutes, re-costed against `docs/UNIT-ECONOMICS.md`. Trial's upload cap drops 50 MB to
+  20 MB.
+
+- **Pricing cards say "Sign up".** "Start free trial" under a card headed $20 a month
+  reads as a different offer to the one priced directly above it.
+
+- **Staging rebuilds itself.** `qonvo-staging-sync.timer` checks every minute whether
+  the dashboard sources changed and rebuilds if they did; a source edit was live on
+  `dev.qonvo.org` three minutes and sixteen seconds later. A failed build keeps the
+  previous one serving. Building and serving are now separate scripts, which is the
+  proper fix for a `--build` flag that ended by exec'ing the server and so could start a
+  second one fighting for port 3012 -- the symptom being a change that would not appear
+  no matter how many times you rebuilt.
+
+### Fixed
+
+- **A catalogue change reached nobody.** Entitlements are copied onto the tenant when a
+  plan is applied, not read live from `plans.py`, so editing the catalogue changed what
+  new tenants get and nothing at all for anyone who already existed. Everything you
+  would check looked right, because `/api/billing/plans` and the pricing page both read
+  the catalogue directly; only the tenant's own record was stale. **Every tenant in both
+  environments was missing `whatsapp_numbers`**, and the number limit shipped in 0.12.0
+  skips the check when the key is absent -- so that limit enforced nothing for every
+  tenant that existed before it shipped, which was all of them. Starter tenants were
+  also still on 5 voice minutes against a catalogue saying 60. Entitlements are now
+  re-derived from the plan the tenant is actually on. Two tests guard the class rather
+  than the instance: every plan must carry every entitlement key any plan defines, and
+  the trial must be the floor on every allowance.
+
+- **Our cost of goods was still being sent to tenants.** Teardown Y3 removed the "AI
+  cost" tile but deliberately left `cost` in the response. That was half a fix -- the
+  figure was still in `totals` and on every day of the series, so a customer with the
+  network tab open could read our margin on their own account. Not showing something is
+  not the same as not sending it. It is withheld where it is produced now; it remains
+  measured, priced, and readable through `/admin/usage`.
+
+- **The billing page said voice meters both directions.** It has not for a release. An
+  owner who believes a chatty customer can burn their allowance turns voice off for the
+  wrong reason. The copy now says so and says the generous half out loud. Nothing pinned
+  that behaviour before; there is a test now, asserting the split at both ends.
+
+- **The billing highlight pointed at team seats for every tenant alive.** An owner
+  occupies a seat by existing, so a two-seat plan started at 50% on day one and nothing
+  else cleared the 20% bar on a new tenant. Seats are now measured against the ones the
+  owner can choose to fill.
+
+- **The analytics hover card was drawn and then clipped.** `overflow-x-auto` makes the
+  plot a scroll container, and a scroll container clips on both axes.
+
+- **A series that is all zeroes drew an empty grid with a full axis.** A tenant with
+  plenty of messages and no voice got a chart that painted nothing while the page
+  insisted it was fine. Each view carries its own empty state. The axis also stopped
+  printing "1" twice when the tallest bar is 1.
+
+### Documentation
+
+- **What a tenant actually costs, per plan** (`docs/UNIT-ECONOMICS.md`), and the voice
+  economics of metering generation only.
+
+- **A plan for annual and half-yearly pricing** (`docs/ANNUAL-AND-HALF-YEARLY-BILLING.md`),
+  deferred rather than built. It records the finding that makes it worth writing down
+  first: **adding an annual product to `QONVO_BILLING_PRICE_MAP` today would be a live
+  mischarge risk**, because `_price_id_for` returns the first price mapping to a plan key
+  and the map is a plain dict from the environment -- so a customer clicking "$20 a
+  month" could be sent to a $204-a-year checkout, silently.
+
 ## [0.12.0] - 2026-09-11
 
 ### Fixed
