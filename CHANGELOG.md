@@ -9,6 +9,8 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-10-03
+
 ### Added
 
 - **Voice and message shape in analytics.** `GET /api/analytics/summary` now reports
@@ -641,3 +643,4 @@ could be sold.
 [0.11.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.1
 [0.11.2]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.11.2
 [0.12.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.12.0
+[0.13.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.13.0
