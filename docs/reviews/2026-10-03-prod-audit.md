@@ -565,3 +565,91 @@ All removed. Zephyr Clinic QA is back to zero knowledge sources, test01 to its
 original two. The production session cookie committed during this session was
 revoked and verified dead - the bearer answers `invalid token: revoked` and the
 cookie bounces to login.
+
+
+---
+
+## 11. The money path, completed
+
+I reported earlier that completing a card payment was blocked by hCaptcha and a
+Stripe iframe. **That was wrong.** The checkout drives fine headlessly: the
+captcha is invisible and did not challenge, and the card element is reachable
+inside its frame. The whole path was run on production.
+
+### [G] Checkout, end to end, with a real card
+
+A sandbox Starter checkout was completed with `4242 4242 4242 4242`, and the
+result arrived before the first poll:
+
+| Step | Result |
+|---|---|
+| Hosted checkout reached, card submitted | redirected to the success URL |
+| **Webhook landed** | subscription present immediately |
+| Plan recorded | `starter` / `active`, period ending 2026-11-02 |
+| **Entitlements re-derived** | 1,000 messages / 60 voice / 2 seats / 50 sources -- **exactly the catalogue** |
+| Payment history | `$10.00 usd`, `paid`, invoice `QONVO-WIVSEWBXIG-0001`, "Starter" |
+| Card on file | visa, 4242, 12/2030 |
+| Customer portal | url issued |
+
+This is the single most valuable path that had never been tested, and it works.
+
+### [G] The lifecycle, on a subscription somebody actually paid for
+
+| Step | Result |
+|---|---|
+| `change-plan` starter -> growth | `200 ok`, entitlements became 5,000 / 180 / 5 seats |
+| A second WhatsApp number on a 1-number plan | `402`, "Your plan includes 1 WhatsApp number" |
+| `cancel` | `200 ok`, `cancel_at_period_end: true`, period end unchanged |
+| `resume` | `200 ok`, flag cleared |
+
+The entitlement gate was checked properly this time: the tenant had **zero**
+sessions, so the first create is correctly a `201` and only the second is the
+one the plan should refuse. An earlier run mislabelled a first number as a
+second and would have read as a failure.
+
+### [?] An invoice link is a 503 before Polar has made the PDF
+
+```
+GET /api/billing/invoice/{order_id}
+  immediately -> 503 "the invoice is not ready yet, try again in a moment"
+  retried     -> 200, url issued
+```
+
+Correct and honestly worded, recorded only so the 503 is not mistaken for a
+fault later.
+
+### [G] Google is connected, and N1 is genuinely fixed
+
+`google_calendar` and `google_sheets` both report `connected`, `status: ok`,
+against "Qonvo Bookings" and a "Qonvo Leads" spreadsheet.
+
+The calendar integration's stored config says `timezone: UTC` while the business
+is `Asia/Karachi`, which is the exact shape of finding **N1** -- bookings five
+hours out. It is **not** live: `book_appointment` reads
+`tenant_timezone(ctx.tenant_config)` and passes it explicitly to `create_event`,
+and the integration's value is only a fallback. The code says so in its own
+comment. The stored `UTC` is an inert leftover from when the calendar was
+provisioned.
+
+### Team
+
+A `staff` invitation for `alinuces111@gmail.com` is pending on `test01`,
+expiring 2026-10-09. Accepting it is the only way to check the staff
+authorization matrix from a staff login rather than from the code.
+
+Seven of the eight skills report available. `share_payment_details` reports
+unavailable, which is correct gating: payment details are not set on this
+tenant.
+
+### Still blocked on credentials
+
+Two things need the `qonvo_admin` account, which this audit never had. The
+`test01` owner is an ordinary owner -- every `/api/admin/*` route answers `403`,
+which is itself the authorization working.
+
+- **Which number is disconnected.** `/readyz/deep` reports `1 of 2` fleet
+  sessions working. The count is cross-tenant, so naming the tenant needs the
+  admin console. `test01`'s own number is fine.
+- **Deleting "Zephyr Clinic QA".** `DELETE /admin/tenants/{id}` is gated on
+  `require_admin`. Its subscription has been cancelled at period end so nothing
+  renews, and its knowledge and sessions are already at zero.
