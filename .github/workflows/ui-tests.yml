@@ -1,16 +1,11 @@
-# Browser-driven UI tests, deliberately NOT on every push.
+# UI tests, on demand.
 #
-# CI minutes are real, and a full UI suite on every commit is how a suite stops
-# being run at all. Two ways in instead:
-#
-#   1. A pull request that touches a module runs THAT module only. A billing PR
-#      runs the billing specs and nothing else.
-#   2. workflow_dispatch, to run any module (or everything) on demand.
-#
-# The target is staging, which lives behind a tunnel on a workstation. If it is
-# unreachable the job says so loudly and succeeds, because a developer's laptop
-# being off must not block an unrelated pull request.
-name: UI tests
+# The per-pull-request path lives in ci.yml, not here, because auto-merge
+# `needs` cannot name a job in another workflow -- so a suite that ran as its
+# own workflow could only ever be advisory, and a broken billing page would
+# merge itself. This file is what remains: running any module, against any
+# environment, when a person asks for it.
+name: UI tests (on demand)
 
 on:
   workflow_dispatch:
@@ -20,13 +15,11 @@ on:
         required: true
         default: smoke
         type: choice
-        options: [smoke, billing, responsive, all]
+        options: [smoke, billing, knowledge, inbox, settings, analytics, responsive, all]
       base:
         description: Target base URL (defaults to staging)
         required: false
         type: string
-  pull_request:
-    branches: [dev]
 
 concurrency:
   group: ui-${{ github.ref }}
@@ -41,48 +34,19 @@ jobs:
       label: ${{ steps.pick.outputs.label }}
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
 
       - id: pick
-        name: Map changed files onto module tags
+        name: Which suite was asked for?
         env:
-          EVENT: ${{ github.event_name }}
           CHOICE: ${{ inputs.module }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" = "workflow_dispatch" ]; then
-            case "$CHOICE" in
-              all) echo "grep=." >> "$GITHUB_OUTPUT" ;;
-              *)   echo "grep=@$CHOICE" >> "$GITHUB_OUTPUT" ;;
-            esac
-            echo "label=$CHOICE (requested)" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
+          case "$CHOICE" in
+            all) echo "grep=." >> "$GITHUB_OUTPUT" ;;
+            *)   echo "grep=@$CHOICE" >> "$GITHUB_OUTPUT" ;;
+          esac
+          echo "label=$CHOICE (requested)" >> "$GITHUB_OUTPUT"
 
-          base="${{ github.event.pull_request.base.sha }}"
-          head="${{ github.event.pull_request.head.sha }}"
-          changed=$(git diff --name-only "$base" "$head" || true)
-          echo "changed files:"; echo "$changed" | sed 's/^/  /'
-
-          tags=""
-          add() { case "$tags" in *"$1"*) ;; *) tags="${tags:+$tags|}$1" ;; esac; }
-
-          # A module is "touched" when its own code moves. The suite is tagged
-          # the same way, so the mapping is one line per module.
-          echo "$changed" | grep -qE 'billing|plans\.py|polar' && add '@billing' || true
-          echo "$changed" | grep -qE 'dashboard/components/(layout|nav)|middleware\.ts' && add '@smoke' || true
-          echo "$changed" | grep -qE 'dashboard/app/\(dashboard\)|globals\.css|tailwind' && add '@responsive' || true
-          # A change to the suite itself, or to the shared API client, earns a
-          # full run: both can break every module at once.
-          echo "$changed" | grep -qE '^e2e/|dashboard/lib/api\.ts' && tags="." || true
-
-          if [ -z "$tags" ]; then
-            echo "grep=" >> "$GITHUB_OUTPUT"
-            echo "label=nothing to run" >> "$GITHUB_OUTPUT"
-          else
-            echo "grep=$tags" >> "$GITHUB_OUTPUT"
-            echo "label=$tags" >> "$GITHUB_OUTPUT"
-          fi
 
   ui:
     name: Run ${{ needs.select.outputs.label }}
