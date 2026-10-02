@@ -9,6 +9,18 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/readyz/deep`'s own query was invalid SQL.** Shipped in 0.14.0 and reported by the
+  probe itself within minutes of the deploy, which is the best outcome a readiness check
+  can have and still a bug. `whatsapp_sessions.status` is a Postgres enum, and there is
+  no `lower(session_status)`, so the case-insensitive comparison raised on every call and
+  the check could never report anything but failure. `/readyz` was unaffected and the
+  deploy did not roll back -- the separation between the two routes doing its job on its
+  first day. The probe also said only "ProgrammingError", which tells an operator that
+  something is wrong and nothing about what; it now carries the message.
+
+
 ## [0.14.0] - 2026-10-03
 
 ### Added
