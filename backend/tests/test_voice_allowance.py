@@ -17,6 +17,7 @@ a voice note.
 from __future__ import annotations
 
 import datetime as dt
+import pathlib
 
 import pytest
 from app.agent.voice_allowance import (
@@ -50,12 +51,26 @@ def test_voice_never_shrinks_as_plans_get_bigger():
 
 
 def test_the_ladder_is_the_one_that_was_costed():
-    """5/20/100 at $10/$18/$30 leaves 94%/85%/62% gross on the recommended TTS,
-    and 51% at Scale on the most expensive Urdu-capable voice. Changing these
-    without redoing that arithmetic is how a plan quietly starts losing money."""
-    assert PLANS["starter"].entitlements[VOICE_MINUTES_KEY] == 5
-    assert PLANS["growth"].entitlements[VOICE_MINUTES_KEY] == 20
-    assert PLANS["scale"].entitlements[VOICE_MINUTES_KEY] == 100
+    """60/180/480 GENERATED minutes at $10/$20/$60.
+
+    Re-costed 2026-09-12 against measured figures (docs/UNIT-ECONOMICS.md), and
+    the meaning of the number changed with it: this now bounds only the audio we
+    synthesize. Transcription is unlimited, because speaking a minute costs
+    $0.0135-$0.027 against $0.003 to transcribe one, and metering the cheap half
+    was spending the owner's allowance on the wrong thing.
+
+    Gross margin at FULL use of every quota, which is the number that matters
+    because a plan has to survive its heaviest user:
+
+        tts-1     Starter 80%   Growth 60%   Scale 53%
+        tts-1-hd  Starter 72%   Growth 48%   Scale 42%
+
+    Scale on tts-1-hd is the thin one. It is comfortable at realistic use (82%)
+    and it is a deliberate choice, not an oversight. Changing these without
+    redoing that arithmetic is how a plan quietly starts losing money."""
+    assert PLANS["starter"].entitlements[VOICE_MINUTES_KEY] == 60
+    assert PLANS["growth"].entitlements[VOICE_MINUTES_KEY] == 180
+    assert PLANS["scale"].entitlements[VOICE_MINUTES_KEY] == 480
 
 
 @pytest.mark.parametrize("entitlements", [None, {}, {"seats": 2}])
@@ -142,3 +157,23 @@ def test_usage_resets_when_the_month_does():
     assert period_start(dt.datetime(2026, 9, 30, tzinfo=dt.UTC)) != period_start(
         dt.datetime(2026, 10, 1, tzinfo=dt.UTC)
     )
+
+
+def test_the_allowance_bounds_generation_not_transcription():
+    """The meter counts synthesized audio only (2026-09-12).
+
+    It used to bound both directions, which spent the owner's allowance on the
+    cheap half: transcribing a minute costs $0.003, speaking one costs
+    $0.0135-$0.027. A customer sending voice notes can no longer exhaust the
+    allowance the business bought for its replies.
+
+    Pinned here rather than left to a comment because the line that does it is
+    one assignment in a 1,500-line pipeline, and reinstating the old behaviour
+    would look like a tidy-up.
+    """
+    src = (
+        pathlib.Path(__file__).resolve().parents[1] / "app/workers/pipeline.py"
+    ).read_text()
+    assert "inbound_voice_seconds = voice_seconds\n        voice_seconds = 0" in src
+    # And the STT cost is still recorded, just not metered against the quota.
+    assert "compute_stt_cost(stt_provider, stt_model, inbound_voice_seconds)" in src

@@ -1,4 +1,4 @@
-"""Owner analytics — volume, cost, outcomes (DESIGN.md §9 analytics, §13).
+"""Owner analytics — volume, voice, outcomes (DESIGN.md §9 analytics, §13).
 
 A single ``GET /api/analytics/summary`` aggregates the data the pipeline already
 records (usage counters, conversations, handoffs, leads, bookings, orders,
@@ -27,7 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_db, require_tenant
 from app.api.knowledge import answered_gaps_subquery
 from app.models.business import Booking, Handoff, Lead, Order
-from app.models.conversation import Conversation
+from app.models.conversation import Conversation, Message
 from app.models.enums import HandoffStatus
 from app.models.ops import AnalyticsEvent, UsageCounter
 
@@ -66,7 +66,7 @@ async def summary(
     start_at = _midnight(start)
     prev_start_at = _midnight(prev_start)
 
-    # --- Usage: totals + a per-day series for the volume/cost chart ---
+    # --- Usage: totals + a per-day series for the volume chart ---
     usage_rows = (
         (
             await db.execute(
@@ -88,15 +88,21 @@ async def summary(
             "day": r.day.isoformat(),
             "messages_in": r.messages_in,
             "messages_out": r.messages_out,
-            "cost": float(r.cost or 0),
+            # Split, because they answer different questions: one is what
+            # customers sent us, the other is what the rep spoke back and is
+            # the half the allowance meters.
+            "voice_seconds_in": r.voice_seconds_in or 0,
+            "voice_seconds_out": r.voice_seconds or 0,
+            # No "cost" key here, for the reason given against totals below.
             "tokens": r.tokens,
         }
         for r in current_rows
     ]
     messages_in = sum(r.messages_in for r in current_rows)
     messages_out = sum(r.messages_out for r in current_rows)
+    voice_seconds_in = sum(r.voice_seconds_in or 0 for r in current_rows)
+    voice_seconds_out = sum(r.voice_seconds or 0 for r in current_rows)
     tokens = sum(r.tokens for r in current_rows)
-    cost = float(sum(r.cost or 0 for r in current_rows))
     prev_messages_in = sum(r.messages_in for r in previous_rows)
     prev_messages_out = sum(r.messages_out for r in previous_rows)
 
@@ -142,6 +148,49 @@ async def summary(
     prev_bookings = await _count(Booking, prev_start_at, start_at)
     prev_orders = await _count(Order, prev_start_at, start_at)
 
+    # --- What a message actually looks like (analytics value framing) ---
+    # An owner asked "how long is a typical voice note" and nothing could answer
+    # it. Counts come from `messages` rather than usage_counters because the
+    # answer is an average, and an average cannot be summed out of daily rows.
+    #
+    # length() over coalesce(body, transcript): a voice message stores its words
+    # in `transcript`, so measuring `body` alone reports every voice note as
+    # zero characters.
+    shape_rows = (
+        await db.execute(
+            select(
+                Message.direction,
+                Message.type,
+                func.count().label("n"),
+                func.avg(func.length(func.coalesce(Message.body, Message.transcript))).label(
+                    "avg_chars"
+                ),
+            )
+            .select_from(Message)
+            .join(Conversation, Message.conversation_id == Conversation.id)
+            .where(Conversation.tenant_id == tenant_id, Message.created_at >= start_at)
+            .group_by(Message.direction, Message.type)
+        )
+    ).all()
+
+    shape: dict[str, dict] = {}
+    for row in shape_rows:
+        bucket = shape.setdefault(str(row.direction), {})
+        bucket[str(row.type)] = {
+            "count": int(row.n),
+            "avg_chars": round(float(row.avg_chars or 0)),
+        }
+
+    def _voice(direction: str, seconds: int) -> dict:
+        n = (shape.get(direction, {}).get("voice") or {}).get("count", 0)
+        return {
+            "count": n,
+            "seconds": seconds,
+            # Rounded to a whole second: a voice note measured to two decimals
+            # implies a precision the duration probe does not have.
+            "avg_seconds": round(seconds / n) if n else 0,
+        }
+
     # --- Top unanswered questions (same aggregation as /knowledge/gaps) ---
     question = AnalyticsEvent.data["question"].astext
     answered = answered_gaps_subquery(tenant_id)
@@ -170,6 +219,14 @@ async def summary(
 
     return {
         "range_days": days,
+        # Voice, and the shape of a message. Kept out of `totals` because these
+        # are descriptive rather than counters, and `totals` is paired key-for-key
+        # with the previous window.
+        "voice": {
+            "inbound": _voice("inbound", voice_seconds_in),
+            "outbound": _voice("outbound", voice_seconds_out),
+        },
+        "message_shape": shape,
         "period_start": start.isoformat(),
         "previous_period_start": prev_start.isoformat(),
         # One flat map of figures. The previous window's are the same keys under
@@ -181,18 +238,22 @@ async def summary(
             "messages_out": messages_out,
             "messages": messages_in + messages_out,
             "tokens": tokens,
-            # Still returned, deliberately no longer rendered to the owner
-            # (teardown Y3). This is our cost of goods, and printing it to the
-            # cent for somebody paying a monthly fee invites exactly one
-            # question, so the dashboard dropped the tile. It stays in the
-            # response because this endpoint is the tenant's own usage data
-            # rather than a secret, and because removing a key from a totals
-            # map that clients treat as an open dictionary of numbers is a
-            # breakage with nothing to gain: the fix for "the owner should not
-            # see this" is not to show it. The ops console reads
-            # ``usage_counters`` directly, so /admin/usage is unaffected either
-            # way.
-            "cost": round(cost, 4),
+            # No "cost" key, in totals or in the daily rows above. This is
+            # our cost of goods.
+            #
+            # Teardown Y3 removed the tile that rendered it and deliberately
+            # left the key in place, on the grounds that this endpoint is the
+            # tenant's own usage data rather than a secret and that dropping a
+            # key from an open dictionary of numbers breaks clients for
+            # nothing. That was half a fix. The page stopped printing the
+            # figure; the response did not stop carrying it, so a customer
+            # could read our margin on their own account out of devtools. Not
+            # showing something is not the same as not sending it.
+            #
+            # Still measured and still priced -- ``usage_counters.cost`` and
+            # ``compute_cost`` are what invoicing runs on, and /admin/usage
+            # reads the table directly, so the figure is intact everywhere it
+            # is ours to look at.
             "conversations": conversations,
             "leads": leads,
             "bookings": bookings,

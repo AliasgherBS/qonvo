@@ -57,6 +57,13 @@ class UsageCounter(Base, TenantScopedMixin):
     messages_in: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     messages_out: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     voice_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    #: Inbound audio the customer sent. Billed for transcription but NOT metered
+    #: against the allowance (0016), and kept apart from ``voice_seconds`` so
+    #: analytics can answer "how long is a typical voice note" rather than only
+    #: "how much did we speak".
+    voice_seconds_in: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     tokens: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
     cost: Mapped[float] = mapped_column(Numeric(12, 6), nullable=False, default=0)
 

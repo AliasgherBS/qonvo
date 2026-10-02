@@ -25,9 +25,12 @@ import { formatDate } from "@/lib/format";
  * - messages: `is_hard_quota_exceeded` in `workers/pipeline.py`. The rep stops
  *   answering and every inbound turn gets `QUOTA_EXCEEDED_REPLY` instead.
  *   Inbound and outbound both count towards the meter.
- * - voice: `agent/voice_allowance.py`. Voice *replies* stop; the reply still
- *   goes out as text, and inbound voice notes are still transcribed because
- *   that happens before the gate. The customer is told once per period.
+ * - voice: `agent/voice_allowance.py`. Only outbound counts: the gate sums
+ *   `usage_counters.voice_seconds`, which the pipeline fills with the spoken
+ *   reply's duration and nothing else. Voice *replies* stop when it is full;
+ *   the reply still goes out as text, and inbound voice notes are still
+ *   transcribed, without limit and at no cost to the allowance. The owner is
+ *   told once per period.
  * - seats: `api/team.py` refuses the invitation. Pending invites hold seats.
  * - knowledge: `check_room_for` in `api/knowledge_limits.py` refuses the next
  *   write. Everything already ingested keeps answering.
@@ -77,12 +80,19 @@ function rows(usage: TenantUsage): Row[] {
         "your rep keeps working and answers in writing instead. Customers can still send voice notes and it still understands them; it just stops replying in voice, and tells them so once.",
       nowFull:
         "Voice replies are paused. Your rep is still answering by text, and it still understands the voice notes customers send.",
-      // The exact figure, spelled out (finding F7). The minutes round up, so 89
-      // metered seconds reads as "2 min of 5" here while an operator looking at
-      // the same tenant sees 89. Both are right and neither said so, which is
-      // how one number became three. The seconds come from the same
-      // computation, not a second sum.
-      note: `Counts voice in both directions, rounded up to the next minute: ${voicePrecision(usage)}.`,
+      // Says what is metered, because the answer is not the obvious one and
+      // this line said the opposite of the truth for a release: the allowance
+      // covers only what the rep SPEAKS. Voice notes customers send are
+      // transcribed without limit, which is worth stating plainly -- it is the
+      // generous half, and an owner who thinks a chatty customer can burn
+      // their allowance will turn voice off for the wrong reason.
+      //
+      // The exact figure is spelled out too (finding F7). The minutes round
+      // up, so 89 metered seconds reads as "2 min of 5" here while an operator
+      // looking at the same tenant sees 89. Both are right and neither said
+      // so, which is how one number became three. The seconds come from the
+      // same computation, not a second sum.
+      note: `Counts only the voice your rep speaks, rounded up to the next minute: ${voicePrecision(usage)}. Voice notes your customers send are transcribed free.`,
     },
     {
       key: "seats",

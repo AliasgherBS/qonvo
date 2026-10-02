@@ -22,6 +22,7 @@ const SECTIONS = [
   { href: "/#how-it-works", label: "How it works" },
   { href: "/#pricing", label: "Pricing" },
   { href: "/#faq", label: "FAQ" },
+  { href: "/#contact", label: "Contact" },
 ];
 
 /**
@@ -43,9 +44,10 @@ export async function MarketingShell({ children }: { children: React.ReactNode }
             <Logo />
           </Link>
           <nav className="flex items-center gap-2">
-            {/* Hidden below `sm`: at 375px the logo, three anchors and two
+            {/* Hidden below `sm`: at 375px the logo, the anchors and two
                 buttons do not fit on one row, and a page this short on
-                navigation has not earned a hamburger menu. */}
+                navigation has not earned a hamburger menu. Verified with four
+                anchors that nothing overflows from 640px up. */}
             <div className="mr-2 hidden items-center gap-1 sm:flex">
               {SECTIONS.map(({ href, label }) => (
                 <Link

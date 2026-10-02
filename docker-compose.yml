@@ -121,7 +121,7 @@ services:
     # Apply migrations, then serve. Single replica → no migration race.
     command: >
       sh -c "alembic upgrade head &&
-             uvicorn app.main:app --host 0.0.0.0 --port 8000"
+             uvicorn app.main:app --host 0.0.0.0 --port 8000 --no-server-header"
     expose:
       - "8000"
     depends_on:

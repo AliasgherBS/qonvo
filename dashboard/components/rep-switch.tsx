@@ -54,6 +54,31 @@ export function RepSwitch() {
     void load();
   }, [load]);
 
+  // Reconcile with the server (audit H5). Two concurrent writes -- two tabs, an
+  // owner and a staff member, a retried request -- are last-write-wins, and the
+  // loser's interface keeps showing the value it believes it set. That is worse
+  // here than anywhere else in the product: the toggle reads "Rep on" while the
+  // rep is off, and every customer message goes unanswered with nothing to see.
+  //
+  // A version and a 409 would be wrong for a global boolean, where "the last
+  // person to click wins" is what anyone would expect. What was missing is not
+  // arbitration but reconciliation, so the displayed state re-reads itself when
+  // the tab is looked at again, and periodically while it is.
+  useEffect(() => {
+    if (!token) return;
+    function refresh() {
+      if (document.visibilityState === "visible") void load();
+    }
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    const timer = window.setInterval(refresh, 60_000);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
+      window.clearInterval(timer);
+    };
+  }, [token, load]);
+
   useEffect(() => {
     if (!open) return;
     function onPointerDown(e: MouseEvent) {
@@ -84,6 +109,10 @@ export function RepSwitch() {
       });
     } catch (err) {
       toast({ title: "Could not change this", description: describeError(err), variant: "error" });
+      // The switch has already moved under the pointer, and the write did not
+      // land, so without this the interface keeps showing a state the server
+      // never accepted.
+      void load();
     } finally {
       setSaving(false);
     }

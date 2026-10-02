@@ -33,10 +33,11 @@ class Plan:
 #: ``monthly_message_quota`` is the headline number and the per-reply cost.
 #:
 #: ``monthly_voice_minutes`` is the expensive one. Voice is 54-74% of
-#: per-tenant AI cost, and one allowance covers both directions: speech-to-text
-#: is roughly 30x cheaper than text-to-speech, so the outbound leg dominates
-#: whatever a customer sends, and two numbers would be more accurate and much
-#: harder to explain.
+#: per-tenant AI cost, and the allowance meters only the outbound leg -- what
+#: the rep speaks. Speech-to-text is roughly 30x cheaper than text-to-speech,
+#: so metering inbound too spent the allowance on the half that costs almost
+#: nothing, and let a customer's long voice notes exhaust a budget the business
+#: never chose to spend. Transcription is unlimited.
 #:
 #: ``knowledge_chars`` is deliberately generous. Retrieval means only the
 #: relevant chunks ever reach a prompt, so a large corpus costs storage and a
@@ -57,7 +58,7 @@ PLANS: dict[str, Plan] = {
             "whatsapp_numbers": 1,
             "knowledge_sources": 50,
             "knowledge_chars": 2_000_000,
-            "knowledge_upload_bytes": 50 * 1024 * 1024,
+            "knowledge_upload_bytes": 20 * 1024 * 1024,
         },
     ),
     "starter": Plan(
@@ -65,7 +66,7 @@ PLANS: dict[str, Plan] = {
         name="Starter",
         entitlements={
             "monthly_message_quota": 1_000,
-            "monthly_voice_minutes": 5,
+            "monthly_voice_minutes": 60,
             "seats": 2,
             "whatsapp_numbers": 1,
             "knowledge_sources": 50,
@@ -78,7 +79,7 @@ PLANS: dict[str, Plan] = {
         name="Growth",
         entitlements={
             "monthly_message_quota": 5_000,
-            "monthly_voice_minutes": 20,
+            "monthly_voice_minutes": 180,
             "seats": 5,
             "whatsapp_numbers": 1,
             "knowledge_sources": 150,
@@ -91,7 +92,7 @@ PLANS: dict[str, Plan] = {
         name="Scale",
         entitlements={
             "monthly_message_quota": 20_000,
-            "monthly_voice_minutes": 100,
+            "monthly_voice_minutes": 480,
             "seats": 15,
             "whatsapp_numbers": 2,
             "knowledge_sources": 400,

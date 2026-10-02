@@ -119,6 +119,28 @@ systemctl --user restart qonvo-dashboard-staging     # after a staging rebuild
 Requires `sudo loginctl enable-linger aliasgher` once, or the units stop when your last
 terminal closes.
 
+**Staging rebuilds itself.** `qonvo-staging-sync.timer` checks every minute whether the
+dashboard sources changed and rebuilds if they did, so `dev.qonvo.org` follows the working
+tree within about three minutes of a save, a branch switch or a merge (measured: one tick to
+notice, one to let the tree settle, about a minute to build). Installed by
+[`scripts/install-staging-sync.sh`](scripts/install-staging-sync.sh); log at
+`/tmp/qonvo-staging-sync.log`.
+
+- It waits one tick for the tree to stop changing, so a series of saves is one build.
+- A failed build **keeps the previous one serving** and retries next tick.
+- Force one now: `./scripts/staging-sync.sh --force`.
+- It builds whatever is checked out. Staging showing the wrong thing usually means the
+  working tree is on a branch that predates the change, not that the build failed.
+
+**Building and serving are separate scripts, and that matters.**
+[`scripts/staging-build.sh`](scripts/staging-build.sh) builds;
+[`run-dashboard-staging.sh`](run-dashboard-staging.sh) serves and is what systemd runs.
+They used to be one script whose `--build` flag ended by exec'ing the server, so running
+it by hand while the unit was up started a **second** server fighting for port 3012 --
+and the loser kept serving whatever build it started with, so the symptom was a change
+that would not appear no matter how many times you rebuilt. `--build` still works and now
+builds, restarts the unit, and exits.
+
 ## Dev environment quirks on this machine
 
 This is a **WSL2 box behind CGNAT**, which is why production could never be pointed at
@@ -212,9 +234,10 @@ ssh qonvo@159.195.253.176 '/opt/qonvo/deploy.sh v0.11.3'
 
 # --- STAGING (this machine) --------------------------------------------------
 ./qonvo-staging.sh up            # docker services
-./run-dashboard-staging.sh --build   # rebuild the dashboard (NEXT_PUBLIC_* is build-time)
-systemctl --user restart qonvo-dashboard-staging
-systemctl --user status  qonvo-tunnel
+# The dashboard rebuilds itself within ~3 min of any source change. To skip the wait:
+./scripts/staging-sync.sh --force
+systemctl --user status  qonvo-tunnel qonvo-dashboard-staging
+tail -f /tmp/qonvo-staging-sync.log   # what the rebuild timer is doing
 
 # --- LOCAL DEV ----------------------------------------------------------------
 cd backend && uv run pytest -q && uv run ruff check      # must stay green

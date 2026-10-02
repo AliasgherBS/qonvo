@@ -241,6 +241,7 @@ def test_a_saved_reply_language_survives_the_round_trip():
     from app.api.config import ConfigUpdateRequest, _apply_config_update, _config_to_dict
 
     row = SimpleNamespace(
+        version=1,
         providers={"voice": {"mode": "match"}},
         escalation_rules={},
         persona=None,
@@ -274,6 +275,7 @@ def test_never_choosing_reads_back_as_match():
     from app.api.config import _config_to_dict
 
     row = SimpleNamespace(
+        version=1,
         providers={"voice": {"mode": "match"}},
         escalation_rules={},
         persona=None,

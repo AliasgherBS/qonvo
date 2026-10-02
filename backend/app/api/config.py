@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.api.deps import get_claims, get_db, require_owner, require_tenant
 from app.core.limits import (
@@ -80,9 +81,8 @@ class ConfigUpdateRequest(BaseModel):
         """
         if not isinstance(data, dict):
             return data
-        offenders = sorted(
-            str(k) for k, v in data.items() if v is None and k not in _CLEARABLE_WITH_NULL
-        )
+        ignored = _CLEARABLE_WITH_NULL | {"version"}
+        offenders = sorted(str(k) for k, v in data.items() if v is None and k not in ignored)
         if offenders:
             raise ValueError(
                 "null is not how a field is cleared: "
@@ -90,6 +90,14 @@ class ConfigUpdateRequest(BaseModel):
                 + '. Send "" to blank a text field, or omit the key to leave it unchanged.'
             )
         return data
+
+    #: The version the caller last read (audit H4). Optional so an older client
+    #: keeps working, checked strictly when supplied: a caller that opts in gets
+    #: told its copy is stale rather than quietly overwriting someone.
+    #:
+    #: Not in _CLEARABLE_WITH_NULL and not content either -- it is metadata about
+    #: the write, so it is excluded from the erasure check below by name.
+    version: int | None = None
 
     persona: str | None = None
     business_name: str | None = None
@@ -193,6 +201,9 @@ class ConfigUpdateRequest(BaseModel):
 
 
 class ConfigResponse(BaseModel):
+    #: What to send back on the next write to be told about a conflict rather
+    #: than causing one (audit H4).
+    version: int
     persona: str | None
     business_name: str | None
     languages: list
@@ -214,6 +225,7 @@ class ConfigResponse(BaseModel):
 
 def _config_to_dict(row: TenantConfig) -> ConfigResponse:
     return ConfigResponse(
+        version=row.version or 1,
         persona=row.persona,
         business_name=row.business_name,
         languages=row.languages,
@@ -343,17 +355,62 @@ async def update_config(
     db: AsyncSession = Depends(get_db),
 ) -> ConfigResponse:
     row = await _get_or_create_config(db, tenant_id)
+
+    # Optimistic concurrency (audit H4). Two simultaneous PUTs both returned 200
+    # and the later one silently discarded the earlier person's edit -- an owner
+    # and a staff member both on Behavior, or one person in two tabs.
+    #
+    # Rejecting rather than merging is deliberate: merging two versions of
+    # somebody's long-form instructions is guesswork, and guessing wrong is
+    # worse than asking them to look.
+    # Two halves, and both are needed (audit H4).
+    #
+    # This one catches a caller whose copy was already stale when it arrived:
+    # somebody else saved between their GET and their PUT. It is a plain
+    # comparison and it cannot, on its own, close the window between two
+    # simultaneous requests -- that was tried, and both still returned 200.
+    #
+    # The other half is `version_id_col` on the model, which makes SQLAlchemy
+    # append `AND version = :loaded` to the UPDATE. Two writers who both pass
+    # the check above then produce one UPDATE that matches a row and one that
+    # matches none, and the loser raises StaleDataError at flush.
+    #
+    # `row.version` is deliberately never assigned here: SQLAlchemy owns that
+    # column, and setting it by hand stops the guard working, which is how the
+    # first attempt at this passed its unit tests and failed the live race.
+    if body.version is not None and body.version != row.version:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Someone else changed these settings while you were editing. "
+                "Reload the page to see their version before saving yours."
+            ),
+        )
+
+    sent = body.model_dump(exclude_unset=True)
+    sent.pop("version", None)
     # Computed before the update is applied, because afterwards there is
     # nothing left to compare against.
-    changed = changed_fields(row, body.model_dump(exclude_unset=True))
+    changed = changed_fields(row, sent)
     _apply_config_update(row, body)
+
     # Keep the tenant's display name in sync with the business name edited here —
     # the topbar/JWT read Tenant.name, so otherwise the two silently diverge.
     if "business_name" in body.model_dump(exclude_unset=True) and body.business_name:
         await db.execute(
             update(Tenant).where(Tenant.id == tenant_id).values(name=body.business_name.strip())
         )
-    await db.flush()
+    try:
+        await db.flush()
+    except StaleDataError as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Someone else changed these settings while you were editing. "
+                "Reload the page to see their version before saving yours."
+            ),
+        ) from exc
     if changed:
         # Field names only. `payment_details` is the text the rep reads out
         # verbatim when a customer asks how to pay, and a staff seat

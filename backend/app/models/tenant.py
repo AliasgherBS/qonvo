@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -165,6 +165,20 @@ class TenantConfig(Base, TenantScopedMixin):
     #: that issues the invoice, and a field we collect but never print on
     #: anything is worse than no field.
     billing_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    #: Bumped on every write, and required to match on a write that supplies it
+    #: (audit H4). Two simultaneous PUTs both returned 200 and the second
+    #: silently discarded the first person's edit.
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1, server_default="1")
+
+    # Optimistic locking, enforced by the database rather than by a check in the
+    # handler (audit H4). SQLAlchemy appends `AND version = :old` to every UPDATE
+    # of this row and bumps the column itself, so two writers who both read
+    # version 1 produce one UPDATE that matches a row and one that matches none.
+    #
+    # A Python-side comparison cannot do this and was tried first: both requests
+    # read version 1, both passed the check, and both returned 200 -- exactly the
+    # read-then-write window the seat race (H2) has, for the same reason.
+    __mapper_args__ = {"version_id_col": version}
 
 
 class AuditLog(Base, TenantScopedMixin):
