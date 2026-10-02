@@ -15,6 +15,7 @@ from app.billing.providers.base import (
     Checkout,
     InvalidWebhookSignature,
     Payment,
+    PlanPrice,
 )
 
 
@@ -55,6 +56,10 @@ class ManualProvider:
         # There is no subscription to cancel: an operator recorded the plan by
         # hand and would remove it the same way.
         return False
+
+    def plan_prices(self) -> dict[str, PlanPrice]:
+        """No gateway, so no price to state. The page renders allowances only."""
+        return {}
 
     def change_plan(self, *, subscription_id: str, plan_key: str) -> bool:
         # An operator moves the plan by hand through the admin endpoint.

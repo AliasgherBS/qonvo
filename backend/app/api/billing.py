@@ -17,6 +17,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,10 +54,22 @@ class BillingStatus(BaseModel):
     entitlements: dict
 
 
+class PlanPriceInfo(BaseModel):
+    """What the provider says this plan costs. ``amount`` is in minor units."""
+
+    amount: int
+    currency: str
+    interval: str | None = None
+
+
 class PlanInfo(BaseModel):
     key: str
     name: str
     entitlements: dict
+    #: Absent when the provider has no price for this plan -- the trial, or a
+    #: plan not yet wired to a product. The page renders allowances without a
+    #: figure rather than showing a wrong one.
+    price: PlanPriceInfo | None = None
 
 
 class CheckoutRequest(BaseModel):
@@ -66,6 +79,21 @@ class CheckoutRequest(BaseModel):
 class CheckoutResponse(BaseModel):
     url: str | None
     instructions: str | None
+
+
+#: A refusal that is the caller's situation rather than their request. The body
+#: shape is unchanged -- clients reading ``ok`` keep working -- but a client
+#: reading the status code no longer sees a 200 and believes the plan changed.
+#: That was finding L3 of the 11 September audit.
+_REASON_STATUS = {
+    "no_subscription": status.HTTP_409_CONFLICT,
+    "provider_unavailable": status.HTTP_502_BAD_GATEWAY,
+}
+
+
+def _billing_result(ok: bool, reason: str | None) -> JSONResponse:
+    code = status.HTTP_200_OK if ok else _REASON_STATUS.get(reason or "", status.HTTP_409_CONFLICT)
+    return JSONResponse(status_code=code, content={"ok": ok, "reason": reason})
 
 
 @router.get("/payments")
@@ -205,7 +233,7 @@ async def cancel_subscription(
         )
     ).one_or_none()
     if row is None or not row.provider_subscription_id:
-        return {"ok": False, "reason": "no_subscription"}
+        return _billing_result(False, "no_subscription")
 
     ok = resolve_billing_provider().set_cancellation(
         subscription_id=row.provider_subscription_id,
@@ -230,7 +258,7 @@ async def cancel_subscription(
             target=row.provider_subscription_id,
             meta={"reason": body.reason, "comment": body.comment},
         )
-    return {"ok": ok, "reason": None if ok else "provider_unavailable"}
+    return _billing_result(ok, None if ok else "provider_unavailable")
 
 
 @router.post("/resume")
@@ -254,7 +282,7 @@ async def resume_subscription(
         )
     ).scalar_one_or_none()
     if not subscription_id:
-        return {"ok": False, "reason": "no_subscription"}
+        return _billing_result(False, "no_subscription")
 
     ok = resolve_billing_provider().set_cancellation(
         subscription_id=subscription_id, cancel=False
@@ -267,7 +295,7 @@ async def resume_subscription(
             action="subscription_resumed",
             target=subscription_id,
         )
-    return {"ok": ok, "reason": None if ok else "provider_unavailable"}
+    return _billing_result(ok, None if ok else "provider_unavailable")
 
 
 class ChangePlanRequest(BaseModel):
@@ -305,7 +333,7 @@ async def change_plan(
     ).scalar_one_or_none()
     if not subscription_id:
         # No subscription yet: this is a first purchase, which is checkout.
-        return {"ok": False, "reason": "no_subscription"}
+        return _billing_result(False, "no_subscription")
 
     ok = resolve_billing_provider().change_plan(
         subscription_id=subscription_id, plan_key=body.plan_key
@@ -319,7 +347,7 @@ async def change_plan(
             target=subscription_id,
             meta={"to_plan": body.plan_key},
         )
-    return {"ok": ok, "reason": None if ok else "provider_unavailable"}
+    return _billing_result(ok, None if ok else "provider_unavailable")
 
 
 @router.get("/invoice/{order_id}")
@@ -479,9 +507,29 @@ async def billing_status(
 
 @router.get("/plans", response_model=list[PlanInfo])
 async def list_plans(_tenant_id: UUID = Depends(require_tenant)) -> list[PlanInfo]:
-    """The catalogue, in upgrade order. Prices live with the payment provider."""
+    """The catalogue, in upgrade order, priced by the payment provider.
+
+    Entitlements come from ``plans.py`` because they are a contract we enforce;
+    the price comes from the provider because it is a contract they charge. The
+    owner could previously read four allowances and no cost, press Choose, and
+    meet a figure for the first time on a page they had already committed to.
+    """
+    prices = resolve_billing_provider().plan_prices()
     return [
-        PlanInfo(key=plan.key, name=plan.name, entitlements=plan.entitlements)
+        PlanInfo(
+            key=plan.key,
+            name=plan.name,
+            entitlements=plan.entitlements,
+            price=(
+                PlanPriceInfo(
+                    amount=priced.amount,
+                    currency=priced.currency,
+                    interval=priced.interval,
+                )
+                if (priced := prices.get(plan.key)) is not None
+                else None
+            ),
+        )
         for plan in PLANS.values()
     ]
 

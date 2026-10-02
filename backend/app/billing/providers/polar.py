@@ -39,7 +39,7 @@ import hmac
 import json
 import time
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 
@@ -50,6 +50,7 @@ from app.billing.providers.base import (
     Checkout,
     InvalidWebhookSignature,
     Payment,
+    PlanPrice,
 )
 from app.core.config import settings
 from app.core.logging import logger
@@ -159,6 +160,70 @@ class PolarProvider:
         for price_id, mapped in (settings.billing_price_map or {}).items():
             if mapped == plan_key:
                 return price_id
+        return None
+
+
+    # --- what a plan costs -------------------------------------------------- #
+    #: Prices change rarely and the billing page is read often, so the lookup is
+    #: cached. Short enough that a price edit in Polar reaches the page the same
+    #: session; long enough that rendering the page is not N provider calls.
+    _PRICE_TTL_SECONDS = 300
+    _price_cache: ClassVar[tuple[float, dict[str, PlanPrice]] | None] = None
+
+    def plan_prices(self) -> dict[str, PlanPrice]:
+        """Each mapped product's current price, keyed by plan.
+
+        Asking the provider is the whole point: Polar owns the number a
+        customer is actually charged, so anything we rendered from our own
+        table could disagree with the checkout page the customer lands on.
+        A failure here returns what we have rather than raising -- the plan
+        cards are still useful without a price, and an upgrade page that 500s
+        is worse than one that is quiet about cost.
+        """
+        cached = type(self)._price_cache
+        if cached is not None and (time.time() - cached[0]) < self._PRICE_TTL_SECONDS:
+            return cached[1]
+        if not settings.polar_access_token:
+            return {}
+
+        prices: dict[str, PlanPrice] = {}
+        for product_id, plan_key in (settings.billing_price_map or {}).items():
+            price = self._product_price(product_id)
+            if price is not None:
+                prices[plan_key] = price
+
+        # Only cache a result we actually got. Caching {} after an outage would
+        # hide every price for the next five minutes.
+        if prices:
+            type(self)._price_cache = (time.time(), prices)
+        return prices
+
+    def _product_price(self, product_id: str) -> PlanPrice | None:
+        try:
+            response = httpx.get(
+                f"{self._api}/products/{product_id}",
+                headers={"Authorization": f"Bearer {settings.polar_access_token}"},
+                timeout=10,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except Exception as exc:  # noqa: BLE001 - the billing page must render
+            logger.warning(f"polar product lookup failed for {product_id}: {exc}")
+            return None
+
+        for entry in payload.get("prices") or []:
+            if not isinstance(entry, dict):
+                continue
+            amount = entry.get("price_amount")
+            if not isinstance(amount, int):
+                continue
+            return PlanPrice(
+                amount=amount,
+                currency=str(entry.get("price_currency") or "usd").lower(),
+                interval=_str_or_none(
+                    entry.get("recurring_interval") or payload.get("recurring_interval")
+                ),
+            )
         return None
 
     # --- the customer's own billing page ----------------------------------- #

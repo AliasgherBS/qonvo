@@ -50,6 +50,24 @@ class Checkout:
 
 
 @dataclass(frozen=True, slots=True)
+class PlanPrice:
+    """What a plan costs, as the payment provider states it.
+
+    Read from the provider rather than kept in ``plans.py``, deliberately. The
+    merchant of record owns pricing, and a copy here would be a second source
+    of truth about the same number -- which is exactly how the checkout page
+    came to promise 20 voice minutes on a plan that grants 180.
+
+    ``amount`` is in the currency's minor unit, the way every gateway quotes
+    it: 2000 is $20.00.
+    """
+
+    amount: int
+    currency: str
+    interval: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class BillingEvent:
     """A provider event, normalised.
 
@@ -215,6 +233,14 @@ class BillingProvider(Protocol):
         The provider stays the system of record. We are a client of its API, and
         its webhook tells us what happened, so there is no second opinion about
         the subscription's state even though the button lives here.
+        """
+        ...
+
+    def plan_prices(self) -> dict[str, PlanPrice]:
+        """Current price per plan key, for the plans the provider knows about.
+
+        Keys missing from the result have no price the provider could state;
+        the caller renders those without one rather than inventing a figure.
         """
         ...
 

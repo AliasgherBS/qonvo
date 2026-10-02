@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { AlertTriangle, Sparkles } from "lucide-react";
 
 import { billing, type BillingStatus } from "@/lib/api";
@@ -47,7 +48,9 @@ export function TrialBanner() {
           {data.daysLeft === 0
             ? "Your free trial ends today."
             : `${data.daysLeft} day${data.daysLeft === 1 ? "" : "s"} left in your free trial.`}{" "}
-          <span className="text-muted-foreground">Contact your Qonvo rep to go paid.</span>
+          <Link href="/billing" className="font-semibold text-primary-strong underline-offset-2 hover:underline">
+            See plans and prices
+          </Link>
         </span>
       </div>
     );
