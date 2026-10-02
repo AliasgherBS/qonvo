@@ -1377,10 +1377,39 @@ export interface BillingStatus {
   entitlements: Record<string, number>;
 }
 
+export interface PlanPrice {
+  /** Minor units, the way the gateway quotes it: 2000 is $20.00. */
+  amount: number;
+  currency: string;
+  interval: string | null;
+}
+
 export interface PlanInfo {
   key: string;
   name: string;
   entitlements: Record<string, number>;
+  /**
+   * Absent when the provider has no price for this plan. Render the card
+   * without a figure rather than showing a zero, which reads as free.
+   */
+  price?: PlanPrice | null;
+}
+
+/** Format a provider price for display, or null when there is nothing to show. */
+export function formatPlanPrice(price?: PlanPrice | null): string | null {
+  if (!price || typeof price.amount !== "number") return null;
+  const major = price.amount / 100;
+  try {
+    return new Intl.NumberFormat(undefined, {
+      style: "currency",
+      currency: (price.currency || "usd").toUpperCase(),
+      minimumFractionDigits: major % 1 === 0 ? 0 : 2,
+      maximumFractionDigits: 2,
+    }).format(major);
+  } catch {
+    // An unexpected currency code must not take the billing page down.
+    return `${(price.currency || "").toUpperCase()} ${major}`;
+  }
 }
 
 export interface Checkout {
