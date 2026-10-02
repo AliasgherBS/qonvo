@@ -9,6 +9,8 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-10-03
+
 ### Fixed
 
 - **`/readyz/deep`'s own query was invalid SQL.** Shipped in 0.14.0 and reported by the
@@ -727,3 +729,4 @@ could be sold.
 [0.12.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.12.0
 [0.13.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.13.0
 [0.14.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.14.0
+[0.14.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.14.1
