@@ -39,7 +39,7 @@ export default defineConfig({
     { name: "setup", testMatch: /auth\.setup\.ts/ },
     {
       name: "chromium",
-      use: { ...devices["Desktop Chrome"], storageState: "e2e/.auth/owner.json" },
+      use: { ...devices["Desktop Chrome"], storageState: ".auth/owner.json" },
       dependencies: ["setup"],
     },
     {
@@ -47,7 +47,7 @@ export default defineConfig({
       // viewport, with the header controls scrolled off. Phone width is a
       // first-class target here, not an afterthought.
       name: "phone",
-      use: { ...devices["Pixel 7"], storageState: "e2e/.auth/owner.json" },
+      use: { ...devices["Pixel 7"], storageState: ".auth/owner.json" },
       dependencies: ["setup"],
       testMatch: /responsive\.spec\.ts/,
     },

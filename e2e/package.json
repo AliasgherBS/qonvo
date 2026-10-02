@@ -12,7 +12,8 @@
     "team": "playwright test --grep @team",
     "analytics": "playwright test --grep @analytics",
     "smoke": "playwright test --grep @smoke",
-    "report": "playwright show-report"
+    "report": "playwright show-report",
+    "responsive": "playwright test --grep @responsive"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0"
