@@ -101,3 +101,35 @@ def test_a_failing_check_is_named_so_an_alert_can_say_which():
     }
     failing = [n for n, v in checks.items() if v.startswith("fail")]
     assert failing == ["llm", "whatsapp"]
+
+
+# --- the probe's own query must be valid SQL for the column's real type ----- #
+#
+# Shipped broken on 2026-10-03 and reported by the probe itself, which is the
+# best possible outcome for a readiness check and still a bug. `status` is a
+# Postgres enum (`session_status`), and `lower(session_status)` does not exist,
+# so the case-insensitive comparison raised ProgrammingError on every call.
+
+
+def test_the_session_query_does_not_call_lower_on_an_enum():
+    from app.models.enums import SessionStatus
+    from app.models.whatsapp import WhatsAppSession
+    from sqlalchemy import func, select
+
+    query = (
+        select(func.count())
+        .select_from(WhatsAppSession)
+        .where(WhatsAppSession.status == SessionStatus.working)
+    )
+    sql = str(query.compile(compile_kwargs={"literal_binds": True}))
+    assert "lower(" not in sql.lower(), sql
+    # And it compares against what the column actually stores.
+    assert "'working'" in sql, sql
+
+
+def test_the_probe_names_the_cause_and_not_only_the_class():
+    """"fail: ProgrammingError" told an operator nothing they could act on."""
+    import inspect
+
+    source = inspect.getsource(health._whatsapp_working)
+    assert "str(exc)" in source
