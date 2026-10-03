@@ -851,6 +851,7 @@ interface TenantConfigDto {
   // safe defaults in mapTenantConfig - the form assumes strings.
   persona: string | null;
   business_name: string | null;
+  business_description: string | null;
   primary_language: string | null;
   tone: string | null;
   custom_instructions: string | null;
@@ -877,6 +878,8 @@ export interface TenantConfig {
   version: number;
   persona: string;
   businessName: string;
+  /** One line saying what the business does, always in the rep's prompt. */
+  businessDescription: string;
   primaryLanguage: string;
   tone: string;
   customInstructions: string;
@@ -903,6 +906,7 @@ function mapTenantConfig(dto: TenantConfigDto): TenantConfig {
     version: dto.version ?? 1,
     persona: dto.persona ?? "",
     businessName: dto.business_name ?? "",
+    businessDescription: dto.business_description ?? "",
     primaryLanguage: dto.primary_language ?? "",
     tone: dto.tone ?? "",
     customInstructions: dto.custom_instructions ?? "",
@@ -928,6 +932,7 @@ function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
     version: cfg.version,
     persona: cfg.persona,
     business_name: cfg.businessName,
+    business_description: cfg.businessDescription ?? "",
     primary_language: cfg.primaryLanguage,
     tone: cfg.tone,
     custom_instructions: cfg.customInstructions,

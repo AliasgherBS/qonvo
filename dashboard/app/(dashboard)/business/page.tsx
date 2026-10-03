@@ -39,6 +39,7 @@ export default function BusinessPage() {
       description="The facts about your business. Your rep works from these, and so do your bookings."
       fields={[
         "business_name",
+        "business_description",
         "timezone",
         "owner_alert_number",
         "notify_on_handoff",

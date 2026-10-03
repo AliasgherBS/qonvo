@@ -370,3 +370,57 @@ def test_it_is_still_one_static_block():
     from app.workers.pipeline import GROUNDING_INSTRUCTION
 
     assert "{" not in GROUNDING_INSTRUCTION and "}" not in GROUNDING_INSTRUCTION
+
+
+# --- the rep must know what trade it is in --------------------------------- #
+#
+# The system prompt named the business and never said what it DOES. The trade
+# lives in the knowledge, knowledge is retrieved per turn, and a question about
+# something the business does not do retrieves none of it -- so the rep had
+# nothing to answer from.
+#
+# Four businesses in the conversation lab, asked "do you sell car tyres?": the
+# only two that ever got it right were the two whose NAME contained their trade
+# ("Lab Dental", "Lab Salon"). "Lab Clinic" and "Lab Studio" both said "we do
+# not have that detail to hand, the team will confirm". With a description set,
+# all four answer correctly.
+
+
+def _prompt_with(description):
+    from app.workers.pipeline import build_system_prompt
+
+    return build_system_prompt(
+        business_name="Lab Clinic",
+        business_description=description,
+        persona="",
+        tone=None,
+        custom_instructions=None,
+        reply_language="match",
+        primary_language="en",
+        available_skills=[],
+    )
+
+
+def test_a_description_reaches_the_prompt():
+    p = _prompt_with("a multi-department medical clinic")
+    assert "Lab Clinic is a multi-department medical clinic." in p
+    assert "say what it does instead" in p
+
+
+def test_a_tenant_without_one_gets_the_prompt_unchanged():
+    """Every existing tenant has none, and must not get an empty clause."""
+    for blank in (None, "", "   "):
+        p = _prompt_with(blank)
+        assert "is ." not in p
+        assert "say what it does instead" not in p
+
+
+def test_a_trailing_full_stop_is_not_doubled():
+    assert "clinic.." not in _prompt_with("a medical clinic.")
+
+
+def test_it_sits_second_so_it_reads_as_identity():
+    p = _prompt_with("a medical clinic")
+    blocks = p.split("\n\n")
+    assert blocks[0].startswith("You are the customer service team")
+    assert blocks[1].startswith("Lab Clinic is a medical clinic.")

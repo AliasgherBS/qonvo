@@ -101,6 +101,7 @@ class ConfigUpdateRequest(BaseModel):
 
     persona: str | None = None
     business_name: str | None = None
+    business_description: str | None = None
     primary_language: str | None = None
     tone: str | None = None
     custom_instructions: str | None = None
@@ -226,6 +227,7 @@ class ConfigResponse(BaseModel):
     version: int
     persona: str | None
     business_name: str | None
+    business_description: str | None
     languages: list
     primary_language: str
     tone: str | None
@@ -248,6 +250,7 @@ def _config_to_dict(row: TenantConfig) -> ConfigResponse:
         version=row.version or 1,
         persona=row.persona,
         business_name=row.business_name,
+        business_description=row.business_description,
         languages=row.languages,
         primary_language=row.primary_language,
         tone=row.tone,

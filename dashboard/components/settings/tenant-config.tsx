@@ -904,9 +904,10 @@ export function BusinessNameSection({ form, setForm }: SectionProps) {
     <Card>
       <CardHeader>
         <div>
-          <CardTitle>Name</CardTitle>
+          <CardTitle>Name and trade</CardTitle>
           <CardDescription>
-            What your business is called. Your rep introduces itself with this.
+            What your business is called, and what it does. Your rep introduces itself with
+            the first and uses the second to turn away anything you do not offer.
           </CardDescription>
         </div>
       </CardHeader>
@@ -919,6 +920,25 @@ export function BusinessNameSection({ form, setForm }: SectionProps) {
             onChange={(e) => setForm({ ...form, businessName: e.target.value })}
             placeholder="Your business name"
           />
+        </div>
+        <div className="mt-4 space-y-1.5">
+          <Label htmlFor="business-description">What you do</Label>
+          <Input
+            id="business-description"
+            value={form.businessDescription}
+            onChange={(e) => setForm({ ...form, businessDescription: e.target.value })}
+            placeholder="a dental practice"
+            maxLength={300}
+          />
+          {/* Said plainly, because the reason is not obvious and the field is
+              easy to skip. Without it the rep knows your NAME and not your
+              trade, and answers "do you sell car tyres?" with "we do not have
+              that detail, the team will confirm". */}
+          <p className="text-xs text-muted-foreground">
+            One line, finishing &ldquo;we are...&rdquo;. Your rep only knows what you sell from
+            the documents you upload, so a question about something you do not
+            offer finds nothing. This is how it knows to say what you do instead.
+          </p>
         </div>
       </CardContent>
     </Card>

@@ -126,6 +126,19 @@ class TenantConfig(Base, TenantScopedMixin):
 
     persona: Mapped[str | None] = mapped_column(String, nullable=True)
     business_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    #: One line saying what the business actually does.
+    #:
+    #: The system prompt names the business and never said what trade it is in.
+    #: The trade lives in the knowledge, and knowledge is retrieved per turn --
+    #: so a question about something the business does NOT do retrieves nothing
+    #: and the rep has no idea what it is. Asked "do you sell car tyres?", four
+    #: different businesses all answered "we do not have that detail to hand,
+    #: the team will confirm", and the only ones that got it right were the two
+    #: whose NAME happened to contain their trade.
+    #:
+    #: Short on purpose. It sits in the cached system prompt on every single
+    #: turn, and a paragraph here is a paragraph of tokens per message.
+    business_description: Mapped[str | None] = mapped_column(String(300), nullable=True)
     tone: Mapped[str | None] = mapped_column(String(255), nullable=True)
     custom_instructions: Mapped[str | None] = mapped_column(String, nullable=True)
     languages: Mapped[list] = mapped_column(JSONBType, nullable=False, default=list)
