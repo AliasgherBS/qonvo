@@ -135,14 +135,27 @@ DEFAULT_PERSONA = (
 #: within a few hours" writes it in their own instructions and gets it,
 #: verbatim; a business that has said nothing gets no promise invented for it.
 GROUNDING_INSTRUCTION = (
-    "Answer ONLY using the business knowledge provided below. If the answer is "
-    "not covered by this knowledge, say plainly that you do not have that "
-    "detail to hand and call the human_handoff tool. Never state anything the "
-    "business has not told you, and never commit the business to anything it "
-    "has not stated: no price, no discount, no availability, no policy, no "
-    "timeline, no callback, and no promise about what any person will do or "
-    "when. Where the business's own instructions above do state a commitment "
-    "like that, give it exactly as written and add nothing to it."
+    "Answer ONLY using the business knowledge provided below. Never state "
+    "anything the business has not told you, and never commit the business to "
+    "anything it has not stated: no price, no discount, no availability, no "
+    "policy, no timeline, no callback, and no promise about what any person "
+    "will do or when. Where the business's own instructions above do state a "
+    "commitment like that, give it exactly as written and add nothing to it."
+    "\n\n"
+    # Two different silences, and they had one answer between them.
+    #
+    # Asked "do you sell car tyres?", a dental practice, a clinic, a salon and
+    # a design studio each replied "we do not have that detail to hand, the
+    # team will confirm" -- promising to come back about whether a dentist
+    # sells tyres. Treating a question about a different trade as a gap in the
+    # knowledge base implies the business might do it, and escalates something
+    # no human needs to read.
+    "Two different things can be missing, and they are answered differently. "
+    "If the question is about this business but the knowledge does not cover "
+    "it, say plainly that you do not have that detail to hand and call the "
+    "human_handoff tool. If the question is about something this business "
+    "plainly does not do at all, do not treat it as a missing detail: say what "
+    "the business does instead, do not offer to find out, and do not hand over."
 )
 
 

@@ -323,3 +323,50 @@ def test_the_system_prompt_names_the_language_too():
     )
     assert "use English." in p
     assert "use en." not in p
+
+
+# --- out of scope is not the same as out of knowledge ---------------------- #
+#
+# Found by running four different businesses through the conversation lab.
+# Asked "do you sell car tyres?", every one of them -- a salon, a dental
+# practice, a clinic and a design studio -- answered some version of:
+#
+#   "We don't have that detail to hand about selling car tyres. Let us pass
+#    you to the team who can confirm for your branch."
+#
+# The rep treated a question about a different trade as a gap in the knowledge
+# base. That implies the business might sell tyres, promises a follow-up nobody
+# will make, and escalates something no owner needs to read.
+#
+# This was invisible on the one tenant everything had been tested against,
+# because that tenant's own instructions name its trade in the first sentence.
+
+
+def test_the_grounding_rule_separates_the_two_silences():
+    from app.workers.pipeline import GROUNDING_INSTRUCTION
+
+    assert "Two different things can be missing" in GROUNDING_INSTRUCTION
+    # The gap case keeps its handoff.
+    assert "do not have that detail to hand" in GROUNDING_INSTRUCTION
+    assert "human_handoff" in GROUNDING_INSTRUCTION
+    # The out-of-trade case must not.
+    assert "say what the business does instead" in GROUNDING_INSTRUCTION
+    assert "do not hand over" in GROUNDING_INSTRUCTION
+
+
+def test_the_commitments_rule_survived_the_rewrite():
+    """The part that stops the rep inventing a price or a callback is the
+    oldest thing in this instruction and must not be lost to an edit."""
+    from app.workers.pipeline import GROUNDING_INSTRUCTION
+
+    for clause in ("no price", "no discount", "no availability", "no policy",
+                   "no timeline", "no callback"):
+        assert clause in GROUNDING_INSTRUCTION
+
+
+def test_it_is_still_one_static_block():
+    """The system prompt is position 0 and prompt-cached; a per-turn value here
+    would miss the cache on every request."""
+    from app.workers.pipeline import GROUNDING_INSTRUCTION
+
+    assert "{" not in GROUNDING_INSTRUCTION and "}" not in GROUNDING_INSTRUCTION
