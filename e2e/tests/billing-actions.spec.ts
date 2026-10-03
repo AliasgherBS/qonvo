@@ -122,3 +122,95 @@ test.describe("@billing @actions the buttons do their job", () => {
     }
   });
 });
+
+/**
+ * The assertion class that was missing everywhere, and the reason none of the
+ * earlier tests caught this: they all `page.reload()` before asserting, so they
+ * prove a change PERSISTED and say nothing about whether the owner ever saw it.
+ *
+ * Billing is the only place in the product where that distinction matters,
+ * because it is the only write confirmed asynchronously by a third party. Every
+ * other section writes synchronously, so the response is the new state and a
+ * refetch straight afterwards is correct. Here the refetch raced the webhook
+ * and lost, every time.
+ */
+test.describe("@billing @actions the page keeps up without a reload", () => {
+  async function planState(page: import("@playwright/test").Page) {
+    return page.evaluate(() => {
+      const t = document.querySelector("main")?.textContent ?? "";
+      return {
+        plan: (t.match(/(Starter|Growth|Scale) Plan/) ?? ["?"])[0],
+        cancelling: /Cancelling/.test(t),
+      };
+    });
+  }
+
+  test("@smoke a plan change is visible without the owner reloading", async ({ page, request }) => {
+    const apiBase = (process.env.QONVO_E2E_API ?? "https://dev-api.qonvo.org").replace(/\/$/, "");
+    const login = await request.post(`${apiBase}/api/auth/login`, {
+      data: {
+        email: process.env.QONVO_E2E_OWNER_EMAIL ?? "owner@dev.dev",
+        password: process.env.QONVO_E2E_OWNER_PASSWORD ?? "dev-password-123",
+      },
+      failOnStatusCode: false,
+    });
+    test.skip(!login.ok(), "no API login here");
+    const token = (await login.json()).access_token;
+    const billing = await (
+      await request.get(`${apiBase}/api/billing`, { headers: { Authorization: `Bearer ${token}` } })
+    ).json();
+    test.skip(!billing?.subscription, "no subscription to move");
+    test.skip(billing.subscription.cancel_at_period_end, "a cancelling subscription cannot change plan");
+
+    await gotoPage(page, "/billing");
+    const before = await planState(page);
+
+    const move = page.getByRole("button", { name: /^(Upgrade|Switch to this)$/ }).first();
+    test.skip((await move.count()) === 0, "no other plan on offer");
+    await move.click();
+
+    // Generous, because a webhook is involved -- but it must land on its own.
+    // The bug was not slowness, it was that the page never caught up at all.
+    await expect
+      .poll(async () => (await planState(page)).plan, {
+        timeout: 25_000,
+        message: "the plan change must appear without a manual reload",
+      })
+      .not.toBe(before.plan);
+
+    await expectNoRawJson(page);
+  });
+
+  test("cancelling is visible without a reload, and so is keeping it", async ({ page }) => {
+    await gotoPage(page, "/billing");
+    const cancel = page.getByRole("button", { name: /^cancel plan$/i }).first();
+    test.skip(!(await cancel.isVisible().catch(() => false)), "nothing to cancel");
+
+    await cancel.click();
+    await page.waitForTimeout(1500);
+    const confirm = page.getByRole("button", { name: /^(cancel (my )?plan|confirm|yes)/i }).last();
+    if (await confirm.isVisible().catch(() => false)) await confirm.click();
+
+    await expect
+      .poll(async () => (await planState(page)).cancelling, {
+        timeout: 25_000,
+        message: "a cancellation must show itself without a manual reload",
+      })
+      .toBe(true);
+
+    // And back again, which is where the 502 came from: the page offered
+    // "Keep my plan" for a subscription the server had already resumed.
+    const keep = page.getByRole("button", { name: /keep my plan/i }).first();
+    await expect(keep, "a cancelling plan must offer the way back").toBeVisible();
+    await keep.click();
+
+    await expect
+      .poll(async () => (await planState(page)).cancelling, {
+        timeout: 25_000,
+        message: "keeping the plan must show itself without a manual reload",
+      })
+      .toBe(false);
+
+    await expectNoRawJson(page);
+  });
+});

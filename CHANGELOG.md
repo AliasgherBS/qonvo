@@ -9,6 +9,32 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-10-03
+
+### Fixed
+
+- **The billing page never caught up after a plan change, cancel or resume.** All three
+  answered 200 and the page went on showing the previous state until the owner reloaded
+  by hand -- an upgrade looked like it had not worked, and a cancellation did not appear
+  until the next visit. Billing writes are confirmed by the provider's **webhook**, not
+  by the response to the click, so our row is updated a second or two later and both call
+  sites refetched immediately. The comment at one of them read "it lands within a second
+  or two. Refetching immediately usually shows the new state; if it does not, the next
+  poll will" -- wrong on both counts: the refetch lost the race every time, and nothing
+  polled afterwards.
+
+  **This is also where the 502 came from.** With the page stuck on "Cancelling" for a
+  subscription the server had already resumed, "Keep my plan" was still on offer.
+  Pressing it asked the provider to un-cancel something that was not cancelled, Polar
+  answered 409, and that surfaced as a 502. The stale view was the bug; the 502 was its
+  symptom.
+
+  The page now waits for the change to land before claiming it, and says it is still
+  going through if it does not arrive, rather than showing either a lie or a dead page.
+  Billing is the only section affected, which was checked rather than assumed: knowledge,
+  team, behavior, business and account all reflect a change in place.
+
+
 ## [0.15.0] - 2026-10-03
 
 ### Added
@@ -784,3 +810,4 @@ could be sold.
 [0.14.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.14.0
 [0.14.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.14.1
 [0.15.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.15.0
+[0.15.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.15.1
