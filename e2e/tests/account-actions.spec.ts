@@ -6,21 +6,34 @@ test.describe("@account @actions the account page", () => {
     await gotoPage(page, "/account");
     const name = page.locator("#full-name");
     const original = await name.inputValue();
-    const probe = `${original} E2E`;
+    // An ABSOLUTE probe, not `${original} E2E`. Appending compounds: a run that
+    // dies before restoring leaves the suffix, and the next run appends to
+    // that. A real owner's name reached "Aliasghar NR E2E NR" exactly that way.
+    const probe = "E2E Display Name";
 
-    await name.fill(probe);
-    await page.getByRole("button", { name: /^save name$/i }).click();
-    await page.waitForTimeout(3000);
+    try {
+      await name.fill(probe);
+      await page.getByRole("button", { name: /^save name$/i }).click();
+      await page.waitForTimeout(3000);
+      await page.reload();
+      await page.waitForTimeout(2500);
+      expect(await page.locator("#full-name").inputValue()).toBe(probe);
+    } finally {
+      // Always, even when the assertion above threw.
+      await page.locator("#full-name").fill(original);
+      await page
+        .getByRole("button", { name: /^save name$/i })
+        .click()
+        .catch(() => {});
+      await page.waitForTimeout(3000);
+    }
+
     await page.reload();
     await page.waitForTimeout(2500);
-    expect(await page.locator("#full-name").inputValue()).toBe(probe);
-
-    await page.locator("#full-name").fill(original);
-    await page.getByRole("button", { name: /^save name$/i }).click();
-    await page.waitForTimeout(3000);
-    await page.reload();
-    await page.waitForTimeout(2500);
-    expect(await page.locator("#full-name").inputValue()).toBe(original);
+    expect(
+      await page.locator("#full-name").inputValue(),
+      "the owner's name must be left exactly as it was found",
+    ).toBe(original);
   });
 
   test("changing a password requires the current one, and says so", async ({ page }) => {
