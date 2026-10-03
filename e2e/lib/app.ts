@@ -55,3 +55,44 @@ export function failOnConsoleErrors(page: Page, sink: string[]) {
   });
   page.on("pageerror", (e) => sink.push(`pageerror: ${e.message.slice(0, 200)}`));
 }
+
+/**
+ * Collects console errors for the whole life of a page, so a test can assert
+ * that an INTERACTION was clean and not merely that the page loaded clean.
+ *
+ * Load-time checking is what the first version of this suite did, and it is
+ * the weaker half: the billing 502 that printed a response body at a customer
+ * appeared only after a click.
+ */
+export function watchConsole(page: Page) {
+  const errors: string[] = [];
+  page.on("console", (m) => {
+    if (m.type() !== "error") return;
+    const t = m.text();
+    // Chrome logs a generic line for every failed request; the useful signal is
+    // the status, which the network assertion covers separately.
+    if (/Failed to load resource/i.test(t)) return;
+    errors.push(t.slice(0, 200));
+  });
+  page.on("pageerror", (e) => errors.push(`pageerror: ${e.message.slice(0, 200)}`));
+  return {
+    errors,
+    /** Request failures worth failing a test over, as they happen. */
+    assertClean(context: string) {
+      if (errors.length) {
+        throw new Error(`console errors during ${context}:\n  ${errors.join("\n  ")}`);
+      }
+    },
+  };
+}
+
+/** Fails if any API call made during the test answered 5xx. */
+export function watchServerErrors(page: Page) {
+  const bad: string[] = [];
+  page.on("response", (res) => {
+    if (res.status() >= 500 && res.url().includes("/api/")) {
+      bad.push(`${res.status()} ${res.request().method()} ${res.url().split("/api/")[1]}`);
+    }
+  });
+  return bad;
+}

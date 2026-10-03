@@ -57,13 +57,15 @@ test.describe("@knowledge @actions adding and removing knowledge", () => {
     expect(ready, "the entry must finish ingesting, not hang on Processing").toBeTruthy();
 
     // Delete it the way an owner would: the row's own icon button.
+    //
+    // The page uses window.confirm, and Playwright DISMISSES dialogs by
+    // default -- so the delete silently aborted and this read exactly like a
+    // dead button. Accept it explicitly.
+    page.on("dialog", (d) => d.accept());
     const del = page.getByRole("button", { name: new RegExp(`Delete ${TITLE.slice(0, 18)}`, "i") });
     await expect(del, "each source must offer a delete control").toBeVisible();
     await del.click();
-    await page.waitForTimeout(1200);
-    const confirm = page.getByRole("button", { name: /^(delete|remove|confirm|yes)/i }).last();
-    if (await confirm.isVisible().catch(() => false)) await confirm.click();
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(3500);
     await noRawBody(page);
     await expect(
       page.locator("main").getByText(TITLE, { exact: false }),
