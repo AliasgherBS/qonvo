@@ -1,5 +1,12 @@
 import { test, expect } from "@playwright/test";
-import { gotoPage, watchConsole } from "../lib/app";
+import {
+  assertConfigWritesAllowed,
+  gotoPage,
+  watchConsole,
+  withConfigRestored,
+} from "../lib/app";
+
+const API = (process.env.QONVO_E2E_API ?? "https://dev-api.qonvo.org").replace(/\/$/, "");
 
 /**
  * Does the owner SEE the change, without reloading?
@@ -76,58 +83,77 @@ test.describe("@noreload the page keeps up", () => {
     con.assertClean("inviting and revoking");
   });
 
-  test("behavior: saving clears the unsaved state without reloading", async ({ page }) => {
+  test("behavior: saving clears the unsaved state without reloading", async ({ page, request }) => {
+    const blocked = await assertConfigWritesAllowed(request, API);
+    test.skip(!!blocked, blocked ?? "");
+    await withConfigRestored(request, API, async () => {
     const con = watchConsole(page);
     await gotoPage(page, "/behavior");
     const box = page.locator("#custom-instructions");
     const original = await box.inputValue();
 
-    await box.fill(`${original}\nNoReload probe`);
+    await box.fill("E2E NoReload Instructions");
     const save = page.getByRole("button", { name: /^save changes$/i });
     await expect(save, "an edit must reveal a save").toBeVisible({ timeout: 5000 });
     await save.click();
 
     // The page's own signal that the write landed: the dirty controls go away.
     // If they linger, the owner cannot tell a saved form from an unsaved one.
-    await expect(
-      page.getByRole("button", { name: /^save changes$/i }),
-      "after a successful save the unsaved-changes controls must clear themselves",
-    ).toHaveCount(0, SETTLE);
-
-    await box.fill(original);
-    const again = page.getByRole("button", { name: /^save changes$/i });
-    if (await again.isVisible().catch(() => false)) {
-      await again.click();
-      await expect(page.getByRole("button", { name: /^save changes$/i })).toHaveCount(0, SETTLE);
+    try {
+      await expect(
+        page.getByRole("button", { name: /^save changes$/i }),
+        "after a successful save the unsaved-changes controls must clear themselves",
+      ).toHaveCount(0, SETTLE);
+    } finally {
+      await box.fill(original);
+      const again = page.getByRole("button", { name: /^save changes$/i });
+      if (await again.isVisible().catch(() => false)) {
+        await again.click();
+        await page.waitForTimeout(3000);
+      }
     }
+    });
     con.assertClean("saving behavior");
   });
 
-  test("business: saving clears the unsaved state without reloading", async ({ page }) => {
+  test("business: saving clears the unsaved state without reloading", async ({ page, request }) => {
+    const blocked = await assertConfigWritesAllowed(request, API);
+    test.skip(!!blocked, blocked ?? "");
+    await withConfigRestored(request, API, async () => {
     await gotoPage(page, "/business");
     const name = page.locator("#business-name");
     const original = await name.inputValue();
+    // Absolute, never `${original} NR`. Appending compounds across runs: a
+    // failed restore leaves the suffix and the next run appends to it. This
+    // tenant's name reached "test01 NR NR NR NR" on production that way.
+    const probe = "E2E NoReload Business";
 
-    await name.fill(`${original} NR`);
-    await page.getByRole("button", { name: /^save changes$/i }).click();
-    await expect(
-      page.getByRole("button", { name: /^save changes$/i }),
-      "the save must clear itself once the write lands",
-    ).toHaveCount(0, SETTLE);
-
-    await name.fill(original);
-    const again = page.getByRole("button", { name: /^save changes$/i });
-    if (await again.isVisible().catch(() => false)) {
-      await again.click();
-      await expect(page.getByRole("button", { name: /^save changes$/i })).toHaveCount(0, SETTLE);
+    try {
+      await name.fill(probe);
+      await page.getByRole("button", { name: /^save changes$/i }).click();
+      await expect(
+        page.getByRole("button", { name: /^save changes$/i }),
+        "the save must clear itself once the write lands",
+      ).toHaveCount(0, SETTLE);
+    } finally {
+      await name.fill(original);
+      const again = page.getByRole("button", { name: /^save changes$/i });
+      if (await again.isVisible().catch(() => false)) {
+        await again.click();
+        await page.waitForTimeout(3000);
+      }
     }
-    expect(
-      await page.locator("#business-name").inputValue(),
-      "and the business name is left as it was found",
-    ).toBe(original);
+    });
   });
 
-  test("account: the saved name is reflected without reloading", async ({ page }) => {
+  test("account: the saved name is reflected without reloading", async ({ page, request }) => {
+    // The owner's display name is their own, user-visible state, and this test
+    // dirtied it twice on production before the restore was made reliable. It
+    // carries the same opt-in as the config tests rather than a cleverer
+    // restore: the value of the assertion does not justify editing a real
+    // person's name on a live tenant by default.
+    const blocked = await assertConfigWritesAllowed(request, API);
+    test.skip(!!blocked, blocked ?? "");
     const con = watchConsole(page);
     await gotoPage(page, "/account");
     const name = page.locator("#full-name");
@@ -137,21 +163,30 @@ test.describe("@noreload the page keeps up", () => {
     try {
       await name.fill(probe);
       await page.getByRole("button", { name: /^save name$/i }).click();
-      // Acknowledged somewhere other than the box the owner just typed into --
-      // matching /name/ would pass on any page that has the word on it.
+      // The confirmation is a TOAST, and toasts dismiss themselves. Sampling
+      // the page five seconds later found nothing and read exactly like a save
+      // with no feedback at all -- poll from the moment of the click instead.
+      //
+      // Deliberately not asserting that the header updates: the avatar menu
+      // reads the session JWT, which is minted at sign-in, and the toast says
+      // so in as many words.
       await expect
         .poll(async () => page.locator("body").innerText(), {
-          ...SETTLE,
-          message: "saving a name must be acknowledged on the page",
+          timeout: 10_000,
+          intervals: [200, 200, 300, 500, 500, 1000],
+          message: "saving a name must confirm itself",
         })
-        .toMatch(/saved|updated|changed/i);
+        .toMatch(/name saved|saved/i);
     } finally {
       await name.fill(original);
-      await page
-        .getByRole("button", { name: /^save name$/i })
-        .click()
-        .catch(() => {});
-      await page.waitForTimeout(3000);
+      // Only press it if it is pressable: this button disables itself when the
+      // field matches what is stored, so a blind click waits out the timeout
+      // and fails a test whose assertion had already passed.
+      const save = page.getByRole("button", { name: /^save name$/i });
+      if (await save.isEnabled().catch(() => false)) {
+        await save.click().catch(() => {});
+        await page.waitForTimeout(3000);
+      }
     }
     expect(
       await page.locator("#full-name").inputValue(),
