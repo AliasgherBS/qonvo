@@ -47,6 +47,37 @@ export class ApiError extends Error {
  * placeholder. Prefers the backend's error detail for client errors, and a
  * clear generic for network/server failures.
  */
+/**
+ * Poll until a change the PROVIDER applies has actually landed.
+ *
+ * Billing writes are confirmed by a webhook, not by the response to the click:
+ * change-plan, cancel and resume all answer 200 and then our row is updated a
+ * second or two later. Refetching immediately therefore reads the OLD value,
+ * and the page sat on it until the owner reloaded by hand -- so an upgrade
+ * looked like it had not worked, and "Keep my plan" was still offered for a
+ * subscription the server had already resumed. Pressing it then produced a 502,
+ * which is how this was reported.
+ *
+ * Resolves true once `done` holds, false if the budget runs out -- the caller
+ * then says the change is still going through rather than lying in either
+ * direction.
+ */
+export async function waitForChange<T>(
+  read: () => Promise<T>,
+  done: (value: T) => boolean,
+  { tries = 10, delayMs = 1000 }: { tries?: number; delayMs?: number } = {},
+): Promise<boolean> {
+  for (let i = 0; i < tries; i++) {
+    try {
+      if (done(await read())) return true;
+    } catch {
+      // A transient read failure is not an answer; keep waiting.
+    }
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return false;
+}
+
 export function describeError(err: unknown, fallback = "Something went wrong. Please try again."): string {
   if (err instanceof ApiError) {
     if (err.status === 401) return "Your session expired. Please sign in again.";
