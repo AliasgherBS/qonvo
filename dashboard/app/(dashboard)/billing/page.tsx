@@ -12,7 +12,9 @@ import { ManagePlan } from "@/components/billing/manage-plan";
 import { PaymentHistory } from "@/components/billing/payment-history";
 import { PlanComparison } from "@/components/billing/plan-comparison";
 import { UsageZone } from "@/components/billing/usage-zone";
-import { billing, subscription as subscriptionApi, usage as usageApi } from "@/lib/api";
+import { billing, subscription as subscriptionApi, usage as usageApi,
+  describeError,
+} from "@/lib/api";
 import { useApi, useAuthToken } from "@/lib/use-api";
 
 /**
@@ -91,7 +93,11 @@ export default function BillingPage() {
       }
       setMessage(checkout.instructions ?? "Message us and we will switch it over for you.");
     } catch (err) {
-      setMessage(err instanceof Error ? err.message : "Could not start the upgrade.");
+      // describeError, never err.message. A refusal whose body carries no
+      // `detail` leaves ApiError.message as the RAW response, and this line
+      // printed `{"ok":false,"reason":"provider_unavailable"}` on the billing
+      // page, in front of a customer, under a "Message us on WhatsApp" button.
+      setMessage(describeError(err, "Could not start the upgrade."));
     } finally {
       setPending(null);
     }
