@@ -36,7 +36,8 @@ docker run -d --name qonvo-waha-stub --network qonvo-staging_default \
   python:3.12-alpine python /stub.py
 
 QONVO_ENV_FILE=.env.staging docker compose -p qonvo-staging --env-file .env.staging \
-  -f docker-compose.yml -f scripts/conversation-lab/docker-compose.lab.yml \
+  -f docker-compose.yml -f docker-compose.override.yml \
+  -f scripts/conversation-lab/docker-compose.lab.yml \
   up -d --no-deps worker
 ```
 

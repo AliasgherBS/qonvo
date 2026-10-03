@@ -134,6 +134,7 @@ def now_utc() -> str:
 
 TENANTS = {
     "salon": {
+        "description": "a hair and beauty salon",
         "name": "Lab Salon",
         "instructions": (
             "Answer only from this salon's own knowledge. If something is not in it, say "
@@ -151,6 +152,7 @@ TENANTS = {
         ),
     },
     "dental": {
+        "description": "a dental practice",
         "name": "Lab Dental",
         "instructions": (
             "Answer only from this practice's own knowledge.\n\n"
@@ -168,6 +170,7 @@ TENANTS = {
         ),
     },
     "clinic": {
+        "description": "a multi-department medical clinic",
         "name": "Lab Clinic",
         "instructions": (
             "Answer only from this clinic's own knowledge.\n\n"
@@ -183,6 +186,7 @@ TENANTS = {
         ),
     },
     "info": {
+        "description": "a brand and web design studio",
         "name": "Lab Studio",
         "instructions": (
             "Answer only from this studio's own knowledge. This number is for information "
@@ -382,6 +386,7 @@ def ensure_tenant(key: str) -> tuple[str, str, str, str]:
     version = (api("GET", "/api/config", token=token)[1] or {}).get("version", 1)
     api("PUT", "/api/config", {
         "business_name": name,
+        "business_description": spec["description"],
         "custom_instructions": spec["instructions"],
         "primary_language": "en",
         "version": version,

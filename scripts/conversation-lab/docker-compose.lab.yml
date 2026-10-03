@@ -1,8 +1,14 @@
 # Point the worker at the stub instead of WAHA, for a lab run only.
 #
 #   docker compose -p qonvo-staging --env-file .env.staging \
-#     -f docker-compose.yml -f scripts/conversation-lab/docker-compose.lab.yml \
+#     -f docker-compose.yml -f docker-compose.override.yml \
+  -f scripts/conversation-lab/docker-compose.lab.yml \
 #     up -d --no-deps worker
+#
+# docker-compose.override.yml MUST be in that list. It is picked up
+# automatically when no -f is given, and it is what publishes staging's ports --
+# naming files explicitly without it silently drops the binding, which takes
+# dev-api.qonvo.org down with a 502 while every container still reads healthy.
 #
 # Undo by bringing the worker up again without this file.
 services:

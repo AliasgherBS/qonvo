@@ -89,6 +89,18 @@ QUOTA_EXCEEDED_REPLY = (
 #: in Urdu is glaring, and it would switch just as readily under an owner's own
 #: persona. Which gender is the owner's to pick (see DEFAULT_PERSONA); that it
 #: does not change mid-conversation is not.
+#: Appended to the identity line when the owner has said what they do.
+#:
+#: Separate from IDENTITY_INSTRUCTION rather than interpolated into it, because
+#: a tenant that has not filled it in must get the original sentence exactly,
+#: not one with an empty clause hanging off it.
+TRADE_INSTRUCTION = (
+    "{business} is {description}. If a customer asks about something this "
+    "business does not do, say what it does instead, in one short sentence. Do "
+    "not offer to find out and do not hand over: it is not a gap in what you "
+    "know, it is a different trade."
+)
+
 IDENTITY_INSTRUCTION = (
     "You are the customer service team for {business}. You speak as the "
     "business and say \"we\", never \"I am an assistant\". You never describe "
@@ -499,6 +511,7 @@ def build_system_prompt(
     tone: str | None,
     custom_instructions: str | None,
     primary_language: str,
+    business_description: str | None = None,
     reply_language: str | None = None,
     available_skills: Iterable[str] | None = None,
 ) -> str:
@@ -512,7 +525,18 @@ def build_system_prompt(
     single request. Retrieved knowledge and the rolling summary therefore live
     in :func:`build_turn_prompt`, at the end of the request.
     """
-    lines = [IDENTITY_INSTRUCTION.format(business=business_name or "this business")]
+    business = business_name or "this business"
+    lines = [IDENTITY_INSTRUCTION.format(business=business)]
+    # Second, so it reads as part of who you are rather than as a rule bolted
+    # on later -- and always present, which is the whole point: an out-of-scope
+    # question retrieves no knowledge, so this is the only thing in the prompt
+    # that can say what the business actually is.
+    if business_description and business_description.strip():
+        lines.append(
+            TRADE_INSTRUCTION.format(
+                business=business, description=business_description.strip().rstrip(".")
+            )
+        )
     # `or DEFAULT_PERSONA`, not `if persona`: an empty persona used to mean an
     # unpinned one, and the rep invented a new voice every few turns.
     lines.append((persona or "").strip() or DEFAULT_PERSONA)
@@ -1402,6 +1426,9 @@ async def _run_pipeline_inner(
         available_skills = [t["function"]["name"] for t in tools]
         system_prompt = build_system_prompt(
             business_name=tenant_config.business_name if tenant_config else None,
+            business_description=(
+                tenant_config.business_description if tenant_config else None
+            ),
             persona=tenant_config.persona if tenant_config else None,
             tone=tenant_config.tone if tenant_config else None,
             custom_instructions=tenant_config.custom_instructions if tenant_config else None,
