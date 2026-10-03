@@ -9,6 +9,8 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-03
+
 ### Added
 
 - **A click-through UI suite** (`e2e/`), run on demand rather than in CI. The earlier
@@ -781,3 +783,4 @@ could be sold.
 [0.13.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.13.0
 [0.14.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.14.0
 [0.14.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.14.1
+[0.15.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.15.0
