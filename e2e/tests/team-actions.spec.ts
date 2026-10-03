@@ -22,12 +22,20 @@ test.describe("@team @actions inviting and removing", () => {
       "an invitation just sent must appear in the list",
     ).toBeVisible({ timeout: 15_000 });
 
-    const revoke = page.getByRole("button", { name: /revoke|cancel invite|^remove$/i }).last();
+    // Scope the revoke to the INVITATION's own row, by name.
+    //
+    // An earlier version matched /revoke|cancel invite|^remove$/ and took
+    // `.last()`. The only removal control this page renders is labelled
+    // "Remove", and the match landed on a real team MEMBER instead: it removed
+    // a live staff user from the tenant. A test that cleans up after itself
+    // must be able to prove what it is cleaning up.
+    page.on("dialog", (d) => d.accept());
+    const inviteRow = page
+      .locator("main tr, main li, main [data-row]")
+      .filter({ hasText: INVITEE });
+    const revoke = inviteRow.getByRole("button", { name: /revoke|cancel|remove/i }).first();
     if (await revoke.isVisible().catch(() => false)) {
       await revoke.click();
-      await page.waitForTimeout(1200);
-      const confirm = page.getByRole("button", { name: /revoke|remove|confirm|yes/i }).last();
-      if (await confirm.isVisible().catch(() => false)) await confirm.click();
       await page.waitForTimeout(3000);
       await expect(
         page.locator("main").getByText(INVITEE, { exact: false }),
