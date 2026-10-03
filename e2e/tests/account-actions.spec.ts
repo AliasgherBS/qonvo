@@ -21,11 +21,11 @@ test.describe("@account @actions the account page", () => {
     } finally {
       // Always, even when the assertion above threw.
       await page.locator("#full-name").fill(original);
-      await page
-        .getByRole("button", { name: /^save name$/i })
-        .click()
-        .catch(() => {});
-      await page.waitForTimeout(3000);
+      const save = page.getByRole("button", { name: /^save name$/i });
+      if (await save.isEnabled().catch(() => false)) {
+        await save.click().catch(() => {});
+        await page.waitForTimeout(3000);
+      }
     }
 
     await page.reload();
