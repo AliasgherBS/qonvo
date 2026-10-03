@@ -9,8 +9,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/components/ui/toast";
 import {
   CANCELLATION_REASONS,
+  billing,
   describeError,
   subscription as subscriptionApi,
+  waitForChange,
   type BillingStatus,
   type CancellationReason,
 } from "@/lib/api";
@@ -60,7 +62,12 @@ export function ManagePlan({
   // reset date one card below. Two dates in two formats look like two facts.
   const endsOn = sub.currentPeriodEnd ? formatDate(sub.currentPeriodEnd) : null;
 
-  async function run(action: () => Promise<{ ok: boolean; reason: string | null }>, done: string) {
+  async function run(
+    action: () => Promise<{ ok: boolean; reason: string | null }>,
+    done: string,
+    /** What the provider's webhook will make true once it lands. */
+    landed?: (status: BillingStatus) => boolean,
+  ) {
     setBusy(true);
     try {
       const result = await action();
@@ -75,14 +82,23 @@ export function ManagePlan({
         });
         return;
       }
-      toast({ title: done, variant: "success" });
       setConfirming(false);
       setReason("");
       setComment("");
-      // The provider's webhook is what updates our row, and it lands within a
-      // second or two. Refetching immediately usually shows the new state; if
-      // it does not, the next poll will.
+      // "usually shows the new state; if it does not, the next poll will" was
+      // the old comment here, and it was wrong on both counts: the refetch
+      // raced the webhook every time, and nothing polled afterwards. The page
+      // then offered "Keep my plan" for a subscription that was already
+      // resumed, and pressing it answered 502.
+      const ok = landed
+        ? await waitForChange(() => billing.get({ token }), landed)
+        : true;
       onChanged();
+      toast({
+        title: done,
+        description: ok ? undefined : "It is still going through; this page will catch up.",
+        variant: "success",
+      });
     } catch (err) {
       toast({ title: "Could not do that", description: describeError(err), variant: "error" });
     } finally {
@@ -107,7 +123,13 @@ export function ManagePlan({
           size="sm"
           className="mt-3"
           disabled={busy}
-          onClick={() => run(() => subscriptionApi.resume({ token }), "Your plan will continue")}
+          onClick={() =>
+            run(
+              () => subscriptionApi.resume({ token }),
+              "Your plan will continue",
+              (b) => b.subscription?.cancelAtPeriodEnd === false,
+            )
+          }
         >
           {busy ? (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -206,6 +228,7 @@ export function ManagePlan({
                   { token },
                 ),
               "Your plan will end at the end of the period",
+              (b) => b.subscription?.cancelAtPeriodEnd === true,
             )
           }
         >

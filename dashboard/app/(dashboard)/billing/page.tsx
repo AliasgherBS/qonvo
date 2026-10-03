@@ -14,6 +14,7 @@ import { PlanComparison } from "@/components/billing/plan-comparison";
 import { UsageZone } from "@/components/billing/usage-zone";
 import { billing, subscription as subscriptionApi, usage as usageApi,
   describeError,
+  waitForChange,
 } from "@/lib/api";
 import { useApi, useAuthToken } from "@/lib/use-api";
 
@@ -71,15 +72,23 @@ export default function BillingPage() {
       if (data?.subscription) {
         const result = await subscriptionApi.changePlan(planKey, { token });
         if (result.ok) {
-          setMessage(
-            "Your plan has changed and the new allowances are live already. Our payment " +
-              "provider works out the difference for the rest of this month and puts it on " +
-              "your next invoice.",
+          // Wait for the webhook, do not assume it. This refetched immediately,
+          // read the pre-change row, and left the page showing the old plan
+          // until the owner reloaded by hand.
+          const landed = await waitForChange(
+            () => billing.get({ token }),
+            (b) => b.subscription?.planKey === planKey,
           );
-          // The provider's webhook writes our row and rewrites the
-          // entitlements, so both of these need refetching.
           status.refetch();
           meters.refetch();
+          setMessage(
+            landed
+              ? "Your plan has changed and the new allowances are live already. Our payment " +
+                  "provider works out the difference for the rest of this month and puts it on " +
+                  "your next invoice."
+              : "Your plan change is going through. It usually lands within a few seconds - " +
+                  "this page will catch up on its own.",
+          );
           return;
         }
         setMessage("We could not change the plan just now. Try again shortly.");
