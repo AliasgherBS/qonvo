@@ -282,7 +282,16 @@ def test_a_refusal_carries_a_failure_status_and_keeps_its_body():
 
     import json
 
-    assert json.loads(nothing_to_cancel.body) == {"ok": False, "reason": "no_subscription"}
+    body = json.loads(nothing_to_cancel.body)
+    # `ok` and `reason` are the contract anything already reading this relies
+    # on, so they must survive unchanged.
+    assert body["ok"] is False
+    assert body["reason"] == "no_subscription"
+    # And every refusal now carries prose. Without it a client that falls back
+    # to the raw response renders {"ok":false,...} to a customer, which is
+    # exactly what happened on the billing page on 3 October.
+    assert body["detail"]["code"] == "no_subscription"
+    assert "subscription" in body["detail"]["message"].lower()
 
 
 def test_success_is_still_a_200():
@@ -295,3 +304,34 @@ def test_an_unrecognised_reason_still_fails_rather_than_passing():
     from app.api.billing import _billing_result
 
     assert _billing_result(False, "something_new").status_code == 409
+
+
+def test_every_refusal_carries_a_sentence_a_customer_can_act_on():
+    """A reason code is for us; the message is for the person reading it.
+
+    The billing page printed `{"ok":false,"reason":"provider_unavailable"}` to
+    an owner because the body had no `detail` and the client fell back to the
+    raw response. Prose on every refusal closes that off at the source rather
+    than at each surface.
+    """
+    import json
+
+    from app.api.billing import _REASON_STATUS, _billing_result
+
+    for reason in _REASON_STATUS:
+        body = json.loads(_billing_result(False, reason).body)
+        message = body["detail"]["message"]
+        assert message and message[0].isupper() and message.rstrip().endswith(".")
+        assert reason not in message, "a reason code must not leak into the prose"
+
+
+def test_an_unavailable_provider_is_not_blamed_for_a_refusal():
+    """`provider_unavailable` means we could not reach them. A subscription the
+    provider declines to change is a different thing and now says so."""
+    import json
+
+    from app.api.billing import _billing_result
+
+    refused = json.loads(_billing_result(False, "subscription_cancelling").body)
+    assert "scheduled to cancel" in refused["detail"]["message"]
+    assert "Resume it first" in refused["detail"]["message"]
