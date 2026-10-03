@@ -9,6 +9,8 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-10-03
+
 ### Fixed
 
 - **The billing page never caught up after a plan change, cancel or resume.** All three
@@ -808,3 +810,4 @@ could be sold.
 [0.14.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.14.0
 [0.14.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.14.1
 [0.15.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.15.0
+[0.15.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.15.1
