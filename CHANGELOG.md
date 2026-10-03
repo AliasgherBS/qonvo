@@ -9,6 +9,8 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-10-04
+
 ### Fixed
 
 - **An unclear language let the rep switch the conversation.** An English thread about a
@@ -838,3 +840,4 @@ could be sold.
 [0.14.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.14.1
 [0.15.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.15.0
 [0.15.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.15.1
+[0.15.2]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.15.2
