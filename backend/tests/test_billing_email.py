@@ -40,6 +40,7 @@ def _stored(**overrides) -> SimpleNamespace:
         version=1,
         persona="friendly",
         business_name="Glow Salon",
+        business_description=None,
         primary_language="en",
         tone="warm",
         custom_instructions="Never quote a price.",
