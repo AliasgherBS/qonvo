@@ -238,3 +238,88 @@ def test_the_rule_is_static_so_it_cannot_cost_a_cache_miss():
 
     assert "{" not in NO_META_INSTRUCTION and "}" not in NO_META_INSTRUCTION
     assert _prompt() == _prompt()
+
+
+# --- an unclear language must not open the door to a different one ---------- #
+#
+# Found live on 4 October 2026. An English thread about a booking received
+# "Lahore, Signature, haircut, name Ali, 03132941504" -- proper nouns and
+# digits, no language markers -- and the reply came back in Roman Urdu.
+#
+# Detection was right: Latin script, language unknown. The turn note then said
+# only "reply in that same script", and Roman Urdu IS Latin script, so the
+# model satisfied it perfectly while switching the conversation's language.
+#
+# The system prompt does say "if genuinely unclear, use <primary>", but that
+# sits at position 0 and the note sits immediately above the question. The
+# nearer instruction wins, so the nearer instruction has to carry the fallback.
+
+
+def test_an_unclear_message_names_the_fallback_language():
+    from app.agent.detect_language import language_fact
+
+    note = language_fact(
+        "Lahore, Signature, haircut, name Ali, 03132941504",
+        reply_language="match",
+        primary_language="en",
+    )
+    assert note is not None
+    assert "English" in note
+    assert "unclear" in note
+    assert "Do not switch the conversation to another language." in note
+
+
+def test_script_alone_is_no_longer_the_whole_instruction():
+    """The exact sentence that permitted the switch, pinned as forbidden."""
+    from app.agent.detect_language import language_fact
+
+    note = language_fact(
+        "Lahore, Signature, haircut, name Ali, 03132941504",
+        reply_language="match",
+        primary_language="en",
+    )
+    assert note != (
+        "The customer's current message is written in Latin script. Reply in that same script."
+    )
+
+
+def test_a_language_that_IS_detected_is_still_matched():
+    """The fallback must not override a real detection, or the product stops
+    answering Urdu speakers in Urdu."""
+    from app.agent.detect_language import language_fact
+
+    note = language_fact("waxing kitne ka hai?", reply_language="match", primary_language="en")
+    assert "Roman Urdu" in note
+    assert "unclear" not in note
+
+
+def test_a_pinned_reply_language_still_suppresses_the_note():
+    from app.agent.detect_language import language_fact
+
+    assert language_fact("anything", reply_language="en", primary_language="en") is None
+
+
+def test_a_stored_code_is_rendered_as_a_name():
+    from app.agent.detect_language import language_name
+
+    assert language_name("en") == "English"
+    assert language_name("ur") == "Urdu"
+    # An unknown code is passed through rather than dropped.
+    assert language_name("xx") == "xx"
+    assert language_name(None) is None
+
+
+def test_the_system_prompt_names_the_language_too():
+    from app.workers.pipeline import build_system_prompt
+
+    p = build_system_prompt(
+        business_name="Depilex",
+        persona="",
+        tone=None,
+        custom_instructions=None,
+        reply_language="match",
+        primary_language="en",
+        available_skills=[],
+    )
+    assert "use English." in p
+    assert "use en." not in p

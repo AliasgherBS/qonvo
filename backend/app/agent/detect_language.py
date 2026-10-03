@@ -202,7 +202,42 @@ def detect(text: str) -> Detected:
     return Detected(script=LATIN)
 
 
-def language_fact(text: str, *, reply_language: str | None = None) -> str | None:
+#: Enough of a map to turn a stored code into something a prompt can say.
+#: `primary_language` is stored as a short code ("en", "ur"), and both the
+#: system prompt and the turn note used to splice it in raw -- "if the
+#: customer's language is genuinely unclear, use en". Understandable, but it is
+#: the kind of seam a model reads as a variable name rather than an answer.
+_LANGUAGE_NAMES = {
+    "en": "English",
+    "ur": "Urdu",
+    "ar": "Arabic",
+    "hi": "Hindi",
+    "fr": "French",
+    "es": "Spanish",
+    "de": "German",
+    "pt": "Portuguese",
+    "tr": "Turkish",
+    "id": "Indonesian",
+    "ms": "Malay",
+    "bn": "Bengali",
+    "fa": "Persian",
+}
+
+
+def language_name(code: str | None) -> str | None:
+    """A display name for a stored language code, or the code itself."""
+    if not code:
+        return None
+    cleaned = code.strip()
+    return _LANGUAGE_NAMES.get(cleaned.lower(), cleaned)
+
+
+def language_fact(
+    text: str,
+    *,
+    reply_language: str | None = None,
+    primary_language: str | None = None,
+) -> str | None:
     """The sentence to place immediately above the customer's message, or None.
 
     Two cases return None, and both matter.
@@ -225,10 +260,28 @@ def language_fact(text: str, *, reply_language: str | None = None) -> str | None
             f"The customer's current message is in {detected.language} "
             f"({detected.script} script). Reply in that language and that script."
         )
+    # Script alone is not enough, and this cost a real conversation. A customer
+    # wrote "Lahore, Signature, haircut, name Ali, 03132941504" -- proper nouns
+    # and digits, no language markers -- so detection correctly returned Latin
+    # script with no language. The note then said only "reply in that same
+    # script", and Roman Urdu is Latin script, so the model satisfied it
+    # perfectly by switching a thread that had been English into Roman Urdu.
+    #
+    # The system prompt does say "if the customer's language is genuinely
+    # unclear, use <primary>", but that sits at position 0 and this sentence
+    # sits immediately above the question. The nearer instruction wins, so the
+    # nearer instruction has to carry the fallback too.
+    fallback = language_name(primary_language)
+    if fallback:
+        return (
+            f"The customer's current message is written in {detected.script} script and its "
+            f"language is unclear. Reply in {fallback}, written in {detected.script} "
+            "script. Do not switch the conversation to another language."
+        )
     return (
         f"The customer's current message is written in {detected.script} script. "
         "Reply in that same script."
     )
 
 
-__all__ = ["ARABIC", "LATIN", "Detected", "detect", "language_fact"]
+__all__ = ["ARABIC", "LATIN", "Detected", "detect", "language_fact", "language_name"]
