@@ -25,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agent.audio_meter import audio_duration_seconds
-from app.agent.detect_language import language_fact
+from app.agent.detect_language import language_fact, language_name
 from app.agent.intent import has_informational_intent
 from app.agent.language import language_instruction
 from app.agent.voice_allowance import (
@@ -519,7 +519,8 @@ def build_system_prompt(
     # back in Roman Urdu.
     lines.append(language_instruction(reply_language))
     lines.append(
-        f"If the customer's language is genuinely unclear, use {primary_language}."
+        "If the customer's language is genuinely unclear, use "
+        f"{language_name(primary_language) or primary_language}."
     )
     lines.append(
         "Keep replies concise and conversational, in WhatsApp style — short "
@@ -1413,7 +1414,13 @@ async def _run_pipeline_inner(
             # fact from the same code -- and a voice reply is synthesised from
             # this turn's text, so TTS follows it too.
             language_note=language_fact(
-                coalesced, reply_language=reply_language_mode(tenant_config)
+                coalesced,
+                reply_language=reply_language_mode(tenant_config),
+                # Needed for the unclear case: without it the note constrains
+                # the script and leaves the language open, which is how an
+                # English thread turned into Roman Urdu on a message that was
+                # mostly proper nouns.
+                primary_language=(tenant_config.primary_language or None),
             ),
         )
         llm_messages = [
