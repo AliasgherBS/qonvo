@@ -134,3 +134,58 @@ def test_empty_string_is_how_you_deliberately_blank_a_field():
     _apply_config_update(row, ConfigUpdateRequest(persona=""))
     assert row.persona == ""
     assert row.custom_instructions == "Never quote a price."
+
+
+# --- the Business page must be savable by a tenant who set nothing ---------- #
+#
+# Found on production, 3 October 2026, by pressing Save on the Business page
+# and watching the network tab. The whole PUT answered 422:
+#
+#   "null is not how a field is cleared: owner_alert_number, payment_details"
+#
+# The owner could not change their business name, their timezone or their
+# opening hours, because of two fields they had never touched. The page showed
+# no error at all: the value simply reverted on reload.
+#
+# Two fixes collided. The dashboard sends null here deliberately -- a comment in
+# lib/api.ts explains that "" used to 422 with "must be digits with an optional
+# leading +". The config-erasure fix then made null a 422 as well. Each change
+# was correct in isolation and together they locked the page.
+
+
+def test_an_empty_alert_number_is_accepted_and_means_unset():
+    from app.api.config import ConfigUpdateRequest
+
+    body = ConfigUpdateRequest(owner_alert_number="")
+    assert body.owner_alert_number is None
+
+
+def test_whitespace_only_is_the_same_as_empty():
+    from app.api.config import ConfigUpdateRequest
+
+    assert ConfigUpdateRequest(owner_alert_number="   ").owner_alert_number is None
+
+
+def test_a_real_number_still_has_to_look_like_one():
+    import pytest
+    from app.api.config import ConfigUpdateRequest
+    from pydantic import ValidationError
+
+    assert ConfigUpdateRequest(owner_alert_number="+923001234567").owner_alert_number
+    with pytest.raises(ValidationError):
+        ConfigUpdateRequest(owner_alert_number="not a phone number")
+
+
+def test_the_whole_business_page_payload_validates_with_everything_empty():
+    """The exact shape the page sends for a tenant who has filled nothing in."""
+    from app.api.config import ConfigUpdateRequest
+
+    body = ConfigUpdateRequest(
+        business_name="test01",
+        timezone="Asia/Karachi",
+        owner_alert_number="",
+        notify_on_handoff=False,
+        payment_details="",
+    )
+    assert body.business_name == "test01"
+    assert body.owner_alert_number is None
