@@ -120,6 +120,7 @@ was left stuck. Production is now the only stack answering that number. The
 
 | | What | Where |
 |---|---|---|
+| C9 | `/readyz/deep`'s own query was invalid SQL, found by the probe itself | #81 |
 | F2 | The plan picker names a price, read from the provider rather than copied into `plans.py` | #76 |
 | F3 | `change-plan`, `cancel` and `resume` answer 409 or 502 instead of 200 | #76 |
 | F4 | The trial banner links to the plans it used to send people past | #76 |
@@ -436,3 +437,219 @@ its pre-audit value of 2.
 Observed in passing: the dashboard returns **502 for a few seconds during every deploy**
 while its container swaps. The Deploy workflow's own health check passed, so nothing
 rolled back, but there is no zero-downtime swap on the dashboard.
+
+
+---
+
+## 9. Where it ended
+
+Production went from **v0.12.0** (three weeks stale) to **v0.14.1** across this
+session, in four releases, with every change through a pull request and CI.
+
+### Verified on production after shipping
+
+| Check | Result |
+|---|---|
+| URL knowledge ingestion, on the two URLs that failed before | both `ready` |
+| `/readyz/deep` | `{"llm":"ok","whatsapp":"ok: 1 of 2 working"}` |
+| `/readyz` (the deployment gate) | unchanged, `ok` throughout |
+| Conversation state after unlinking the laptop | all five `bot_active` |
+
+**`1 of 2 working` is worth acting on.** The fleet has two WhatsApp sessions and
+one is not connected. That is the new probe doing exactly what it was built for
+on its first day, and it is the kind of thing the old `/readyz` would have
+reported as `ok`.
+
+### [F] C9 - the probe reported itself
+
+`/readyz/deep` shipped in v0.14.0 with `lower(session_status)` in its query,
+which Postgres has no function for, so the check raised `ProgrammingError` on
+every call. It was caught within minutes **by the probe itself**, `/readyz`
+stayed green, and the deploy did not roll back -- the separation between the two
+routes earning itself on day one. Fixed in v0.14.1.
+
+### What still needs you
+
+| | Why it is yours |
+|---|---|
+| **The three Polar product descriptions** | Product metadata in the Polar dashboard. No deploy. Scale still describes Growth. |
+| **The real WhatsApp retest** | Deferred to last by agreement, now unblocked: the laptop is unlinked and production is the sole responder. |
+| **Delete "Zephyr Clinic QA"** | A real tenant created on production for this audit. Hard-delete it from Admin. |
+| **`QONVO_MINIO_ACCESS_KEY`** | Secret rotation on production. |
+| **Backups are local-only** | An infrastructure decision, not a code change. |
+| **One number is not connected** | `1 of 2` fleet sessions working. |
+
+### Still untested
+
+Skills that act (booking, order, lead capture), Google Calendar and Sheets,
+takeover from the inbox UI, accepting a team invite as a staff user, file upload
+ingestion, the admin console, completing a card payment, and session recovery.
+The UI suite now exists to grow into these; today it covers billing, navigation
+and phone width.
+
+
+---
+
+## 10. Final sweep - everything reachable without a person
+
+Run after the fixes shipped, against production on v0.14.1.
+
+### [G] File ingestion works for every type the parser claims
+
+Never tested before this. Four fixtures were built and first proved against the
+project's own parsers, then uploaded to production:
+
+| File | Result |
+|---|---|
+| `hours.txt` | `ready` |
+| `services.csv` | `ready` |
+| `policies.pdf` | `ready` |
+| `policies.docx` | `ready` |
+| A 25 MB upload on a 20 MB plan | `413`, refused |
+
+That closes the class of the 2026-09-05 `FileNotFoundError`, where the API and
+worker did not share a volume and every upload hung on "Processing".
+
+### [G] Analytics is internally consistent
+
+| Check | Result |
+|---|---|
+| Ranges genuinely filter | 1 day: 2 · 2 days: 2 · 7 days: 2 · 30 days: 74 |
+| A wider range never returns fewer | holds |
+| **The daily series sums to the headline total** | **74 = 74, exactly** |
+| Every section the page reads is present | 6 of 6 |
+| Outbound voice seconds recorded | 172s across 2 replies, 86s average |
+
+The series summing exactly to the total is the useful one: it means the chart
+and the tiles cannot disagree.
+
+### [G] Gaps, notifications, onboarding, conversation states
+
+- Gaps carry `question`, `count` and `last_asked`, and **no small talk has been
+  logged since the v0.12.0 fix** - one gap recorded since 11 September, and it
+  is a real question.
+- Notifications read; five recorded, none unread.
+- The onboarding checklist derives from real data rather than a static list.
+- All five conversations report `bot_active`, confirming the release in section 8
+  held.
+
+### [G] Debounce - resolved, and it passes
+
+Left unproven in section 0 for want of the configured window. It is
+`debounce_window_seconds = 5.0`, which settles it:
+
+```
+20:37:56  Hi                  -+
+20:37:56  Are you open         |  within 5s  ->  ONE reply
+20:38:02  I need an appointment   6s later, outside the window -> its own reply
+```
+
+Two replies to three messages is **correct**. The window collapsed the pair and
+the third message was a new turn.
+
+### [?] C4 - inbound voice duration, and why it has never been observed
+
+`record_billed_usage` is called, in its own docstring's words, "right after the
+model answers". On a paused conversation no model call happens, so nothing is
+recorded. Today's voice note arrived on exactly that path, and the other five
+predate migration `0019_voice_seconds_in`.
+
+**So the column has never once been written on an unpaused conversation since it
+existed.** The code reads correctly and is called from four separate paths; it
+has simply never had the chance. One voice note on the retest settles it, and it
+matters because generated voice is the metered quantity.
+
+### Artefacts
+
+All removed. Zephyr Clinic QA is back to zero knowledge sources, test01 to its
+original two. The production session cookie committed during this session was
+revoked and verified dead - the bearer answers `invalid token: revoked` and the
+cookie bounces to login.
+
+
+---
+
+## 11. The money path, completed
+
+I reported earlier that completing a card payment was blocked by hCaptcha and a
+Stripe iframe. **That was wrong.** The checkout drives fine headlessly: the
+captcha is invisible and did not challenge, and the card element is reachable
+inside its frame. The whole path was run on production.
+
+### [G] Checkout, end to end, with a real card
+
+A sandbox Starter checkout was completed with `4242 4242 4242 4242`, and the
+result arrived before the first poll:
+
+| Step | Result |
+|---|---|
+| Hosted checkout reached, card submitted | redirected to the success URL |
+| **Webhook landed** | subscription present immediately |
+| Plan recorded | `starter` / `active`, period ending 2026-11-02 |
+| **Entitlements re-derived** | 1,000 messages / 60 voice / 2 seats / 50 sources -- **exactly the catalogue** |
+| Payment history | `$10.00 usd`, `paid`, invoice `QONVO-WIVSEWBXIG-0001`, "Starter" |
+| Card on file | visa, 4242, 12/2030 |
+| Customer portal | url issued |
+
+This is the single most valuable path that had never been tested, and it works.
+
+### [G] The lifecycle, on a subscription somebody actually paid for
+
+| Step | Result |
+|---|---|
+| `change-plan` starter -> growth | `200 ok`, entitlements became 5,000 / 180 / 5 seats |
+| A second WhatsApp number on a 1-number plan | `402`, "Your plan includes 1 WhatsApp number" |
+| `cancel` | `200 ok`, `cancel_at_period_end: true`, period end unchanged |
+| `resume` | `200 ok`, flag cleared |
+
+The entitlement gate was checked properly this time: the tenant had **zero**
+sessions, so the first create is correctly a `201` and only the second is the
+one the plan should refuse. An earlier run mislabelled a first number as a
+second and would have read as a failure.
+
+### [?] An invoice link is a 503 before Polar has made the PDF
+
+```
+GET /api/billing/invoice/{order_id}
+  immediately -> 503 "the invoice is not ready yet, try again in a moment"
+  retried     -> 200, url issued
+```
+
+Correct and honestly worded, recorded only so the 503 is not mistaken for a
+fault later.
+
+### [G] Google is connected, and N1 is genuinely fixed
+
+`google_calendar` and `google_sheets` both report `connected`, `status: ok`,
+against "Qonvo Bookings" and a "Qonvo Leads" spreadsheet.
+
+The calendar integration's stored config says `timezone: UTC` while the business
+is `Asia/Karachi`, which is the exact shape of finding **N1** -- bookings five
+hours out. It is **not** live: `book_appointment` reads
+`tenant_timezone(ctx.tenant_config)` and passes it explicitly to `create_event`,
+and the integration's value is only a fallback. The code says so in its own
+comment. The stored `UTC` is an inert leftover from when the calendar was
+provisioned.
+
+### Team
+
+A `staff` invitation for `alinuces111@gmail.com` is pending on `test01`,
+expiring 2026-10-09. Accepting it is the only way to check the staff
+authorization matrix from a staff login rather than from the code.
+
+Seven of the eight skills report available. `share_payment_details` reports
+unavailable, which is correct gating: payment details are not set on this
+tenant.
+
+### Still blocked on credentials
+
+Two things need the `qonvo_admin` account, which this audit never had. The
+`test01` owner is an ordinary owner -- every `/api/admin/*` route answers `403`,
+which is itself the authorization working.
+
+- **Which number is disconnected.** `/readyz/deep` reports `1 of 2` fleet
+  sessions working. The count is cross-tenant, so naming the tenant needs the
+  admin console. `test01`'s own number is fine.
+- **Deleting "Zephyr Clinic QA".** `DELETE /admin/tenants/{id}` is gated on
+  `require_admin`. Its subscription has been cancelled at period end so nothing
+  renews, and its knowledge and sessions are already at zero.

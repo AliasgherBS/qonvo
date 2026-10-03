@@ -71,3 +71,8 @@ fixtures/
 # render from and which calls itself the single source of truth. Keeping a
 # second copy in markdown only invites the two to drift apart.
 legal/
+e2e/.auth/
+e2e/e2e/
+e2e/test-results/
+e2e/playwright-report/
+**/.auth/

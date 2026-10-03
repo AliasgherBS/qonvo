@@ -87,13 +87,42 @@ class CheckoutResponse(BaseModel):
 #: That was finding L3 of the 11 September audit.
 _REASON_STATUS = {
     "no_subscription": status.HTTP_409_CONFLICT,
+    "subscription_cancelling": status.HTTP_409_CONFLICT,
     "provider_unavailable": status.HTTP_502_BAD_GATEWAY,
+}
+
+#: Every refusal says what happened in words. A body of {"ok": false, "reason":
+#: "..."} and nothing else was rendered to a customer verbatim, as
+#: `{"ok":false,"reason":"provider_unavailable"}` on the billing page, because
+#: the client falls back to the raw body when there is no `detail` to show.
+_REASON_PROSE = {
+    "no_subscription": (
+        "There is no subscription to change yet. Choose a plan to start one."
+    ),
+    "subscription_cancelling": (
+        "This subscription is already scheduled to cancel at the end of the "
+        "period, and our payment provider will not change a plan in that state. "
+        "Resume it first, then change the plan."
+    ),
+    "provider_unavailable": (
+        "We could not reach our payment provider just now. Nothing has changed. "
+        "Please try again in a moment."
+    ),
 }
 
 
 def _billing_result(ok: bool, reason: str | None) -> JSONResponse:
     code = status.HTTP_200_OK if ok else _REASON_STATUS.get(reason or "", status.HTTP_409_CONFLICT)
-    return JSONResponse(status_code=code, content={"ok": ok, "reason": reason})
+    body: dict = {"ok": ok, "reason": reason}
+    if not ok:
+        # `detail` is the shape every client in this codebase already knows how
+        # to render, so putting the sentence there means no surface has to be
+        # taught about billing reasons specifically.
+        body["detail"] = {
+            "code": reason,
+            "message": _REASON_PROSE.get(reason or "", "That did not work. Please try again."),
+        }
+    return JSONResponse(status_code=code, content=body)
 
 
 @router.get("/payments")
@@ -324,16 +353,26 @@ async def change_plan(
             status_code=status.HTTP_400_BAD_REQUEST, detail="unknown plan"
         )
 
-    subscription_id = (
+    row = (
         await db.execute(
-            select(Subscription.provider_subscription_id).where(
-                Subscription.tenant_id == tenant_id
-            )
+            select(
+                Subscription.provider_subscription_id,
+                Subscription.cancel_at_period_end,
+            ).where(Subscription.tenant_id == tenant_id)
         )
-    ).scalar_one_or_none()
+    ).one_or_none()
+    subscription_id = row.provider_subscription_id if row else None
     if not subscription_id:
         # No subscription yet: this is a first purchase, which is checkout.
         return _billing_result(False, "no_subscription")
+
+    # Found live on 2026-10-03: pressing "Switch to this" on a subscription
+    # already scheduled to cancel made Polar answer 403, which arrived at the
+    # owner as "provider_unavailable" -- blaming an outage for a refusal, and
+    # offering nothing they could act on. The provider will not move the plan of
+    # a cancelling subscription, so say that, and say what to do instead.
+    if row.cancel_at_period_end:
+        return _billing_result(False, "subscription_cancelling")
 
     ok = resolve_billing_provider().change_plan(
         subscription_id=subscription_id, plan_key=body.plan_key

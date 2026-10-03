@@ -9,6 +9,59 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-10-03
+
+### Added
+
+- **A click-through UI suite** (`e2e/`), run on demand rather than in CI. The earlier
+  specs asserted that controls were *visible*; these press them and assert what the owner
+  then sees, including that no response body is ever rendered to a customer. Every one of
+  the three fixes below was found by one of them, or by driving the page by hand the same
+  way. [`docs/UI-TEST-RUNBOOK.md`](docs/UI-TEST-RUNBOOK.md) is how to run it.
+
+### Fixed
+
+- **The Business page could not be saved. At all.** Not the business name, the timezone,
+  the opening hours or the payment details -- the whole `PUT` answered `422` on two fields
+  the owner had never touched, and the page showed nothing: the value simply reverted on
+  reload. Two fixes collided. The dashboard sent `null` for `owner_alert_number`
+  deliberately, because `""` used to be refused with "must be digits with an optional
+  leading +"; the config-erasure fix then made `null` a 422 as well. After that the field
+  had **no representable empty value**. Any tenant who had not set an alert number was
+  locked out of the page, and not setting one is the default. `""` is this API's own
+  documented way to blank a text field, so it is accepted now and normalised to unset.
+
+- **"Switch to this" and "Cancel" did not work, and printed a response body at the
+  owner.** Our payment provider refuses to change the plan of a subscription already
+  scheduled to cancel, answering `403`. That arrived as `provider_unavailable` -- blaming
+  an outage for a refusal, and offering nothing to act on. It is now
+  `subscription_cancelling`, a `409`, and it says what to do instead: resume first, then
+  change the plan. The raw `{"ok":false,"reason":"provider_unavailable"}` on screen was a
+  regression from 0.14.0, where these endpoints started answering 409/502 instead of 200
+  without the dashboard being taught: `manage-plan.tsx` has a perfectly good
+  `if (!result.ok)` branch that a non-2xx never reaches, so the billing page's `catch` ran
+  instead and rendered `err.message`, which for a body with no `detail` is the raw
+  response. Fixed at both ends -- every refusal now carries a sentence, and the page uses
+  `describeError`.
+
+- **The rep read its own instructions out loud.** A customer asked "waxing kitne ka hai?"
+  and the reply opened `Roman Urdu mein hi batati hun:` before answering. The language
+  rule was followed perfectly and announced as well, which is not something a salon's own
+  receptionist would do, and it tells the customer there is a machine with rules behind
+  the conversation. Nothing in the prompt forbade it: the system message is a stack of
+  nine directives and none of them said "follow these silently". The new rule covers the
+  whole stack rather than the language line alone, because the same shape would have
+  produced "I can only answer from what I have been given". It is appended last so an
+  owner's own persona cannot displace it, and it is static, so it cannot cost a
+  prompt-cache miss.
+
+- **The name an invitee types is no longer discarded.** A staff member accepted an
+  invitation as "Ali2" and appeared on the team as somebody else entirely.
+  `accept_invitation` applied `full_name` only when it *created* the user; for an account
+  that already existed without a password it set the password and ignored the name, while
+  the form still asked for one and validated it.
+
+
 ## [0.14.1] - 2026-10-03
 
 ### Fixed
@@ -730,3 +783,4 @@ could be sold.
 [0.13.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.13.0
 [0.14.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.14.0
 [0.14.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.14.1
+[0.15.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.15.0
