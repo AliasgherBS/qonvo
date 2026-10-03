@@ -1,0 +1,11 @@
+# Point the worker at the stub instead of WAHA, for a lab run only.
+#
+#   docker compose -p qonvo-staging --env-file .env.staging \
+#     -f docker-compose.yml -f scripts/conversation-lab/docker-compose.lab.yml \
+#     up -d --no-deps worker
+#
+# Undo by bringing the worker up again without this file.
+services:
+  worker:
+    environment:
+      QONVO_WAHA_BASE_URL: http://qonvo-waha-stub:3000
