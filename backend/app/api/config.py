@@ -182,10 +182,30 @@ class ConfigUpdateRequest(BaseModel):
     @field_validator("owner_alert_number")
     @classmethod
     def _validate_owner_alert_number(cls, v: str | None) -> str | None:
+        """Empty means "I have not set one", which is the default and must save.
+
+        This field had no way to be absent. ``null`` is refused by
+        ``_refuse_to_erase`` because it is not a clearable override, and ``""``
+        raised "must be digits" -- so an owner who had never set an alert number
+        could not save the Business page **at all**: not their business name,
+        not their timezone, not their opening hours. The whole PUT 422'd on a
+        field they had never touched, and the page showed nothing.
+
+        Two fixes collided to make it. The dashboard sends ``null`` here on
+        purpose, with a comment explaining that ``""`` used to 422; then the
+        config-erasure fix made ``null`` a 422 as well. Each change was right on
+        its own.
+
+        "" is the documented way to blank a text field in this API, so it is
+        accepted here and normalised to None, which is what "no number" means
+        in the database.
+        """
         if v is None:
             return v
         v = v.strip()
-        if not v or not v.replace("+", "").isdigit():
+        if not v:
+            return None
+        if not v.replace("+", "").isdigit():
             raise ValueError("owner_alert_number must be digits with an optional leading +")
         return v
 

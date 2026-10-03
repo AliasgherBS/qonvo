@@ -911,15 +911,17 @@ function toTenantConfigDto(cfg: TenantConfig): TenantConfigDto {
       cfg.timezone,
       cfg.businessHoursClosedMessage,
     ),
-    // `|| null` matters: the API validator rejects an empty string for this
-    // field ("must be digits with an optional leading +") but accepts null.
-    // Sending "" made every save 422 whenever the owner had not set an alert
-    // number, which is the default. llm_provider and payment_details already
-    // guarded this way; this one was missed.
-    owner_alert_number: cfg.ownerAlertNumber || null,
+    // "" and not null. The comment that used to live here said the API
+    // rejected "" and accepted null, which was true when it was written; the
+    // config-erasure fix then made null a 422 too, and the Business page could
+    // not be saved at all by anyone who had never set an alert number. "" is
+    // this API's documented way to blank a text field, and the validator now
+    // normalises it. llm_provider and llm_model keep `|| null` because they ARE
+    // clearable-with-null overrides, which is a different thing.
+    owner_alert_number: cfg.ownerAlertNumber ?? "",
     llm_provider: cfg.llmProvider || null,
     llm_model: cfg.llmModel,
-    payment_details: cfg.paymentDetails || null,
+    payment_details: cfg.paymentDetails ?? "",
     // Trimmed to null the same way, so clearing the box means "go back to my
     // login address" rather than storing an empty string the API would have to
     // treat as one.
