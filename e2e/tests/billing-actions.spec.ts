@@ -137,7 +137,11 @@ test.describe("@billing @actions the buttons do their job", () => {
 test.describe("@billing @actions the page keeps up without a reload", () => {
   async function planState(page: import("@playwright/test").Page) {
     return page.evaluate(() => {
-      const t = document.querySelector("main")?.textContent ?? "";
+      // innerText, not textContent. textContent concatenates across elements
+      // with no whitespace, so "Growth" and "Plan" arrive as "GrowthPlan" and
+      // the regex below never matches -- which made this read as "the plan
+      // never changed" on a page that was updating perfectly well.
+      const t = document.querySelector("main")?.innerText ?? "";
       return {
         plan: (t.match(/(Starter|Growth|Scale) Plan/) ?? ["?"])[0],
         cancelling: /Cancelling/.test(t),

@@ -9,6 +9,35 @@ release. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## [Unreleased]
 
+## [0.15.2] - 2026-10-04
+
+### Fixed
+
+- **An unclear language let the rep switch the conversation.** An English thread about a
+  booking received "Lahore, Signature, haircut, name Ali, 03132941504" and the reply came
+  back in Roman Urdu. Detection was right -- proper nouns and digits carry no language
+  markers, so it returned Latin script and no language -- but the sentence placed
+  immediately above the question then said only "reply in that same script", and Roman
+  Urdu *is* Latin script. The model obeyed it perfectly and changed the language doing
+  so. The system prompt's "if genuinely unclear, use <primary>" sits at position 0 and
+  lost to the nearer instruction, so the nearer instruction now carries the fallback: it
+  names the language and says not to switch. A language that **is** detected is untouched,
+  which a test pins, because a fallback that overrode real detection would stop the
+  product answering Urdu speakers in Urdu.
+
+- **The prompt said "use en".** `primary_language` is stored as a code and was spliced in
+  raw by both the system prompt and the turn note. Codes are rendered as names now.
+
+### Changed
+
+- **The UI suite refuses to edit a live tenant's configuration.** Its restore ran through
+  the page and, when an assertion failed early, quietly did nothing -- so a later run read
+  the probe as the original and saved it. A tenant's 1,821 characters of grounding rules
+  became a test string on production. Restores now go over the API, probes are absolute
+  rather than appended, and any test that edits tenant configuration skips while the rep
+  is active unless `QONVO_E2E_ALLOW_CONFIG_WRITES=1`.
+
+
 ## [0.15.1] - 2026-10-03
 
 ### Fixed
@@ -811,3 +840,4 @@ could be sold.
 [0.14.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.14.1
 [0.15.0]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.15.0
 [0.15.1]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.15.1
+[0.15.2]: https://github.com/AliasgherBS/qonvo/releases/tag/v0.15.2

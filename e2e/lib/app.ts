@@ -96,3 +96,86 @@ export function watchServerErrors(page: Page) {
   });
   return bad;
 }
+
+/**
+ * Save the tenant's configuration over the API, and put it back afterwards.
+ *
+ * Restoring through the UI is not good enough, and this is not theoretical.
+ * The no-reload tests edited `custom_instructions` and restored in a `finally`
+ * -- but when an assertion failed early the restore ran against a page in an
+ * unexpected state and quietly did nothing. The next run then read the probe
+ * value as the "original", saw no change to make, and saved that. A live
+ * tenant's 1,821 characters of grounding rules became the string
+ * "E2E NoReload Instructions" on production, on a number that was answering
+ * customers. It is the same shape as the September incident, caused by a test.
+ *
+ * The API is the reliable path: it does not depend on a button being visible
+ * or a page being in the state the test expected.
+ */
+export async function withConfigRestored(
+  request: import("@playwright/test").APIRequestContext,
+  apiBase: string,
+  body: () => Promise<void>,
+) {
+  const base = apiBase.replace(/\/$/, "");
+  const login = await request.post(`${base}/api/auth/login`, {
+    data: { email: OWNER_EMAIL, password: OWNER_PASSWORD },
+    failOnStatusCode: false,
+  });
+  if (!login.ok()) throw new Error("could not sign in to snapshot the config");
+  const token = (await login.json()).access_token;
+  const auth = { Authorization: `Bearer ${token}` };
+
+  const before = await (await request.get(`${base}/api/config`, { headers: auth })).json();
+  try {
+    await body();
+  } finally {
+    const now = await (await request.get(`${base}/api/config`, { headers: auth })).json();
+    const payload: Record<string, unknown> = { version: now.version };
+    for (const key of [
+      "business_name",
+      "custom_instructions",
+      "persona",
+      "tone",
+      "primary_language",
+      "timezone",
+    ]) {
+      if (before[key] !== null && before[key] !== undefined) payload[key] = before[key];
+    }
+    const res = await request.put(`${base}/api/config`, {
+      headers: { ...auth, "content-type": "application/json" },
+      data: payload,
+      failOnStatusCode: false,
+    });
+    if (!res.ok()) {
+      throw new Error(`FAILED TO RESTORE TENANT CONFIG (${res.status()}) - check it by hand`);
+    }
+  }
+}
+
+/**
+ * Refuse to edit the configuration of a tenant whose rep is live, unless told
+ * to. Those fields are what the rep answers customers from.
+ */
+export async function assertConfigWritesAllowed(
+  request: import("@playwright/test").APIRequestContext,
+  apiBase: string,
+) {
+  if (process.env.QONVO_E2E_ALLOW_CONFIG_WRITES === "1") return null;
+  const base = apiBase.replace(/\/$/, "");
+  const login = await request.post(`${base}/api/auth/login`, {
+    data: { email: OWNER_EMAIL, password: OWNER_PASSWORD },
+    failOnStatusCode: false,
+  });
+  if (!login.ok()) return "could not check whether the rep is live";
+  const token = (await login.json()).access_token;
+  const act = await request.get(`${base}/api/activation`, {
+    headers: { Authorization: `Bearer ${token}` },
+    failOnStatusCode: false,
+  });
+  if (!act.ok()) return null;
+  const { rep_active } = await act.json();
+  return rep_active
+    ? "this tenant's rep is live; set QONVO_E2E_ALLOW_CONFIG_WRITES=1 to edit its configuration"
+    : null;
+}
